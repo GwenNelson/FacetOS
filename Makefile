@@ -5,7 +5,7 @@ VENV        := $(CURDIR)/.venv
 SEL4_SRC    := $(CURDIR)/external/seL4
 SEL4_BUILD  := $(CURDIR)/build/sel4
 SEL4_SDK    := $(CURDIR)/sdk/sel4
-SEL4_CONFIG := $(CURDIR)/config/sel4-x86_64.cmake
+SEL4_CONFIG := $(SEL4_SRC)/configs/X64_verified.cmake
 
 PYTHON      := $(VENV)/bin/python3
 PIP         := $(VENV)/bin/pip
