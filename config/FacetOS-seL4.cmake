@@ -1,28 +1,33 @@
 #!/usr/bin/env -S cmake -P
 #
-# Copyright 2020, Data61, CSIRO (ABN 41 687 119 230)
+# FacetOS seL4 configuration
 #
-# SPDX-License-Identifier: GPL-2.0-only
+# Based on the seL4 x86_64 verified configuration, but with
+# verification mode disabled so development/debug facilities
+# such as kernel printing are available.
 #
 
-# If this file is executed it will build the kernel.elf and kernel_all_pp.c file
+# If this file is executed directly, build the kernel.
 include(${CMAKE_CURRENT_LIST_DIR}/../external/seL4/tools/helpers.cmake)
 cmake_script_build_kernel(..)
 
+# Platform / architecture
 set(KernelPlatform "pc99" CACHE STRING "")
 set(KernelSel4Arch "x86_64" CACHE STRING "")
-set(KernelVerificationBuild ON CACHE BOOL "")
+
+# FacetOS development configuration
+set(KernelVerificationBuild OFF CACHE BOOL "")
+set(KernelDebugBuild ON CACHE BOOL "")
+set(KernelPrinting ON CACHE BOOL "")
+
+# Kernel configuration
 set(KernelMaxNumNodes "1" CACHE STRING "")
 set(KernelOptimisation "-O2" CACHE STRING "")
 set(KernelRetypeFanOutLimit "256" CACHE STRING "")
 set(KernelBenchmarks "none" CACHE STRING "")
 set(KernelDangerousCodeInjection OFF CACHE BOOL "")
 set(KernelFastpath ON CACHE BOOL "")
-set(KernelPrinting ON CACHE BOOL "")
 set(KernelNumDomains 16 CACHE STRING "")
 set(KernelRootCNodeSizeBits 19 CACHE STRING "")
 set(KernelMaxNumBootinfoUntypedCaps 50 CACHE STRING "")
 set(KernelFSGSBase "inst" CACHE STRING "")
-
-set(KernelVerificationBuild OFF CACHE BOOL "")
-set(KernelDebugBuild ON CACHE BOOL "")
