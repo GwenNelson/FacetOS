@@ -35,6 +35,10 @@ add_subdirectory(
     "${CMAKE_BINARY_DIR}/sel4runtime"
 )
 
+target_compile_options(sel4runtime PRIVATE
+    -fno-stack-protector
+)
+
 #
 # FacetOS SDK exports
 #
