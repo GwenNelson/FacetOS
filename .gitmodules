@@ -10,3 +10,7 @@
 	path = external/seL4_tools
 	url = https://github.com/seL4/seL4_tools.git
 	ignore = dirty
+[submodule "external/seL4_libs"]
+	path = external/seL4_libs
+	url = https://github.com/seL4/seL4_libs.git
+	ignore = dirty
