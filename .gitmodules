@@ -1,0 +1,6 @@
+[submodule "external/seL4"]
+	path = external/seL4
+	url = https://github.com/seL4/seL4.git
+[submodule "external/elfloader-tool"]
+	path = external/elfloader-tool
+	url = https://github.com/seL4/elfloader-tool.git
