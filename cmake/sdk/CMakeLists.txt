@@ -56,3 +56,42 @@ install(
         "${CMAKE_BINARY_DIR}/lib/crtn.o"
     DESTINATION sel4runtime/lib
 )
+
+#
+# Export seL4 kernel
+#
+
+install(
+    FILES "${SEL4_KERNEL_BUILD}/kernel.elf"
+    DESTINATION sel4/bin
+)
+
+#
+# Export libsel4 headers
+#
+
+install(
+    DIRECTORY
+        "${SEL4_SOURCE_DIR}/libsel4/include/"
+        "${SEL4_SOURCE_DIR}/libsel4/arch_include/x86/"
+        "${SEL4_SOURCE_DIR}/libsel4/sel4_arch_include/x86_64/"
+        "${SEL4_SOURCE_DIR}/libsel4/sel4_plat_include/pc99/"
+        "${SEL4_SOURCE_DIR}/libsel4/mode_include/64/"
+        "${CMAKE_BINARY_DIR}/libsel4/include/"
+        "${CMAKE_BINARY_DIR}/libsel4/arch_include/x86/"
+        "${CMAKE_BINARY_DIR}/libsel4/sel4_arch_include/x86_64/"
+        "${CMAKE_BINARY_DIR}/libsel4/autoconf/"
+        "${CMAKE_BINARY_DIR}/kernel/gen_config/"
+        "${CMAKE_BINARY_DIR}/libsel4/gen_config/"
+    DESTINATION sel4/libsel4/include
+    FILES_MATCHING
+        PATTERN "*.h"
+        PATTERN "*.json"
+        PATTERN "*.xml"
+        PATTERN "*.xsd"
+)
+
+install(
+    DIRECTORY "${SEL4_SOURCE_DIR}/libsel4/src/"
+    DESTINATION sel4/libsel4/src
+)

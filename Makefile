@@ -28,7 +28,7 @@ CC := gcc
 #
 
 FACET_CFLAGS := \
-	-std=c11 \
+	-std=gnu11 \
 	-ffreestanding \
 	-fno-stack-protector \
 	-fno-pic \
@@ -80,6 +80,7 @@ sdk: patches
 		-G Ninja \
 		-C $(SEL4_CONFIG) \
 		-DCMAKE_TOOLCHAIN_FILE=$(SEL4_SRC)/gcc.cmake \
+		-DSEL4_KERNEL_BUILD=$(ROOT)/build/sel4 \
 		-DCMAKE_INSTALL_PREFIX=$(SDK) \
 		-S $(ROOT)/cmake/sdk \
 		-B $(SDK_BUILD)
