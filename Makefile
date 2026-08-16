@@ -50,7 +50,7 @@ FACET_OBJS := \
 SEL4RUNTIME_LIB := $(SDK)/sel4runtime/lib/libsel4runtime.a
 
 
-.PHONY: all venv patches sdk facetos run clean sdk-clean
+.PHONY: all venv patches sdk facetos run clean sdk-clean image run
 
 
 all: facetos
@@ -158,15 +158,38 @@ facetos: $(FACET_INIT)
 
 
 #
-# QEMU
+# QEMU & GRUB etc
 #
-# x86-64 seL4 requires an appropriate boot image/loader.
-# We'll wire this to the elfloader image once that target exists.
 #
 
-run: facetos
-	@echo "QEMU image generation not configured yet."
-	@false
+ISO_ROOT := $(ROOT)/build/iso
+FACETOS_ISO := $(ROOT)/build/facetos.iso
+
+image: facetos
+	rm -rf $(ISO_ROOT)
+	mkdir -p $(ISO_ROOT)/boot/grub
+
+	cp $(SDK_BUILD)/kernel/kernel.elf \
+		$(ISO_ROOT)/boot/kernel.elf
+
+	cp $(FACET_INIT) \
+		$(ISO_ROOT)/boot/init
+
+	cp $(ROOT)/boot/grub.cfg \
+		$(ISO_ROOT)/boot/grub/grub.cfg
+
+	grub-mkrescue \
+		-o $(FACETOS_ISO) \
+		$(ISO_ROOT)
+
+
+run: image
+	qemu-system-x86_64 \
+		-enable-kvm \
+		-cpu host \
+		-m 512M \
+		-cdrom $(FACETOS_ISO) \
+		-serial stdio 
 
 
 #
@@ -175,6 +198,8 @@ run: facetos
 
 clean:
 	rm -rf $(FACET_BUILD)
+	rm -rf $(ISO_ROOT)
+	rm -rf $(FACETOS_ISO)
 
 
 sdk-clean:
