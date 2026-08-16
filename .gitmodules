@@ -1,9 +1,12 @@
 [submodule "external/seL4"]
 	path = external/seL4
 	url = https://github.com/seL4/seL4.git
+	ignore = dirty
 [submodule "external/sel4runtime"]
 	path = external/sel4runtime
 	url = https://github.com/seL4/sel4runtime.git
+	ignore = dirty
 [submodule "external/seL4_tools"]
 	path = external/seL4_tools
 	url = https://github.com/seL4/seL4_tools.git
+	ignore = dirty
