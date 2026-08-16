@@ -150,4 +150,4 @@ sdk-clean:
 	rm -rf $(SDK_BUILD)
 	rm -rf $(SDK)
 	rm -rf $(SEL4_RUNTIME)/.facetos-patched
-	git -C $(SEL4_RUNTIME) reset
+	git -C $(SEL4_RUNTIME) reset --hard

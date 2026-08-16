@@ -34,3 +34,25 @@ add_subdirectory(
     "${SEL4RUNTIME_SOURCE_DIR}"
     "${CMAKE_BINARY_DIR}/sel4runtime"
 )
+
+#
+# FacetOS SDK exports
+#
+
+install(
+    TARGETS sel4runtime
+    ARCHIVE DESTINATION sel4runtime/lib
+)
+
+install(
+    DIRECTORY "${SEL4RUNTIME_SOURCE_DIR}/include/"
+    DESTINATION sel4runtime/include
+)
+
+install(
+    FILES
+        "${CMAKE_BINARY_DIR}/lib/crt0.o"
+        "${CMAKE_BINARY_DIR}/lib/crti.o"
+        "${CMAKE_BINARY_DIR}/lib/crtn.o"
+    DESTINATION sel4runtime/lib
+)
