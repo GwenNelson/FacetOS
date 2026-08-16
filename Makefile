@@ -1,58 +1,139 @@
-# FacetOS top-level Makefile
+#
+# FacetOS
+#
 
-VENV        := $(CURDIR)/.venv
+ROOT := $(CURDIR)
 
-SEL4_SRC    := $(CURDIR)/external/seL4
-SEL4_BUILD  := $(CURDIR)/build/sel4
-SEL4_SDK    := $(CURDIR)/sdk/sel4
-SEL4_CONFIG := $(SEL4_SRC)/configs/X64_verified.cmake
+VENV := $(ROOT)/.venv
 
-PYTHON      := $(VENV)/bin/python3
-PIP         := $(VENV)/bin/pip
-SEL4_ENV    := PATH="$(VENV)/bin:$(PATH)"
+SEL4_SRC     := $(ROOT)/external/seL4
+SEL4_RUNTIME := $(ROOT)/external/sel4runtime
 
-.PHONY: all venv sel4-kernel sel4-clean clean
+SDK_BUILD  := $(ROOT)/build/sdk
+SDK        := $(ROOT)/sdk
+SEL4_SDK   := $(SDK)/sel4
 
-all:
-	@echo "FacetOS userspace build not implemented yet."
+FACET_BUILD := $(ROOT)/build/facetos
+FACET_INIT  := $(FACET_BUILD)/init
+
+SEL4_CONFIG := $(ROOT)/config/sel4-x86_64.cmake
+
+SEL4_ENV := PATH="$(VENV)/bin:$(PATH)"
+
+CC := gcc
+
 
 #
-# Create the Python environment needed by the seL4 build tools.
+# FacetOS compiler settings
 #
+
+FACET_CFLAGS := \
+	-std=c11 \
+	-ffreestanding \
+	-fno-stack-protector \
+	-fno-pic \
+	-mno-red-zone \
+	-I$(SEL4_SDK)/libsel4/include \
+	-I$(SDK)/sel4runtime/include
+
+
+.PHONY: all venv sdk facetos run clean sdk-clean
+
+
+all: facetos
+
+
+#
+# Python environment used by the upstream seL4 build.
+#
+
 venv:
 	python3 -m venv $(VENV)
-	$(PIP) install --upgrade pip setuptools
-	$(PIP) install sel4-deps
+	$(VENV)/bin/pip install --upgrade pip setuptools
+	$(VENV)/bin/pip install sel4-deps
+
 
 #
-# Build and install the standalone seL4 kernel/SDK.
+# Build the seL4 + sel4runtime SDK.
 #
-sel4-kernel:
+# This is deliberately separate from normal FacetOS builds.
+#
+
+sdk:
+	mkdir -p $(SDK_BUILD)
+	mkdir -p $(SDK)
+
 	$(SEL4_ENV) cmake \
 		-G Ninja \
-		-DCMAKE_TOOLCHAIN_FILE=$(SEL4_SRC)/gcc.cmake \
 		-C $(SEL4_CONFIG) \
-		-DCMAKE_INSTALL_PREFIX=$(SEL4_SDK) \
-		-S $(SEL4_SRC) \
-		-B $(SEL4_BUILD)
+		-DCMAKE_TOOLCHAIN_FILE=$(SEL4_SRC)/gcc.cmake \
+		-DCMAKE_INSTALL_PREFIX=$(SDK) \
+		-S $(ROOT)/cmake/sdk \
+		-B $(SDK_BUILD)
 
-	$(SEL4_ENV) ninja \
-		-C $(SEL4_BUILD) \
-		kernel.elf
+	$(SEL4_ENV) ninja -C $(SDK_BUILD)
 
-	$(SEL4_ENV) cmake \
-		--install $(SEL4_BUILD)
+	$(SEL4_ENV) cmake --install $(SDK_BUILD)
 
-#
-# Remove seL4 build products and installed SDK.
-#
-sel4-clean:
-	rm -rf $(SEL4_BUILD)
-	rm -rf $(SEL4_SDK)
 
 #
-# Eventually this will remove FacetOS's own build products,
-# but deliberately leaves the expensive seL4 SDK alone.
+# FacetOS
 #
+
+$(FACET_BUILD):
+	mkdir -p $(FACET_BUILD)
+
+
+$(FACET_BUILD)/init.o: src/init.c | $(FACET_BUILD)
+	$(CC) $(FACET_CFLAGS) \
+		-c $< \
+		-o $@
+
+
+#
+# Eventually this links:
+#
+#   crt0.o
+#   crti.o
+#   init.o
+#   libsel4runtime.a
+#   crtn.o
+#
+# The exact linker flags/entry point come from sel4runtime's CRT.
+#
+
+$(FACET_INIT): $(FACET_BUILD)/init.o
+	@echo
+	@echo "FacetOS init compiled successfully."
+	@echo "Runtime linking is the next step."
+	@echo
+	@false
+
+
+facetos: $(FACET_INIT)
+
+
+#
+# QEMU
+#
+# x86-64 seL4 requires an appropriate boot image/loader.
+# We'll wire this to the elfloader image once that target exists.
+#
+
+run: facetos
+	@echo "QEMU image generation not configured yet."
+	@false
+
+
+#
+# Cleaning
+#
+
 clean:
-	rm -rf build/facetos
+	rm -rf $(FACET_BUILD)
+
+
+sdk-clean:
+	rm -rf $(SDK_BUILD)
+	rm -rf $(SDK)
+
