@@ -36,8 +36,21 @@ FACET_CFLAGS := \
 	-I$(SEL4_SDK)/libsel4/include \
 	-I$(SDK)/sel4runtime/include
 
+FACET_LDFLAGS := \
+	-nostdlib \
+	-static \
+	-no-pie \
+	-Wl,-u,_start \
+	-Wl,-e,_start
 
-.PHONY: all venv sdk facetos run clean sdk-clean
+FACET_OBJS := \
+	$(FACET_BUILD)/init.o \
+	$(FACET_BUILD)/sel4_bootinfo.o
+
+SEL4RUNTIME_LIB := $(SDK)/sel4runtime/lib/libsel4runtime.a
+
+
+.PHONY: all venv patches sdk facetos run clean sdk-clean
 
 
 all: facetos
@@ -65,6 +78,7 @@ $(SEL4RUNTIME_PATCH_STAMP):
 	touch $@
 
 patches: $(SEL4RUNTIME_PATCH_STAMP)
+
 
 #
 # Build the seL4 + sel4runtime SDK.
@@ -97,6 +111,10 @@ $(FACET_BUILD):
 	mkdir -p $(FACET_BUILD)
 
 
+#
+# FacetOS root task.
+#
+
 $(FACET_BUILD)/init.o: src/init.c | $(FACET_BUILD)
 	$(CC) $(FACET_CFLAGS) \
 		-c $< \
@@ -104,23 +122,36 @@ $(FACET_BUILD)/init.o: src/init.c | $(FACET_BUILD)
 
 
 #
-# Eventually this links:
+# libsel4's IPC buffer storage.
 #
-#   crt0.o
-#   crti.o
-#   init.o
-#   libsel4runtime.a
-#   crtn.o
-#
-# The exact linker flags/entry point come from sel4runtime's CRT.
+# Most of libsel4 is header/generated syscall machinery, but
+# sel4_bootinfo.c provides __sel4_ipc_buffer, which sel4runtime
+# expects to exist.
 #
 
-$(FACET_INIT): $(FACET_BUILD)/init.o
+$(FACET_BUILD)/sel4_bootinfo.o: $(SEL4_SDK)/libsel4/src/sel4_bootinfo.c | $(FACET_BUILD)
+	$(CC) $(FACET_CFLAGS) \
+		-c $< \
+		-o $@
+
+
+#
+# Link the FacetOS root task.
+#
+# sel4runtime contains its own CRT/startup objects. Since they live
+# inside a static archive, explicitly requiring _start causes the
+# linker to extract the startup path from libsel4runtime.a.
+#
+
+$(FACET_INIT): $(FACET_OBJS) $(SEL4RUNTIME_LIB)
+	$(CC) $(FACET_LDFLAGS) \
+		-o $@ \
+		$(FACET_OBJS) \
+		$(SEL4RUNTIME_LIB)
+
 	@echo
-	@echo "FacetOS init compiled successfully."
-	@echo "Runtime linking is the next step."
+	@echo "FacetOS init linked successfully."
 	@echo
-	@false
 
 
 facetos: $(FACET_INIT)
