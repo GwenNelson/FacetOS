@@ -21,6 +21,11 @@ find_package(seL4 REQUIRED)
 sel4_import_kernel()
 sel4_import_libsel4()
 
+install(
+    TARGETS sel4
+    ARCHIVE DESTINATION sel4/lib
+)
+
 #
 # Now sel4runtime can see:
 #

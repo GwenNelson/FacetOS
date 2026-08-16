@@ -36,12 +36,14 @@ FACET_CFLAGS := \
 	-I$(SEL4_SDK)/libsel4/include \
 	-I$(SDK)/sel4runtime/include
 
+
 FACET_LDFLAGS := \
 	-nostdlib \
 	-static \
 	-no-pie \
-	-Wl,-u,_start \
-	-Wl,-e,_start
+	-Wl,-u,_sel4_start \
+	-Wl,-e,_sel4_start \
+	-Wl,-T,$(ROOT)/src/init.ld
 
 FACET_OBJS := \
 	$(FACET_BUILD)/init.o \
@@ -143,7 +145,7 @@ $(FACET_BUILD)/sel4_bootinfo.o: $(SEL4_SDK)/libsel4/src/sel4_bootinfo.c | $(FACE
 # linker to extract the startup path from libsel4runtime.a.
 #
 
-$(FACET_INIT): $(FACET_OBJS) $(SEL4RUNTIME_LIB)
+$(FACET_INIT): $(FACET_OBJS) $(SEL4RUNTIME_LIB) src/init.ld
 	$(CC) $(FACET_LDFLAGS) \
 		-o $@ \
 		$(FACET_OBJS) \

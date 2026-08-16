@@ -10,10 +10,10 @@ char *strcpy(char *dest, const char *src) {
     return ret;
 }
 
-int main() {
-    seL4_DebugPutString("FacetOS says hello!\n");
+void main(int argc, char **argv, char **envp) {
+//    seL4_DebugPutString("FacetOS says hello!\n");
 
-    for (;;) {
-        seL4_Yield();
-    }
+//    for (;;) {
+ //       seL4_Yield();
+//    }
 }
