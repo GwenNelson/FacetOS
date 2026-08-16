@@ -6,7 +6,7 @@
 #
 
 # If this file is executed it will build the kernel.elf and kernel_all_pp.c file
-include(${CMAKE_CURRENT_LIST_DIR}/../tools/helpers.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/../external/seL4/tools/helpers.cmake)
 cmake_script_build_kernel(..)
 
 set(KernelPlatform "pc99" CACHE STRING "")

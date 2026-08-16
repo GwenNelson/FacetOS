@@ -16,7 +16,7 @@ SEL4_SDK   := $(SDK)/sel4
 FACET_BUILD := $(ROOT)/build/facetos
 FACET_INIT  := $(FACET_BUILD)/init
 
-SEL4_CONFIG := $(ROOT)/config/sel4-x86_64.cmake
+SEL4_CONFIG := $(ROOT)/config/FacetOS-seL4.cmake
 
 SEL4_ENV := PATH="$(VENV)/bin:$(PATH)"
 
