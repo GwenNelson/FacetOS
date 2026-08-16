@@ -46,10 +46,26 @@ FACET_LDFLAGS := \
 	-Wl,-T,$(ROOT)/src/init.ld
 
 FACET_OBJS := \
-	$(FACET_BUILD)/init.o \
-	$(FACET_BUILD)/sel4_bootinfo.o
+	$(FACET_BUILD)/init.o 
 
 SEL4RUNTIME_LIB := $(SDK)/sel4runtime/lib/libsel4runtime.a
+SEL4_INCLUDES := \
+	-I$(ROOT)/external/seL4/libsel4/include \
+	-I$(ROOT)/external/seL4/libsel4/arch_include/x86 \
+	-I$(ROOT)/external/seL4/libsel4/sel4_arch_include/x86_64 \
+	-I$(ROOT)/external/seL4/libsel4/sel4_plat_include/pc99 \
+	-I$(ROOT)/external/seL4/libsel4/mode_include/64 \
+	-I$(ROOT)/build/sdk/libsel4/include \
+	-I$(ROOT)/build/sdk/libsel4/arch_include/x86 \
+	-I$(ROOT)/build/sdk/libsel4/sel4_arch_include/x86_64 \
+	-I$(ROOT)/build/sdk/libsel4/autoconf \
+	-I$(ROOT)/build/sdk/libsel4/gen_config \
+	-I$(ROOT)/build/sdk/kernel/gen_config \
+	-I$(ROOT)/external/sel4runtime/include \
+	-I$(ROOT)/external/sel4runtime/include/mode/64 \
+	-I$(ROOT)/external/sel4runtime/include/arch/x86 \
+	-I$(ROOT)/external/sel4runtime/include/sel4_arch/x86_64 \
+	-I$(ROOT)/build/sdk/sel4runtime/gen_config
 
 
 .PHONY: all venv patches sdk facetos run clean sdk-clean image run
@@ -117,10 +133,18 @@ $(FACET_BUILD):
 # FacetOS root task.
 #
 
-$(FACET_BUILD)/init.o: src/init.c | $(FACET_BUILD)
-	$(CC) $(FACET_CFLAGS) \
+$(FACET_BUILD)/init.o: src/init.c
+	mkdir -p $(FACET_BUILD)
+	$(CC) \
+		-std=gnu11 \
+		-ffreestanding \
+		-fno-stack-protector \
+		-fno-pic \
+		-mno-red-zone \
+		$(SEL4_INCLUDES) \
 		-c $< \
 		-o $@
+
 
 
 #
@@ -145,11 +169,24 @@ $(FACET_BUILD)/sel4_bootinfo.o: $(SEL4_SDK)/libsel4/src/sel4_bootinfo.c | $(FACE
 # linker to extract the startup path from libsel4runtime.a.
 #
 
-$(FACET_INIT): $(FACET_OBJS) $(SEL4RUNTIME_LIB) src/init.ld
-	$(CC) $(FACET_LDFLAGS) \
+$(FACET_INIT): $(FACET_BUILD)/init.o
+
+	$(CC) \
+		-nostdlib \
+		-static \
+		-no-pie \
+		-Wl,-u,_sel4_start \
+		-Wl,-e,_sel4_start \
+		-Wl,-T,$(ROOT)/external/seL4_tools/cmake-tool/helpers/tls_rootserver.lds \
 		-o $@ \
-		$(FACET_OBJS) \
-		$(SEL4RUNTIME_LIB)
+		$(ROOT)/build/sdk/lib/crti.o \
+		$(FACET_BUILD)/init.o \
+		-Wl,--start-group \
+		$(ROOT)/build/sdk/libsel4/libsel4.a \
+		$(ROOT)/build/sdk/sel4runtime/libsel4runtime.a \
+		-Wl,--end-group \
+		$(ROOT)/build/sdk/lib/crtn.o
+
 
 	@echo
 	@echo "FacetOS init linked successfully."
