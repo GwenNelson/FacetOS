@@ -85,7 +85,7 @@ sdk: patches
 		-S $(ROOT)/cmake/sdk \
 		-B $(SDK_BUILD)
 
-	$(SEL4_ENV) ninja -C $(SDK_BUILD)
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf sel4runtime
 
 	$(SEL4_ENV) cmake --install $(SDK_BUILD)
 

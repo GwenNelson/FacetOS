@@ -62,7 +62,7 @@ install(
 #
 
 install(
-    FILES "${SEL4_KERNEL_BUILD}/kernel.elf"
+    FILES "${CMAKE_BINARY_DIR}/kernel/kernel.elf"
     DESTINATION sel4/bin
 )
 
