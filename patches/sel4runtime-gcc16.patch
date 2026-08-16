@@ -1,0 +1,34 @@
+diff --git a/include/sel4runtime/start.h b/include/sel4runtime/start.h
+index 8127263..9366223 100644
+--- a/include/sel4runtime/start.h
++++ b/include/sel4runtime/start.h
+@@ -10,14 +10,14 @@
+ #include <sel4runtime/mode/elf.h>
+ 
+ // Entry into C program.
+-int main();
++int main(int argc, char const *const *argv, char const *const *envp);
+ 
+ /*
+  * The this triggers the environment to be set up for the runtime before
+  * the environment is loaded.
+  */
+ void __sel4runtime_start_main(
+-    int (*main)(),
++    int (*main)(int, char const *const *, char const *const *),
+     unsigned long argc,
+     char const *const *argv,
+     char const *const *envp,
+diff --git a/src/start.c b/src/start.c
+index 9035cdf..b9e9efc 100644
+--- a/src/start.c
++++ b/src/start.c
+@@ -8,7 +8,7 @@
+ #include <sel4runtime/start.h>
+ 
+ void __sel4runtime_start_main(
+-    int (*main)(),
++    int (*main)(int, char const *const *, char const *const *),
+     unsigned long argc,
+     char const *const *argv,
+     char const *const *envp,

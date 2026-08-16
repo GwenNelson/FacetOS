@@ -9,15 +9,26 @@ set(SEL4RUNTIME_SOURCE_DIR
     "${CMAKE_CURRENT_LIST_DIR}/../../external/sel4runtime")
 
 #
-# Bring the seL4 kernel/build environment into this project.
+# Set up the basic seL4 build environment.
 #
-add_subdirectory(
+list(
+    APPEND CMAKE_MODULE_PATH
     "${SEL4_SOURCE_DIR}"
-    "${CMAKE_BINARY_DIR}/seL4"
 )
 
+find_package(seL4 REQUIRED)
+
+sel4_import_kernel()
+sel4_import_libsel4()
+
 #
-# sel4runtime now sees the architecture/configuration exported by seL4.
+# Now sel4runtime can see:
+#
+#     sel4
+#     sel4_autoconf
+#     KernelArch
+#     KernelSel4Arch
+#     KernelWordSize
 #
 add_subdirectory(
     "${SEL4RUNTIME_SOURCE_DIR}"

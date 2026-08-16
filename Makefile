@@ -54,12 +54,25 @@ venv:
 
 
 #
+# Patch nonsense
+#
+
+SEL4RUNTIME_PATCH_STAMP := $(SEL4_RUNTIME)/.facetos-patched
+
+$(SEL4RUNTIME_PATCH_STAMP):
+	git -C $(SEL4_RUNTIME) apply \
+		$(ROOT)/patches/sel4runtime-gcc16.patch
+	touch $@
+
+patches: $(SEL4RUNTIME_PATCH_STAMP)
+
+#
 # Build the seL4 + sel4runtime SDK.
 #
 # This is deliberately separate from normal FacetOS builds.
 #
 
-sdk:
+sdk: patches
 	mkdir -p $(SDK_BUILD)
 	mkdir -p $(SDK)
 
@@ -136,4 +149,5 @@ clean:
 sdk-clean:
 	rm -rf $(SDK_BUILD)
 	rm -rf $(SDK)
-
+	rm -rf $(SEL4_RUNTIME)/.facetos-patched
+	git -C $(SEL4_RUNTIME) reset
