@@ -1,0 +1,6 @@
+Basic concept:
+	POSIXy unless stated otherwise
+	Microkernel servers, special files, other objects can be queried for what interfaces they support
+	An interface is a UUID representing the OOP-style interface supported by an object or server
+	Interfaces are used both within the same address space (where a tool can autogen code for it) and between spaces/processes
+
