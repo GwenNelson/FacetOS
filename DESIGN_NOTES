@@ -6,3 +6,6 @@ Basic concept:
 
 A simple userspace lib allows querying an object for an interface and returns the relevant C struct or a generic struct for invoking methods etc
 If the object is within the same space, it goes direct, otherwise IPC magic happens
+
+Inspirations:
+	COM & UEFI
