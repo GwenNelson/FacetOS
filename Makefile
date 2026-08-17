@@ -33,24 +33,9 @@ FACET_CFLAGS := \
 	-fno-stack-protector \
 	-fno-pic \
 	-mno-red-zone \
-	-I$(SEL4_SDK)/libsel4/include \
-	-I$(SDK)/sel4runtime/include
+	-MMD \
+	-MP
 
-
-FACET_LDFLAGS := \
-	-nostdlib \
-	-static \
-	-no-pie \
-	-Wl,-u,_sel4_start \
-	-Wl,-e,_sel4_start \
-	-Wl,-T,$(ROOT)/src/init.ld
-
-FACET_OBJS := \
-	$(FACET_BUILD)/klock.o \
-	$(FACET_BUILD)/klog.o \
-	$(FACET_BUILD)/init.o
-
-SEL4RUNTIME_LIB := $(SDK)/sel4runtime/lib/libsel4runtime.a
 SEL4_INCLUDES := \
 	-I$(ROOT)/external/seL4/libsel4/include \
 	-I$(ROOT)/external/seL4/libsel4/arch_include/x86 \
@@ -72,7 +57,20 @@ SEL4_INCLUDES := \
 FACET_INCLUDES := \
 	-I$(ROOT)/include
 
-.PHONY: all venv patches sdk facetos run clean sdk-clean image run
+
+#
+# FacetOS root task objects.
+#
+
+FACET_OBJS := \
+	$(FACET_BUILD)/klock.o \
+	$(FACET_BUILD)/klog.o \
+	$(FACET_BUILD)/init.o
+
+FACET_DEPS := $(FACET_OBJS:.o=.d)
+
+
+.PHONY: all venv patches sdk facetos run clean sdk-clean image
 
 
 all: facetos
@@ -134,36 +132,40 @@ $(FACET_BUILD):
 
 
 #
-# FacetOS root task.
+# Compile FacetOS source modules.
+#
+# Any src/foo.c listed as build/facetos/foo.o in FACET_OBJS
+# is automatically compiled by this rule.
 #
 
-$(FACET_BUILD)/init.o: src/init.c
-	mkdir -p $(FACET_BUILD)
+$(FACET_BUILD)/%.o: src/%.c | $(FACET_BUILD)
 	$(CC) \
-		-std=gnu11 \
-		-ffreestanding \
-		-fno-stack-protector \
-		-fno-pic \
-		-mno-red-zone \
+		$(FACET_CFLAGS) \
 		$(SEL4_INCLUDES) \
 		$(FACET_INCLUDES) \
 		-c $< \
 		-o $@
 
 
+#
+# Automatically generated header dependencies.
+#
+# -MMD generates a .d file alongside each .o.
+# -MP prevents removed headers from causing stale dependency errors.
+#
 
+-include $(FACET_DEPS)
 
 
 #
 # Link the FacetOS root task.
 #
 # sel4runtime contains its own CRT/startup objects. Since they live
-# inside a static archive, explicitly requiring _start causes the
-# linker to extract the startup path from libsel4runtime.a.
+# inside a static archive, explicitly requiring _sel4_start causes
+# the linker to extract the startup path from libsel4runtime.a.
 #
 
 $(FACET_INIT): $(FACET_OBJS)
-
 	$(CC) \
 		-nostdlib \
 		-static \
@@ -173,13 +175,12 @@ $(FACET_INIT): $(FACET_OBJS)
 		-Wl,-T,$(ROOT)/external/seL4_tools/cmake-tool/helpers/tls_rootserver.lds \
 		-o $@ \
 		$(ROOT)/build/sdk/lib/crti.o \
-		$(FACET_BUILD)/init.o \
+		$(FACET_OBJS) \
 		-Wl,--start-group \
 		$(ROOT)/build/sdk/libsel4/libsel4.a \
 		$(ROOT)/build/sdk/sel4runtime/libsel4runtime.a \
 		-Wl,--end-group \
 		$(ROOT)/build/sdk/lib/crtn.o
-
 
 	@echo
 	@echo "FacetOS init linked successfully."
@@ -191,7 +192,6 @@ facetos: $(FACET_INIT)
 
 #
 # QEMU & GRUB etc
-#
 #
 
 ISO_ROOT := $(ROOT)/build/iso
@@ -221,7 +221,7 @@ run: image
 		-cpu host \
 		-m 512M \
 		-cdrom $(FACETOS_ISO) \
-		-serial stdio 
+		-serial stdio
 
 
 #

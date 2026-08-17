@@ -1,5 +1,7 @@
 #include <klog.h>
 #include <klock.h>
+#include <sel4/sel4.h>
+
 
 static klock_t klog_public_lock   = KLOCK_INITIALIZER;
 static klock_t klog_internal_lock = KLOCK_INITIALIZER;
