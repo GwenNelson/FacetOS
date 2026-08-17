@@ -46,7 +46,9 @@ FACET_LDFLAGS := \
 	-Wl,-T,$(ROOT)/src/init.ld
 
 FACET_OBJS := \
-	$(FACET_BUILD)/init.o 
+	$(FACET_BUILD)/klock.o \
+	$(FACET_BUILD)/klog.o \
+	$(FACET_BUILD)/init.o
 
 SEL4RUNTIME_LIB := $(SDK)/sel4runtime/lib/libsel4runtime.a
 SEL4_INCLUDES := \
@@ -67,6 +69,8 @@ SEL4_INCLUDES := \
 	-I$(ROOT)/external/sel4runtime/include/sel4_arch/x86_64 \
 	-I$(ROOT)/build/sdk/sel4runtime/gen_config
 
+FACET_INCLUDES := \
+	-I$(ROOT)/include
 
 .PHONY: all venv patches sdk facetos run clean sdk-clean image run
 
@@ -142,23 +146,12 @@ $(FACET_BUILD)/init.o: src/init.c
 		-fno-pic \
 		-mno-red-zone \
 		$(SEL4_INCLUDES) \
+		$(FACET_INCLUDES) \
 		-c $< \
 		-o $@
 
 
 
-#
-# libsel4's IPC buffer storage.
-#
-# Most of libsel4 is header/generated syscall machinery, but
-# sel4_bootinfo.c provides __sel4_ipc_buffer, which sel4runtime
-# expects to exist.
-#
-
-$(FACET_BUILD)/sel4_bootinfo.o: $(SEL4_SDK)/libsel4/src/sel4_bootinfo.c | $(FACET_BUILD)
-	$(CC) $(FACET_CFLAGS) \
-		-c $< \
-		-o $@
 
 
 #
@@ -169,7 +162,7 @@ $(FACET_BUILD)/sel4_bootinfo.o: $(SEL4_SDK)/libsel4/src/sel4_bootinfo.c | $(FACE
 # linker to extract the startup path from libsel4runtime.a.
 #
 
-$(FACET_INIT): $(FACET_BUILD)/init.o
+$(FACET_INIT): $(FACET_OBJS)
 
 	$(CC) \
 		-nostdlib \

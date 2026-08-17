@@ -14,3 +14,9 @@
 	path = external/seL4_libs
 	url = https://github.com/seL4/seL4_libs.git
 	ignore = dirty
+[submodule "external/util_libs"]
+	path = external/util_libs
+	url = https://github.com/seL4/util_libs.git
+[submodule "external/musllibc"]
+	path = external/musllibc
+	url = https://github.com/seL4/musllibc.git
