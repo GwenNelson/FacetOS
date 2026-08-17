@@ -31,5 +31,4 @@ void klog_unlock();
 
 int klog_add_sink(klog_sink_fn write); // tries to add a new sink, returns 0 on success, -1 on failure
 void klog(enum log_level level, const char* fmt, ...); // main klog() function, called by other code to log stuff
-
-
+void klog_dump_debug(); // dump debug data

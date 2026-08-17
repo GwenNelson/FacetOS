@@ -2,6 +2,7 @@
 #include <klock.h>
 #include <sel4/sel4.h>
 #include <stdarg.h>
+#include <stdint.h>
 
 
 static klock_t klog_public_lock   = KLOCK_INITIALIZER;
@@ -229,6 +230,23 @@ static void klog_vprintf(struct klog_emit_ctx *ctx, const char *fmt, va_list ap)
 			klog_emit_uint(ctx, va_arg(ap, unsigned int), 16);
 			break;
 
+		case 'z':
+			fmt++;
+
+			if (*fmt == 'u') {
+				klog_emit_uint(ctx, (uint64_t)va_arg(ap, size_t), 10);
+			} else {
+				klog_emit_char(ctx, '%');
+				klog_emit_char(ctx, 'z');
+		
+				//if (*fmt) emit(*fmt, ctx);
+			}
+			break;
+		case 'p':
+			klog_emit_string(ctx, "0x");
+			klog_emit_uint(ctx, (uint64_t)(uintptr_t)va_arg(ap, void *), 16);
+			break;
+
 		case '\0':
 			klog_emit_char(ctx, '%');
 			return;
@@ -242,6 +260,16 @@ static void klog_vprintf(struct klog_emit_ctx *ctx, const char *fmt, va_list ap)
 
 		fmt++;
 	}
+}
+
+void klog_dump_debug() {
+     klog_lock();
+     klog(LOG_DEBUG, "FacetOS klog debug dump:\n");
+     klog(LOG_DEBUG, "Test parsing: below should show \"Hello FacetOS: d=-123 u=456 x=deadbeef %\"\n");
+     klog(LOG_DEBUG, "Hello %s: d=%d u=%u x=%x %%\n",  "FacetOS", -123, 456U, 0xdeadbeefU);
+     klog(LOG_DEBUG, "Early logbuf used: %zu bytes\n", klog_early_buf_used);
+     klog(LOG_DEBUG, "Early logbuf @ %p\n", &klog_early_buf);
+     klog_unlock();
 }
 
 void klog(enum log_level level, const char* fmt, ...) {
