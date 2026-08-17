@@ -4,3 +4,5 @@ Basic concept:
 	An interface is a UUID representing the OOP-style interface supported by an object or server
 	Interfaces are used both within the same address space (where a tool can autogen code for it) and between spaces/processes
 
+A simple userspace lib allows querying an object for an interface and returns the relevant C struct or a generic struct for invoking methods etc
+If the object is within the same space, it goes direct, otherwise IPC magic happens
