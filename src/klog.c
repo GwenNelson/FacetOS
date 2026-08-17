@@ -1,6 +1,7 @@
 #include <klog.h>
 #include <klock.h>
 #include <sel4/sel4.h>
+#include <stdarg.h>
 
 
 static klock_t klog_public_lock   = KLOCK_INITIALIZER;
@@ -17,6 +18,18 @@ static klog_store_fn klog_cur_store_fn;
 static void klog_early_store_fn(const char *data, size_t len);
 static void klog_dummy_sink(const char *data, size_t len);
 static void klog_sink_sel4(const char *data, size_t len);
+
+struct klog_emit_ctx {
+	char buf[128];
+	size_t used;
+};
+
+static void klog_emit_flush(struct klog_emit_ctx *ctx);
+static void klog_emit_char(struct klog_emit_ctx *ctx, char c);
+static void klog_emit_string(struct klog_emit_ctx *ctx, const char *str);
+static void klog_emit_uint(struct klog_emit_ctx *ctx, unsigned int value, unsigned int base);
+static void klog_emit_int(struct klog_emit_ctx *ctx, int value);
+static void klog_vprintf(struct klog_emit_ctx *ctx, const char *fmt, va_list ap);
 
 static inline void klog_lock_internal(void);
 static inline void klog_unlock_internal(void);
@@ -121,5 +134,132 @@ static void klog_sink_sel4(const char *data, size_t len)
     }
 }
 
+static void klog_emit_flush(struct klog_emit_ctx *ctx) {
+	if (ctx->used == 0)
+		return;
+
+	if (klog_cur_store_fn != NULL)
+		klog_cur_store_fn(ctx->buf, ctx->used);
+
+	for (size_t i = 0; i < KLOG_MAX_SINKS; i++) {
+		if (klog_sinks[i].enabled)
+			klog_sinks[i].write(ctx->buf, ctx->used);
+	}
+
+	ctx->used = 0;
+}
+
+static void klog_emit_char(struct klog_emit_ctx *ctx, char c) {
+	ctx->buf[ctx->used++] = c;
+
+	if (ctx->used == sizeof(ctx->buf))
+		klog_emit_flush(ctx);
+}
+
+static void klog_emit_string(struct klog_emit_ctx *ctx, const char *str) {
+	if (str == NULL)
+		str = "(null)";
+
+	while (*str != '\0')
+		klog_emit_char(ctx, *str++);
+}
+
+static void klog_emit_uint(struct klog_emit_ctx *ctx, unsigned int value, unsigned int base) {
+	static const char digits[] = "0123456789abcdef";
+	char buf[sizeof(unsigned int) * 8];
+	size_t used = 0;
+
+	if (value == 0) {
+		klog_emit_char(ctx, '0');
+		return;
+	}
+
+	while (value != 0) {
+		buf[used++] = digits[value % base];
+		value /= base;
+	}
+
+	while (used != 0)
+		klog_emit_char(ctx, buf[--used]);
+}
+
+static void klog_emit_int(struct klog_emit_ctx *ctx, int value) {
+	unsigned int magnitude;
+
+	if (value < 0) {
+		klog_emit_char(ctx, '-');
+
+		/* Avoid overflowing when value is INT_MIN. */
+		magnitude = (unsigned int)(-(value + 1)) + 1;
+	} else {
+		magnitude = (unsigned int)value;
+	}
+
+	klog_emit_uint(ctx, magnitude, 10);
+}
+
+static void klog_vprintf(struct klog_emit_ctx *ctx, const char *fmt, va_list ap) {
+	while (*fmt != '\0') {
+		if (*fmt != '%') {
+			klog_emit_char(ctx, *fmt++);
+			continue;
+		}
+
+		fmt++;
+
+		switch (*fmt) {
+		case '%':
+			klog_emit_char(ctx, '%');
+			break;
+
+		case 's':
+			klog_emit_string(ctx, va_arg(ap, const char *));
+			break;
+
+		case 'd':
+		case 'i':
+			klog_emit_int(ctx, va_arg(ap, int));
+			break;
+
+		case 'u':
+			klog_emit_uint(ctx, va_arg(ap, unsigned int), 10);
+			break;
+
+		case 'x':
+			klog_emit_uint(ctx, va_arg(ap, unsigned int), 16);
+			break;
+
+		case '\0':
+			klog_emit_char(ctx, '%');
+			return;
+
+		default:
+			/* Preserve unknown format specifiers literally. */
+			klog_emit_char(ctx, '%');
+			klog_emit_char(ctx, *fmt);
+			break;
+		}
+
+		fmt++;
+	}
+}
+
 void klog(enum log_level level, const char* fmt, ...) {
+	struct klog_emit_ctx ctx = { .used = 0 };
+	va_list ap;
+
+	(void)level;
+
+	if (fmt == NULL)
+		return;
+
+	klog_lock_internal();
+
+	va_start(ap, fmt);
+	klog_vprintf(&ctx, fmt, ap);
+	va_end(ap);
+
+	klog_emit_flush(&ctx);
+
+	klog_unlock_internal();
 }
