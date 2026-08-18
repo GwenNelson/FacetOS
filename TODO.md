@@ -629,7 +629,7 @@ DOCUMENTATION / PORTABILITY
 LATER / SIDE PROJECTS
 =====================
 
-[ ] 65. bootstub32
+[*] 65. bootstub32
     - NOT on the FacetOS critical path
     - Investigate a small 32-bit Multiboot2 loader/stub
     - Make QEMU -kernel workflows convenient
