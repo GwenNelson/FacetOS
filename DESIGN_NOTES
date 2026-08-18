@@ -3,9 +3,60 @@ Basic concept:
 	Microkernel servers, special files, other objects can be queried for what interfaces they support
 	An interface is a UUID representing the OOP-style interface supported by an object or server
 	Interfaces are used both within the same address space (where a tool can autogen code for it) and between spaces/processes
+	System is heavily split into different domains, similar to a hypervisor, and processes get different views
+
+Object stores can be saved to any block device, and a "filesystem view" of an object store can be created using an adapter
+For example, a filesystem view could represent all IImage objects in a particular object store
+
+No global registry of objects, but object stores can be mounted and appear in the VFS as:
+
+	/objects/StoreUUID/ObjectUUID
+	
+	This can be exported into the POSIX view or a pure POSIX domain so that traditional *nix apps can work with the object model
+
+Adapters can allow different views, so for example a filesystem could be adapted into an object store using something like the standard UNIX file(1) to figure out file types and representing files as objects
+Files that can't be identified would just be a generic IByteStream or whatever
+
+Interfaces like ITextFile or ITextStream can exist too
+
 
 A simple userspace lib allows querying an object for an interface and returns the relevant C struct or a generic struct for invoking methods etc
 If the object is within the same space, it goes direct, otherwise IPC magic happens
 
 Inspirations:
 	COM & UEFI
+
+domains:
+	domains are given access to only part of the hardware, including a slice of RAM or the ability to allocate from parent domain
+	domains can be "pure FacetOS" or "pure POSIX" and processes can be given a "POSIX view"
+	a "pure POSIX" domain is just a POSIX view with its own /etc and everything and where PID 1 is a POSIX process
+	POSIX domains and other *nix systems running inside VMs can import from a FacetOS domain using NFS and NIS
+
+POSIX view:
+	a process can be started with a "POSIX view" where it can see the same process table etc, but it also sees a read-only /etc that is dynamically generated from the FacetOS configuration
+
+virtual consoles:
+	idea is something like this can be possible:
+		alt-F1 is Domain 0, pure FacetOS login and shell
+		alt-F2 is a POSIX view of Domain 0
+		alt-F3 is a pure POSIX domain with its own /sbin/init as PID1 running getty for logins etc
+		alt-F4 is a VM for something like an OpenBSD VM that exists to provide networking support etc
+		alt-F5 is a VM with a tiny Linux presenting wayland/X11 for graphics etc
+
+dominit0 and child domains:
+	dominit0 is configured using a multiboot2 module config file and initrd & command-line arguments
+	a child domain is basically spawned as a subset of what the root task gets, with a few caps added for stuff like domain management, memory allocation, klog and so on
+	the caps are passed in by telling the child dominit0 it's a child with a command-line argument giving it the domain ID
+	by default, if not otherwise specified, dominit0 assumes it's domain ID 0, so in theory an entire FacetOS tree of domains can be virtualized
+
+	domains are told that they have domain management authority, either of their own children, or of siblings (by delegating up to their parent)
+	domains can also be told they don't have domain management authority - though technically nothing stops a child domain from doing so anyway, since domains are userland, dominit0 is "well behaved"
+
+	Not finalized:
+		dominit0 --domain-id=1 --domain-manager-cap=291 --klog-cap=292 --allocator-cap=293 --console-cap=294
+		config file is passed as a multiboot2 module represented in the BootInfo for now, but later on should be parsed by parent dominit0 and passed down
+		in the long run, want to make it not reliant on the seL4 BootInfo and have some custom format, and perhaps a small bootloader stub
+
+bootstub32
+	look into a small stub that allows booting a multiboot2 kernel and modules via a 32-bit stub so that qemu -kernel works properly
+	could be a useful general tool for upstream and other projects
