@@ -324,206 +324,46 @@ A domain is NOT simply:
     - one process
     - one thread
     - one VSpace
+    - necessarily an environment running FacetOS software
 
-A domain may contain many processes, threads, VSpaces, services and drivers.
+A domain represents a collection of resources and authority delegated from
+a parent domain.
 
-Normally a domain has a dominit0 instance responsible for initializing and
-managing it.
+A domain may contain:
 
-A domain receives some subset of the resources available to its parent.
+    - native FacetOS processes and services
+    - POSIX personality processes
+    - drivers
+    - child domains
+    - virtual machines running other operating systems
+    - combinations of the above
 
-This can include:
+Normally a native FacetOS domain has a dominit0 instance responsible for
+initializing and managing it.
 
-    - a slice of physical RAM / Untyped resources
-    - hardware devices
-    - MMIO regions
-    - IRQ authority
-    - capabilities to parent-provided services
-    - the ability to request resources from the parent
-    - capabilities useful for constructing child domains
+However, dominit0 is NOT what makes something a domain.
 
-The exact representation of these resources is still evolving.
+For example, a domain whose workload is an OpenBSD VM may contain no
+FacetOS userspace beyond whatever external FacetOS machinery is required
+to provide and manage its resources.
 
+Conceptually:
 
-Domains are not globally privileged objects
--------------------------------------------
-
-IMPORTANT:
-
-There is no requirement that FacetOS globally recognize some particular
-userspace process as the one legitimate dominit0.
-
-Likewise, "Domain 0" is not intended to be an unforgeable global identity.
-
-A process can simply run another copy of dominit0.
-
-A modified dominit0 can decide that it is Domain 0.
-
-A completely unrelated program could implement the relevant FacetOS
-interfaces and construct its own domain tree.
-
-This is allowed.
-
-For example:
-
-    outer Domain 0
+    FacetOS Domain
         |
-        +-- outer Domain 1
+        +-- delegated RAM
+        +-- delegated CPUs / scheduling resources
+        +-- delegated or virtual devices
+        +-- delegated services
+        +-- capability authority
         |
-        +-- outer Domain 7
-              |
-              +-- ordinary process
-                    |
-                    +-- nested Domain 0
-                          |
-                          +-- nested Domain 1
-                          |
-                          +-- nested Domain 2
-                                |
-                                +-- nested Domain 3
+        +-- workload:
+                OpenBSD VM
 
-The nested Domain 0 is perfectly free to consider itself the root of its
-own FacetOS hierarchy.
+The OpenBSD system is therefore not merely "a VM running inside a domain"
+in the architectural sense.
 
-This is intentional.
-
-It is conceptually similar to running:
-
-    QEMU
-      |
-      +-- guest OS
-            |
-            +-- QEMU
-                  |
-                  +-- nested guest OS
-
-The outer system does not need to prevent the inner system from pretending
-that it owns an entire machine.
-
-It merely needs to ensure that the inner system cannot access resources
-that were never delegated to it.
-
-
-Authority in nested domains
----------------------------
-
-Creating a domain hierarchy does NOT create authority.
-
-A nested Domain 0 can subdivide, delegate, proxy and reinterpret whatever
-resources and capabilities it possesses.
-
-It cannot manufacture authority over resources it does not possess.
-
-Therefore a process inside Domain 7 could construct an entire FacetOS tree
-which, from the inside, appears to have:
-
-    Domain 0
-    Domain 1
-    Domain 2
-    ...
-
-but the complete nested hierarchy remains confined by the capabilities
-available to the process/domain that created it.
-
-This is a desired property, not a loophole.
-
-
-Domain IDs
-----------
-
-Domain IDs should therefore be understood primarily in the context of a
-particular domain hierarchy.
-
-There may simultaneously be many domains calling themselves:
-
-    Domain 0
-
-at different levels of nesting.
-
-For example:
-
-    host hierarchy               nested hierarchy
-
-    Domain 0
-      |
-      +-- Domain 7
-            |
-            +------------------> Domain 0
-                                   |
-                                   +-- Domain 1
-                                   +-- Domain 2
-
-There is no inherent conflict.
-
-Whether some future facility also provides globally unique domain
-identifiers is a separate question and is NOT YET FINALIZED.
-
-
-Domain management policy versus authority
------------------------------------------
-
-A domain configuration can contain a setting indicating whether dominit0
-is expected to manage child domains.
-
-For example, conceptually:
-
-    manage_domains=true
-
-or:
-
-    manage_domains=false
-
-This setting is primarily a POLICY / BOOTSTRAP HINT.
-
-In particular:
-
-    manage_domains=false
-
-does NOT mean:
-
-    "FacetOS must technically prevent this domain from constructing a
-     domain hierarchy."
-
-It means something closer to:
-
-    "You are not being configured as the real/root domain manager of this
-     particular hierarchy."
-
-or:
-
-    "Do not normally expose/use domain-management facilities as part of
-     this configured domain."
-
-Nothing prevents that dominit0 from ignoring the hint.
-
-Nothing prevents another process in the domain from starting its own
-dominit0.
-
-Nothing prevents that process from calling itself Domain 0 and constructing
-its own complete nested domain hierarchy.
-
-This is intentional.
-
-What matters for security is what capabilities the process actually has.
-
-A process told:
-
-    manage_domains=false
-
-may still be able to build an entirely private nested hierarchy from memory,
-CSpace/VSpace resources and other authority that it legitimately possesses.
-
-It cannot thereby obtain control over its parent's domain tree, siblings,
-hardware or other resources unless suitable authority was explicitly
-delegated to it.
-
-Therefore:
-
-    "don't manage domains"
-
-is NOT a security mechanism.
-
-Capability delegation is the security mechanism.
+The VM itself represents the workload/personality of that domain.
 
 
 Domain types / personalities
@@ -531,38 +371,119 @@ Domain types / personalities
 
 Domains can have different intended personalities.
 
-Current ideas include:
+Current examples include:
 
     - pure FacetOS domain
     - pure POSIX domain
+    - virtual-machine domain running another operating system
 
-Processes inside a FacetOS domain can also be started with a POSIX view.
+The distinction describes what environment the domain presents internally,
+not a fundamentally different resource/security model.
+
+For example:
+
+    FacetOS domain
+        |
+        +-- dominit0
+        +-- native FacetOS processes
+
+    Pure POSIX domain
+        |
+        +-- POSIX init / PID 1
+        +-- POSIX processes
+
+    OpenBSD VM domain
+        |
+        +-- VMM
+        +-- OpenBSD kernel
+        +-- OpenBSD userspace
+
+All three are domains from the perspective of the parent.
+
+The parent delegates resources and authority to each and need not treat
+the VM as architecturally outside the domain model.
 
 
-POSIX view
-----------
+Virtual-machine domains
+-----------------------
 
-A POSIX view presents a UNIX-like environment to a process while remaining
-part of an existing FacetOS domain.
+A domain may use its delegated resources to run an entirely different
+operating system under a VMM.
 
-The current idea is that a process using the POSIX view can see the same
-underlying process/resource world as the FacetOS domain, but through POSIX
-abstractions.
+Examples might include:
 
-It also sees a read-only /etc generated dynamically from FacetOS
-configuration.
+    - OpenBSD
+    - Linux
+    - another FacetOS instance
+    - some other operating system
 
-The precise PID/process namespace semantics are NOT YET FINALIZED.
+The VMM and whatever FacetOS components support it are implementation
+details of the domain.
+
+From the parent's perspective, the important facts remain:
+
+    - which resources belong to the domain
+    - which capabilities/authority were delegated to it
+    - which interfaces/services it exposes
+    - which interfaces/services from the parent it may access
+
+A VM domain can therefore participate in the wider FacetOS system through
+adapters and conventional protocols.
+
+For example, an OpenBSD VM domain could provide networking services to
+other domains.
+
+A Linux VM domain could own the physical GPU and provide Wayland/X11 or
+other graphics services.
+
+The fact that the service implementation happens to live inside another
+operating system does not make it fundamentally different from another
+isolated FacetOS service.
+
+
+Nested virtualization and domains
+---------------------------------
+
+The recursive domain model applies equally to virtual machines.
+
+For example:
+
+    Domain 0
+        |
+        +-- Domain 1
+        |     pure FacetOS
+        |
+        +-- Domain 2
+        |     OpenBSD VM
+        |
+        +-- Domain 3
+              Linux VM
+              |
+              +-- QEMU
+                    |
+                    +-- nested guest
+
+The nested guest can itself be treated as another domain hierarchy if the
+software managing it chooses to expose it that way.
+
+Likewise, another complete FacetOS instance running inside a VM can call
+its own root:
+
+    Domain 0
+
+without conflicting with the outer Domain 0.
+
+Again, domain hierarchy and naming do not manufacture authority.
+Everything remains constrained by the resources/capabilities ultimately
+delegated from outside.
 
 
 Pure POSIX domain
 -----------------
 
-A pure POSIX domain is a separate FacetOS domain whose primary personality
-is POSIX.
+A pure POSIX domain is a FacetOS domain whose primary personality is POSIX.
 
-Conceptually it is similar to a POSIX view, except that it has its own
-domain-level UNIX environment, including:
+Conceptually it has its own domain-level UNIX environment, including:
 
     - its own /etc
     - its own process environment / namespace
@@ -570,24 +491,20 @@ domain-level UNIX environment, including:
     - /sbin/init or equivalent
     - getty/login etc. if desired
 
-It remains a FacetOS domain underneath.
+Unlike a VM domain, the POSIX personality can be implemented directly on
+FacetOS rather than by running a separate guest kernel.
 
+This gives an important distinction:
 
-Inter-domain UNIX compatibility
---------------------------------
+    POSIX view:
+        POSIX compatibility presented inside an existing FacetOS domain.
 
-POSIX domains and conventional UNIX systems running inside VMs should be
-able to consume services exported by FacetOS domains using conventional
-mechanisms where useful.
+    Pure POSIX domain:
+        separate domain running the FacetOS POSIX personality.
 
-Current ideas include:
-
-    NFS
-    NIS
-
-This allows ordinary UNIX environments to coexist with the native FacetOS
-object/interface model without requiring every guest/application to
-understand FacetOS.
+    UNIX VM domain:
+        separate domain whose workload is an actual UNIX kernel and its
+        userspace.
 
 
 VIRTUAL CONSOLES
@@ -604,16 +521,17 @@ One possible setup:
 
     Alt-F3:
         Pure POSIX domain
+        FacetOS POSIX personality
         Own /sbin/init as PID 1
         getty/login etc.
 
     Alt-F4:
-        VM running something like OpenBSD
+        OpenBSD VM domain
         Possibly providing networking services
 
     Alt-F5:
-        VM running a minimal Linux environment
-        Possibly providing Wayland/X11/GPU services
+        Linux VM domain
+        Possibly owning the GPU and providing Wayland/X11 services
 
 This is an example of what the domain architecture should make possible,
 not a mandatory fixed console layout.
@@ -623,7 +541,16 @@ DOMINIT0
 ========
 
 dominit0 is the program normally responsible for bootstrapping and managing
-a FacetOS domain.
+a native FacetOS domain.
+
+Not every FacetOS domain necessarily runs dominit0 as its internal workload.
+
+For example, a VM domain may instead be constructed by its parent and begin
+execution directly in a VMM/guest environment.
+
+"Domain" describes the resource/security boundary and delegated authority;
+"dominit0" is one mechanism for constructing and managing a FacetOS-native
+environment inside that boundary.
 
 The same basic dominit0 design should be usable for:
 
