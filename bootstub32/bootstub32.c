@@ -108,10 +108,19 @@ extern u8 __stub_end[];
  * QEMU/Bochs debug console at I/O port 0xe9.
  * This has no dependencies on VGA, libc, memory allocation or interrupts.
  */
+
+#ifdef BOOTSTUB_DEBUG_E9
 static inline void debug_char(char c)
 {
-	__asm__ volatile ("outb %0, $0xe9" : : "a" ((u8)c));
+	__asm__ volatile ("outb %0, $0xe9" : : "a" ((unsigned char)c));
 }
+#else
+static inline void debug_char(char c)
+{
+	(void)c;
+}
+#endif
+
 
 static __attribute__((noreturn)) void fail(const char *message)
 {

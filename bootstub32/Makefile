@@ -20,16 +20,23 @@ CFLAGS := \
 	-msoft-float \
 	-Wall \
 	-Wextra \
-	-Werror \
-	-O0 -g
+	-Werror
 
 ASFLAGS := \
 	-m32 \
 	-march=i386 \
 	-ffreestanding \
 	-fno-pic \
-	-fno-pie \
-	-g
+	-fno-pie
+
+
+ifeq ($(DEBUG),1)
+	CFLAGS += -O0 -g -DBOOTSTUB_DEBUG_E9
+	ASFLAGS += -g -DBOOTSTUB_DEBUG_E9
+else
+	CFLAGS += -O2
+endif
+
 
 all: bootstub32
 

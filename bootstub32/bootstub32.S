@@ -37,12 +37,18 @@
  *
  * Writing a byte to port 0xe9 makes it immediately visible.
  */
+#ifdef BOOTSTUB_DEBUG_E9
 .macro DEBUG_CHAR ch
 	pushl %eax
 	movb $\ch, %al
 	outb %al, $0xe9
 	popl %eax
 .endm
+#else
+.macro DEBUG_CHAR ch
+.endm
+#endif
+
 
 _start:
 	cli
