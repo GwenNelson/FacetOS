@@ -17,6 +17,9 @@ FACET_BUILD          := $(ROOT)/build/facetos
 FACET_DOMINIT0_BUILD := $(FACET_BUILD)/dominit0
 FACET_DOMINIT0       := $(FACET_DOMINIT0_BUILD)/dominit0
 
+BOOTSTUB32_DIR := $(ROOT)/bootstub32
+BOOTSTUB32     := $(BOOTSTUB32_DIR)/bootstub32
+
 SEL4_CONFIG := $(ROOT)/config/FacetOS-seL4.cmake
 
 SEL4_ENV := PATH="$(VENV)/bin:$(PATH)"
@@ -36,6 +39,12 @@ FACET_CFLAGS := \
 	-mno-red-zone \
 	-MMD \
 	-MP
+
+ifeq ($(DEBUG),1)
+	FACET_CFLAGS += -Og -g -DDEBUG
+else
+	FACET_CFLAGS += -O2
+endif
 
 SEL4_INCLUDES := \
 	-I$(ROOT)/external/seL4/libsel4/include \
@@ -79,9 +88,12 @@ FACET_DOMINIT0_DEPS := $(FACET_DOMINIT0_OBJS:.o=.d)
 	patches \
 	sdk \
 	facetos \
+	bootstub32 \
 	image \
 	run \
+	run-iso \
 	facet-clean \
+	bootstub32-clean \
 	sdk-clean \
 	full-clean
 
@@ -213,7 +225,42 @@ facetos: $(FACET_DOMINIT0)
 
 
 #
-# QEMU & GRUB.
+# bootstub32.
+#
+# Pass DEBUG through so:
+#
+#     make DEBUG=1
+#
+# builds both dominit0 and bootstub32 with their respective debug
+# settings enabled.
+#
+
+bootstub32:
+	$(MAKE) -C $(BOOTSTUB32_DIR) DEBUG=$(DEBUG)
+
+
+#
+# QEMU direct boot.
+#
+# QEMU loads bootstub32 as its Multiboot kernel. The first initrd module
+# is the real seL4 ELF; bootstub32 consumes it and passes the remaining
+# modules to seL4.
+#
+
+run: facetos bootstub32
+	qemu-system-x86_64 \
+		-enable-kvm \
+		-cpu host \
+		-m 512M \
+		-kernel $(BOOTSTUB32) \
+		-initrd $(SDK_BUILD)/kernel/kernel.elf,$(FACET_DOMINIT0) \
+		-serial stdio
+
+
+#
+# GRUB ISO.
+#
+# Keep this as the conventional/reference boot path.
 #
 
 ISO_ROOT    := $(ROOT)/build/iso
@@ -238,7 +285,7 @@ image: facetos
 		$(ISO_ROOT)
 
 
-run: image
+run-iso: image
 	qemu-system-x86_64 \
 		-enable-kvm \
 		-cpu host \
@@ -257,6 +304,10 @@ facet-clean:
 	rm -rf $(FACETOS_ISO)
 
 
+bootstub32-clean:
+	$(MAKE) -C $(BOOTSTUB32_DIR) clean
+
+
 sdk-clean:
 	rm -rf $(SDK_BUILD)
 	rm -rf $(SDK)
@@ -264,6 +315,6 @@ sdk-clean:
 	git -C $(SEL4_RUNTIME) reset --hard
 
 
-full-clean: sdk-clean facet-clean
+full-clean: sdk-clean facet-clean bootstub32-clean
 	rm -rf $(ROOT)/sdk
 	rm -rf $(ROOT)/build
