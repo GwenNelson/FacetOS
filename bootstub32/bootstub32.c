@@ -248,20 +248,18 @@ static u32 load_kernel_elf(struct multiboot_module *kernel_module)
 	    "kernel entry point is above 4GiB");
 }
 
+
 static void remove_kernel_module(struct multiboot_info *mbi)
 {
 	struct multiboot_module *mods =
 		(struct multiboot_module *)mbi->mods_addr;
 
-	/*
-	 * Module 0 is the real kernel ELF.
-	 * Shift every other module down one slot.
-	 *
-	 * Their data and string pointers remain where QEMU loaded them;
-	 * only the descriptor array changes.
-	 */
-	for (u32 i = 1; i < mbi->mods_count; i++)
-		mods[i - 1] = mods[i];
+	for (u32 i = 1; i < mbi->mods_count; i++) {
+		mods[i - 1].start    = mods[i].start;
+		mods[i - 1].end      = mods[i].end;
+		mods[i - 1].string   = mods[i].string;
+		mods[i - 1].reserved = mods[i].reserved;
+	}
 
 	mbi->mods_count--;
 }

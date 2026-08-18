@@ -3,8 +3,10 @@
 CC ?= gcc
 LD ?= ld
 
+
 CFLAGS := \
 	-m32 \
+	-march=i386 \
 	-std=gnu11 \
 	-ffreestanding \
 	-fno-pic \
@@ -12,16 +14,22 @@ CFLAGS := \
 	-fno-stack-protector \
 	-fno-asynchronous-unwind-tables \
 	-fno-unwind-tables \
+	-mno-sse \
+	-mno-sse2 \
+	-mno-mmx \
+	-msoft-float \
 	-Wall \
 	-Wextra \
 	-Werror \
-	-O2
+	-O0 -g
 
 ASFLAGS := \
 	-m32 \
+	-march=i386 \
 	-ffreestanding \
 	-fno-pic \
-	-fno-pie
+	-fno-pie \
+	-g
 
 all: bootstub32
 
