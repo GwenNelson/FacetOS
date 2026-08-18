@@ -9,12 +9,13 @@ VENV := $(ROOT)/.venv
 SEL4_SRC     := $(ROOT)/external/seL4
 SEL4_RUNTIME := $(ROOT)/external/sel4runtime
 
-SDK_BUILD  := $(ROOT)/build/sdk
-SDK        := $(ROOT)/sdk
-SEL4_SDK   := $(SDK)/sel4
+SDK_BUILD := $(ROOT)/build/sdk
+SDK       := $(ROOT)/sdk
+SEL4_SDK  := $(SDK)/sel4
 
-FACET_BUILD := $(ROOT)/build/facetos
-FACET_INIT  := $(FACET_BUILD)/init
+FACET_BUILD          := $(ROOT)/build/facetos
+FACET_DOMINIT0_BUILD := $(FACET_BUILD)/dominit0
+FACET_DOMINIT0       := $(FACET_DOMINIT0_BUILD)/dominit0
 
 SEL4_CONFIG := $(ROOT)/config/FacetOS-seL4.cmake
 
@@ -24,7 +25,7 @@ CC := gcc
 
 
 #
-# FacetOS compiler settings
+# FacetOS "kernel" (seL4 tasks) compiler settings
 #
 
 FACET_CFLAGS := \
@@ -59,18 +60,30 @@ FACET_INCLUDES := \
 
 
 #
-# FacetOS root task objects.
+# FacetOS dominit0 objects.
+#
+# Sources live in src/dominit0/.
 #
 
-FACET_OBJS := \
-	$(FACET_BUILD)/klock.o \
-	$(FACET_BUILD)/klog.o \
-	$(FACET_BUILD)/init.o
+FACET_DOMINIT0_SRCS := $(wildcard $(ROOT)/src/dominit0/*.c)
 
-FACET_DEPS := $(FACET_OBJS:.o=.d)
+FACET_DOMINIT0_OBJS := \
+	$(patsubst $(ROOT)/src/dominit0/%.c,$(FACET_DOMINIT0_BUILD)/%.o,$(FACET_DOMINIT0_SRCS))
+
+FACET_DOMINIT0_DEPS := $(FACET_DOMINIT0_OBJS:.o=.d)
 
 
-.PHONY: all venv patches sdk facetos run clean sdk-clean image
+.PHONY: \
+	all \
+	venv \
+	patches \
+	sdk \
+	facetos \
+	image \
+	run \
+	facet-clean \
+	sdk-clean \
+	full-clean
 
 
 all: facetos
@@ -87,7 +100,7 @@ venv:
 
 
 #
-# Patch nonsense
+# Patch nonsense.
 #
 
 SEL4RUNTIME_PATCH_STAMP := $(SEL4_RUNTIME)/.facetos-patched
@@ -124,21 +137,27 @@ sdk: patches
 
 
 #
-# FacetOS
+# FacetOS build directories.
 #
 
 $(FACET_BUILD):
 	mkdir -p $(FACET_BUILD)
 
+$(FACET_DOMINIT0_BUILD): | $(FACET_BUILD)
+	mkdir -p $(FACET_DOMINIT0_BUILD)
+
 
 #
-# Compile FacetOS source modules.
+# Compile dominit0 source modules.
 #
-# Any src/foo.c listed as build/facetos/foo.o in FACET_OBJS
-# is automatically compiled by this rule.
+# Any src/dominit0/foo.c listed as:
+#
+#     $(FACET_DOMINIT0_BUILD)/foo.o
+#
+# in FACET_DOMINIT0_OBJS is automatically compiled by this rule.
 #
 
-$(FACET_BUILD)/%.o: src/%.c | $(FACET_BUILD)
+$(FACET_DOMINIT0_BUILD)/%.o: src/dominit0/%.c | $(FACET_DOMINIT0_BUILD)
 	$(CC) \
 		$(FACET_CFLAGS) \
 		$(SEL4_INCLUDES) \
@@ -154,18 +173,21 @@ $(FACET_BUILD)/%.o: src/%.c | $(FACET_BUILD)
 # -MP prevents removed headers from causing stale dependency errors.
 #
 
--include $(FACET_DEPS)
+-include $(FACET_DOMINIT0_DEPS)
 
 
 #
-# Link the FacetOS root task.
+# Link dominit0.
 #
 # sel4runtime contains its own CRT/startup objects. Since they live
 # inside a static archive, explicitly requiring _sel4_start causes
 # the linker to extract the startup path from libsel4runtime.a.
 #
+# crti.o and crtn.o must surround the linked objects/libraries so
+# the init/fini sections are constructed correctly.
+#
 
-$(FACET_INIT): $(FACET_OBJS)
+$(FACET_DOMINIT0): $(FACET_DOMINIT0_OBJS)
 	$(CC) \
 		-nostdlib \
 		-static \
@@ -175,7 +197,7 @@ $(FACET_INIT): $(FACET_OBJS)
 		-Wl,-T,$(ROOT)/external/seL4_tools/cmake-tool/helpers/tls_rootserver.lds \
 		-o $@ \
 		$(ROOT)/build/sdk/lib/crti.o \
-		$(FACET_OBJS) \
+		$(FACET_DOMINIT0_OBJS) \
 		-Wl,--start-group \
 		$(ROOT)/build/sdk/libsel4/libsel4.a \
 		$(ROOT)/build/sdk/sel4runtime/libsel4runtime.a \
@@ -183,19 +205,20 @@ $(FACET_INIT): $(FACET_OBJS)
 		$(ROOT)/build/sdk/lib/crtn.o
 
 	@echo
-	@echo "FacetOS init linked successfully."
+	@echo "FacetOS dominit0 linked successfully."
 	@echo
 
 
-facetos: $(FACET_INIT)
+facetos: $(FACET_DOMINIT0)
 
 
 #
-# QEMU & GRUB etc
+# QEMU & GRUB.
 #
 
-ISO_ROOT := $(ROOT)/build/iso
+ISO_ROOT    := $(ROOT)/build/iso
 FACETOS_ISO := $(ROOT)/build/facetos.iso
+
 
 image: facetos
 	rm -rf $(ISO_ROOT)
@@ -204,8 +227,8 @@ image: facetos
 	cp $(SDK_BUILD)/kernel/kernel.elf \
 		$(ISO_ROOT)/boot/kernel.elf
 
-	cp $(FACET_INIT) \
-		$(ISO_ROOT)/boot/init
+	cp $(FACET_DOMINIT0) \
+		$(ISO_ROOT)/boot/dominit0
 
 	cp $(ROOT)/boot/grub.cfg \
 		$(ISO_ROOT)/boot/grub/grub.cfg
@@ -225,10 +248,10 @@ run: image
 
 
 #
-# Cleaning
+# Cleaning.
 #
 
-clean:
+facet-clean:
 	rm -rf $(FACET_BUILD)
 	rm -rf $(ISO_ROOT)
 	rm -rf $(FACETOS_ISO)
@@ -239,3 +262,8 @@ sdk-clean:
 	rm -rf $(SDK)
 	rm -rf $(SEL4_RUNTIME)/.facetos-patched
 	git -C $(SEL4_RUNTIME) reset --hard
+
+
+full-clean: sdk-clean facet-clean
+	rm -rf $(ROOT)/sdk
+	rm -rf $(ROOT)/build
