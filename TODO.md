@@ -21,7 +21,7 @@ back into bootstrap code.
 CURRENT BOOTSTRAP / TREE CLEANUP
 ================================
 
-[ ] 1. Finish dominit0 source/build refactor
+[*] 1. Finish dominit0 source/build refactor
     - Keep the initial root executable named dominit0
     - Keep its sources under src/dominit0/
     - Build all direct src/dominit0/*.c translation units automatically
