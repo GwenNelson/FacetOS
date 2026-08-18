@@ -1,4 +1,4 @@
-#include <klock.h>
+#include <facetos/dominit0/klock.h>
 #include <stdatomic.h>
 
 static inline void klock_cpu_relax() {

@@ -1,5 +1,5 @@
-#include <klog.h>
-#include <klock.h>
+#include <facetos/dominit0/klog.h>
+#include <facetos/dominit0/klock.h>
 #include <sel4/sel4.h>
 #include <stdarg.h>
 #include <stdint.h>

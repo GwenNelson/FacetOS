@@ -2,6 +2,8 @@
 # FacetOS
 #
 
+.DEFAULT_GOAL := all
+
 ROOT := $(CURDIR)
 
 VENV := $(ROOT)/.venv
@@ -13,9 +15,7 @@ SDK_BUILD := $(ROOT)/build/sdk
 SDK       := $(ROOT)/sdk
 SEL4_SDK  := $(SDK)/sel4
 
-FACET_BUILD          := $(ROOT)/build/facetos
-FACET_DOMINIT0_BUILD := $(FACET_BUILD)/dominit0
-FACET_DOMINIT0       := $(FACET_DOMINIT0_BUILD)/dominit0
+FACET_BUILD := $(ROOT)/build/facetos
 
 BOOTSTUB32_DIR := $(ROOT)/bootstub32
 BOOTSTUB32     := $(BOOTSTUB32_DIR)/bootstub32
@@ -25,10 +25,11 @@ SEL4_CONFIG := $(ROOT)/config/FacetOS-seL4.cmake
 SEL4_ENV := PATH="$(VENV)/bin:$(PATH)"
 
 CC := gcc
+AR := ar
 
 
 #
-# FacetOS "kernel" (seL4 tasks) compiler settings
+# FacetOS compiler settings.
 #
 
 FACET_CFLAGS := \
@@ -69,17 +70,196 @@ FACET_INCLUDES := \
 
 
 #
-# FacetOS dominit0 objects.
+# FacetOS component system.
 #
-# Sources live in src/dominit0/.
+# Register each native component ONCE in COMPONENTS and declare it below.
+#
+# Every component gets:
+#
+#     FACET_<NAME>_DIR
+#     FACET_<NAME>_BUILD
+#     FACET_<NAME>_SRCS
+#     FACET_<NAME>_OBJS
+#     FACET_<NAME>_DEPS
+#     FACET_<NAME>_CFLAGS
+#
+# The generic component macro also creates:
+#
+#     build directory rule
+#     src/<dir>/*.c -> build/facetos/<dir>/*.o rule
+#
+# $(1) = uppercase component name
+# $(2) = source/build directory name
 #
 
-FACET_DOMINIT0_SRCS := $(wildcard $(ROOT)/src/dominit0/*.c)
+COMPONENTS :=
 
-FACET_DOMINIT0_OBJS := \
-	$(patsubst $(ROOT)/src/dominit0/%.c,$(FACET_DOMINIT0_BUILD)/%.o,$(FACET_DOMINIT0_SRCS))
 
-FACET_DOMINIT0_DEPS := $(FACET_DOMINIT0_OBJS:.o=.d)
+define FACET_COMPONENT
+COMPONENTS += $(1)
+
+FACET_$(1)_DIR := $(2)
+FACET_$(1)_BUILD := $$(FACET_BUILD)/$(2)
+
+FACET_$(1)_SRCS := \
+	$$(wildcard $$(ROOT)/src/$(2)/*.c)
+
+FACET_$(1)_OBJS := \
+	$$(patsubst \
+		$$(ROOT)/src/$(2)/%.c, \
+		$$(FACET_$(1)_BUILD)/%.o, \
+		$$(FACET_$(1)_SRCS))
+
+FACET_$(1)_DEPS := \
+	$$(FACET_$(1)_OBJS:.o=.d)
+
+FACET_$(1)_CFLAGS ?=
+FACET_$(1)_LIBS ?=
+
+$$(FACET_$(1)_BUILD):
+	mkdir -p $$@
+
+$$(FACET_$(1)_BUILD)/%.o: $$(ROOT)/src/$(2)/%.c | $$(FACET_$(1)_BUILD)
+	$$(CC) \
+		$$(FACET_CFLAGS) \
+		$$(FACET_$(1)_CFLAGS) \
+		$$(SEL4_INCLUDES) \
+		$$(FACET_INCLUDES) \
+		-c $$< \
+		-o $$@
+endef
+
+
+#
+# Static-library component.
+#
+# Adds:
+#
+#     FACET_<NAME>_TARGET
+#
+# and generates the archive rule and a lowercase-named phony target.
+#
+# $(1) = uppercase component name
+# $(2) = source/build directory
+# $(3) = output basename, without .a
+# $(4) = phony target name
+#
+
+define FACET_STATIC_LIBRARY
+$$(eval $$(call FACET_COMPONENT,$(1),$(2)))
+
+FACET_$(1)_TARGET := \
+	$$(FACET_$(1)_BUILD)/$(3).a
+
+$$(FACET_$(1)_TARGET): $$(FACET_$(1)_OBJS)
+	$$(AR) rcs $$@ $$^
+
+	@echo
+	@echo "FacetOS $(3).a built successfully."
+	@echo
+
+.PHONY: $(4)
+$(4): $$(FACET_$(1)_TARGET)
+endef
+
+
+#
+# Generic executable component.
+#
+# This is for ordinary executables whose link does not require a bespoke
+# startup sequence.  Special executables such as dominit0 can still use
+# FACET_COMPONENT and provide their own final link rule.
+#
+# Adds:
+#
+#     FACET_<NAME>_TARGET
+#     FACET_<NAME>_LDFLAGS
+#     FACET_<NAME>_LIBS
+#
+# $(1) = uppercase component name
+# $(2) = source/build directory
+# $(3) = output filename
+# $(4) = phony target name
+#
+
+define FACET_EXECUTABLE
+$$(eval $$(call FACET_COMPONENT,$(1),$(2)))
+
+FACET_$(1)_TARGET := \
+	$$(FACET_$(1)_BUILD)/$(3)
+
+FACET_$(1)_LDFLAGS ?=
+
+$$(FACET_$(1)_TARGET): $$(FACET_$(1)_OBJS) $$(FACET_$(1)_LIBS)
+	$$(CC) \
+		$$(FACET_$(1)_LDFLAGS) \
+		-o $$@ \
+		$$(FACET_$(1)_OBJS) \
+		$$(FACET_$(1)_LIBS)
+
+	@echo
+	@echo "FacetOS $(3) linked successfully."
+	@echo
+
+.PHONY: $(4)
+$(4): $$(FACET_$(1)_TARGET)
+endef
+
+
+#
+# Component declarations.
+#
+
+$(eval $(call FACET_STATIC_LIBRARY,KLIBC,klibc,klibc,klibc))
+$(eval $(call FACET_COMPONENT,DOMINIT0,dominit0))
+
+FACET_DOMINIT0_TARGET := $(FACET_DOMINIT0_BUILD)/dominit0
+
+#
+# Optional per-component compiler flags.
+#
+# Example:
+#
+#     FACET_DOMINIT0_CFLAGS += -DFOO
+#
+# These are added after FACET_CFLAGS and therefore apply only to the named
+# component's translation units.
+#
+
+FACET_KLIBC_CFLAGS    :=
+FACET_DOMINIT0_CFLAGS :=
+
+#
+# Per-component library dependencies.
+#
+# List actual library targets here.  These are both Make prerequisites
+# and linker inputs for components whose link rule consumes FACET_<NAME>_LIBS.
+#
+
+FACET_DOMINIT0_LIBS := \
+	$(FACET_KLIBC_TARGET)
+
+
+#
+# Automatically generated dependency files.
+#
+# This is derived from COMPONENTS, so adding another registered component
+# automatically adds its generated .d files here.
+#
+
+FACET_DEPS := \
+	$(foreach component,$(COMPONENTS),$(FACET_$(component)_DEPS))
+
+-include $(FACET_DEPS)
+
+
+#
+# Top-level native build outputs.
+#
+
+FACET_NATIVE_TARGETS := \
+	$(FACET_KLIBC_TARGET) \
+	$(FACET_DOMINIT0_TARGET)
 
 
 .PHONY: \
@@ -88,6 +268,7 @@ FACET_DOMINIT0_DEPS := $(FACET_DOMINIT0_OBJS:.o=.d)
 	patches \
 	sdk \
 	facetos \
+	dominit0 \
 	bootstub32 \
 	image \
 	run \
@@ -96,7 +277,6 @@ FACET_DOMINIT0_DEPS := $(FACET_DOMINIT0_OBJS:.o=.d)
 	bootstub32-clean \
 	sdk-clean \
 	full-clean
-
 
 all: facetos
 
@@ -115,14 +295,26 @@ venv:
 # Patch nonsense.
 #
 
-SEL4RUNTIME_PATCH_STAMP := $(SEL4_RUNTIME)/.facetos-patched
 
-$(SEL4RUNTIME_PATCH_STAMP):
-	git -C $(SEL4_RUNTIME) apply \
-		$(ROOT)/patches/sel4runtime-gcc16.patch
-	touch $@
+#
+# Patches.
+#
 
-patches: $(SEL4RUNTIME_PATCH_STAMP)
+SEL4RUNTIME_GCC16_PATCH := \
+	$(ROOT)/patches/sel4runtime-gcc16.patch
+
+
+patches:
+	@if git -C $(SEL4_RUNTIME) apply \
+		--reverse --check \
+		$(SEL4RUNTIME_GCC16_PATCH) >/dev/null 2>&1; then \
+		echo "sel4runtime GCC 16 patch already applied."; \
+	else \
+		echo "Applying sel4runtime GCC 16 patch..."; \
+		git -C $(SEL4_RUNTIME) apply \
+			$(SEL4RUNTIME_GCC16_PATCH); \
+	fi
+
 
 
 #
@@ -143,63 +335,33 @@ sdk: patches
 		-S $(ROOT)/cmake/sdk \
 		-B $(SDK_BUILD)
 
-	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf sel4runtime
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) \
+		kernel.elf \
+		sel4runtime
 
 	$(SEL4_ENV) cmake --install $(SDK_BUILD)
 
 
 #
-# FacetOS build directories.
+# dominit0.
+#
+# Keep this final link deliberately special for now.
+#
+# dominit0 is the seL4 root task and needs:
+#
+#     - sel4runtime startup
+#     - special entry point
+#     - special linker script
+#     - CRT ordering
+#     - seL4 runtime libraries
+#
+# klibc.a is linked as a normal FacetOS dependency.
 #
 
-$(FACET_BUILD):
-	mkdir -p $(FACET_BUILD)
+$(FACET_DOMINIT0_TARGET): \
+	$(FACET_DOMINIT0_OBJS) \
+	$(FACET_DOMINIT0_LIBS)
 
-$(FACET_DOMINIT0_BUILD): | $(FACET_BUILD)
-	mkdir -p $(FACET_DOMINIT0_BUILD)
-
-
-#
-# Compile dominit0 source modules.
-#
-# Any src/dominit0/foo.c listed as:
-#
-#     $(FACET_DOMINIT0_BUILD)/foo.o
-#
-# in FACET_DOMINIT0_OBJS is automatically compiled by this rule.
-#
-
-$(FACET_DOMINIT0_BUILD)/%.o: src/dominit0/%.c | $(FACET_DOMINIT0_BUILD)
-	$(CC) \
-		$(FACET_CFLAGS) \
-		$(SEL4_INCLUDES) \
-		$(FACET_INCLUDES) \
-		-c $< \
-		-o $@
-
-
-#
-# Automatically generated header dependencies.
-#
-# -MMD generates a .d file alongside each .o.
-# -MP prevents removed headers from causing stale dependency errors.
-#
-
--include $(FACET_DOMINIT0_DEPS)
-
-
-#
-# Link dominit0.
-#
-# sel4runtime contains its own CRT/startup objects. Since they live
-# inside a static archive, explicitly requiring _sel4_start causes
-# the linker to extract the startup path from libsel4runtime.a.
-#
-# crti.o and crtn.o must surround the linked objects/libraries so
-# the init/fini sections are constructed correctly.
-#
-
-$(FACET_DOMINIT0): $(FACET_DOMINIT0_OBJS)
 	$(CC) \
 		-nostdlib \
 		-static \
@@ -211,6 +373,7 @@ $(FACET_DOMINIT0): $(FACET_DOMINIT0_OBJS)
 		$(ROOT)/build/sdk/lib/crti.o \
 		$(FACET_DOMINIT0_OBJS) \
 		-Wl,--start-group \
+		$(FACET_DOMINIT0_LIBS) \
 		$(ROOT)/build/sdk/libsel4/libsel4.a \
 		$(ROOT)/build/sdk/sel4runtime/libsel4runtime.a \
 		-Wl,--end-group \
@@ -221,18 +384,24 @@ $(FACET_DOMINIT0): $(FACET_DOMINIT0_OBJS)
 	@echo
 
 
-facetos: $(FACET_DOMINIT0)
+dominit0: $(FACET_DOMINIT0_TARGET)
+
+
+#
+# Complete native FacetOS build.
+#
+
+facetos: $(FACET_NATIVE_TARGETS)
 
 
 #
 # bootstub32.
 #
-# Pass DEBUG through so:
+# DEBUG is passed through so:
 #
 #     make DEBUG=1
 #
-# builds both dominit0 and bootstub32 with their respective debug
-# settings enabled.
+# enables the bootstub's own debug configuration.
 #
 
 bootstub32:
@@ -240,68 +409,115 @@ bootstub32:
 
 
 #
-# QEMU direct boot.
+# ISO image contents.
 #
-# QEMU loads bootstub32 as its Multiboot kernel. The first initrd module
-# is the real seL4 ELF; bootstub32 consumes it and passes the remaining
-# modules to seL4.
+# Each logical entry gets:
 #
-
-run: facetos bootstub32
-	qemu-system-x86_64 \
-		-enable-kvm \
-		-cpu host \
-		-m 512M \
-		-kernel $(BOOTSTUB32) \
-		-initrd $(SDK_BUILD)/kernel/kernel.elf,$(FACET_DOMINIT0) \
-		-serial stdio
-
-
+#     ISO_<NAME>_SRC
+#     ISO_<NAME>_DST
 #
-# GRUB ISO.
-#
-# Keep this as the conventional/reference boot path.
+# Add the entry name to ISO_FILES and the generic population rule handles it.
 #
 
 ISO_ROOT    := $(ROOT)/build/iso
 FACETOS_ISO := $(ROOT)/build/facetos.iso
 
+ISO_FILES := \
+	KERNEL \
+	DOMINIT0 \
+	GRUBCFG
 
-image: facetos
-	rm -rf $(ISO_ROOT)
-	mkdir -p $(ISO_ROOT)/boot/grub
+ISO_KERNEL_SRC := $(SDK_BUILD)/kernel/kernel.elf
+ISO_KERNEL_DST := boot/kernel.elf
 
-	cp $(SDK_BUILD)/kernel/kernel.elf \
-		$(ISO_ROOT)/boot/kernel.elf
+ISO_DOMINIT0_SRC := $(FACET_DOMINIT0_TARGET)
+ISO_DOMINIT0_DST := boot/dominit0
 
-	cp $(FACET_DOMINIT0) \
-		$(ISO_ROOT)/boot/dominit0
+ISO_GRUBCFG_SRC := $(ROOT)/boot/grub.cfg
+ISO_GRUBCFG_DST := boot/grub/grub.cfg
 
-	cp $(ROOT)/boot/grub.cfg \
-		$(ISO_ROOT)/boot/grub/grub.cfg
 
+#
+# Generate one ordinary Make target for each file installed into the ISO tree.
+# This means source timestamps work normally and adding another ISO file only
+# requires adding its logical name plus SRC/DST metadata above.
+#
+
+define ISO_FILE_RULE
+ISO_$(1)_TARGET := $$(ISO_ROOT)/$$(ISO_$(1)_DST)
+
+$$(ISO_$(1)_TARGET): $$(ISO_$(1)_SRC)
+	mkdir -p $$(dir $$@)
+	cp $$< $$@
+endef
+
+$(foreach file,$(ISO_FILES),$(eval $(call ISO_FILE_RULE,$(file))))
+
+ISO_TARGETS := \
+	$(foreach file,$(ISO_FILES),$(ISO_$(file)_TARGET))
+
+
+image: facetos $(ISO_TARGETS)
 	grub-mkrescue \
 		-o $(FACETOS_ISO) \
 		$(ISO_ROOT)
 
 
+
+#
+# QEMU.
+#
+# Keep machine-wide settings in QEMU_FLAGS.
+# Individual run targets append only the boot mechanism they need.
+#
+
+QEMU := qemu-system-x86_64
+
+QEMU_FLAGS := \
+	-enable-kvm \
+	-cpu host \
+	-m 512M \
+	-serial stdio
+
+ifeq ($(QEMU_GDB),1)
+	QEMU_FLAGS += -S -s
+endif
+
+
+QEMU_DIRECT_FLAGS := \
+	-kernel $(BOOTSTUB32) \
+	-initrd $(SDK_BUILD)/kernel/kernel.elf,$(FACET_DOMINIT0_TARGET)
+
+QEMU_ISO_FLAGS := \
+	-cdrom $(FACETOS_ISO)
+
+
+run: facetos bootstub32
+	$(QEMU) \
+		$(QEMU_FLAGS) \
+		$(QEMU_DIRECT_FLAGS)
+
+
 run-iso: image
-	qemu-system-x86_64 \
-		-enable-kvm \
-		-cpu host \
-		-m 512M \
-		-cdrom $(FACETOS_ISO) \
-		-serial stdio
+	$(QEMU) \
+		$(QEMU_FLAGS) \
+		$(QEMU_ISO_FLAGS)
 
 
 #
 # Cleaning.
 #
+# Native FacetOS components all live below FACET_BUILD, so one removal
+# automatically covers every component listed in COMPONENTS.
+#
+# External/sub-build systems register their clean target in
+# EXTERNAL_CLEAN_TARGETS.
+#
 
 facet-clean:
 	rm -rf $(FACET_BUILD)
 	rm -rf $(ISO_ROOT)
-	rm -rf $(FACETOS_ISO)
+	rm -f $(FACETOS_ISO)
 
 
 bootstub32-clean:
@@ -311,10 +527,14 @@ bootstub32-clean:
 sdk-clean:
 	rm -rf $(SDK_BUILD)
 	rm -rf $(SDK)
-	rm -rf $(SEL4_RUNTIME)/.facetos-patched
 	git -C $(SEL4_RUNTIME) reset --hard
 
 
-full-clean: sdk-clean facet-clean bootstub32-clean
-	rm -rf $(ROOT)/sdk
+EXTERNAL_CLEAN_TARGETS := \
+	sdk-clean \
+	bootstub32-clean
+
+
+full-clean: facet-clean $(EXTERNAL_CLEAN_TARGETS)
 	rm -rf $(ROOT)/build
+	rm -rf $(ROOT)/sdk
