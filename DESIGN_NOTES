@@ -1,62 +1,1079 @@
-Basic concept:
-	POSIXy unless stated otherwise
-	Microkernel servers, special files, other objects can be queried for what interfaces they support
-	An interface is a UUID representing the OOP-style interface supported by an object or server
-	Interfaces are used both within the same address space (where a tool can autogen code for it) and between spaces/processes
-	System is heavily split into different domains, similar to a hypervisor, and processes get different views
+FacetOS Design Notes
+====================
 
-Object stores can be saved to any block device, and a "filesystem view" of an object store can be created using an adapter
-For example, a filesystem view could represent all IImage objects in a particular object store
+These are architectural/design notes, not a finalized specification.
 
-No global registry of objects, but object stores can be mounted and appear in the VFS as:
-
-	/objects/StoreUUID/ObjectUUID
-	
-	This can be exported into the POSIX view or a pure POSIX domain so that traditional *nix apps can work with the object model
-
-Adapters can allow different views, so for example a filesystem could be adapted into an object store using something like the standard UNIX file(1) to figure out file types and representing files as objects
-Files that can't be identified would just be a generic IByteStream or whatever
-
-Interfaces like ITextFile or ITextStream can exist too
+Some details are deliberately unresolved. Where this is the case they are
+marked as such rather than silently implying that a decision has already
+been made.
 
 
-A simple userspace lib allows querying an object for an interface and returns the relevant C struct or a generic struct for invoking methods etc
-If the object is within the same space, it goes direct, otherwise IPC magic happens
+CORE DESIGN
+===========
 
-Inspirations:
-	COM & UEFI
+Basic philosophy:
 
-domains:
-	domains are given access to only part of the hardware, including a slice of RAM or the ability to allocate from parent domain
-	domains can be "pure FacetOS" or "pure POSIX" and processes can be given a "POSIX view"
-	a "pure POSIX" domain is just a POSIX view with its own /etc and everything and where PID 1 is a POSIX process
-	POSIX domains and other *nix systems running inside VMs can import from a FacetOS domain using NFS and NIS
+    POSIXy unless stated otherwise.
 
-POSIX view:
-	a process can be started with a "POSIX view" where it can see the same process table etc, but it also sees a read-only /etc that is dynamically generated from the FacetOS configuration
+FacetOS should provide a familiar POSIX-like environment by default while
+also exposing a native object/interface model for functionality that does
+not fit naturally into traditional UNIX abstractions.
 
-virtual consoles:
-	idea is something like this can be possible:
-		alt-F1 is Domain 0, pure FacetOS login and shell
-		alt-F2 is a POSIX view of Domain 0
-		alt-F3 is a pure POSIX domain with its own /sbin/init as PID1 running getty for logins etc
-		alt-F4 is a VM for something like an OpenBSD VM that exists to provide networking support etc
-		alt-F5 is a VM with a tiny Linux presenting wayland/X11 for graphics etc
+The system currently runs on seL4 and is heavily divided into isolated
+processes, services and domains.
 
-dominit0 and child domains:
-	dominit0 is configured using a multiboot2 module config file and initrd & command-line arguments
-	a child domain is basically spawned as a subset of what the root task gets, with a few caps added for stuff like domain management, memory allocation, klog and so on
-	the caps are passed in by telling the child dominit0 it's a child with a command-line argument giving it the domain ID
-	by default, if not otherwise specified, dominit0 assumes it's domain ID 0, so in theory an entire FacetOS tree of domains can be virtualized
+Raw seL4 concepts should generally be hidden behind FacetOS abstractions.
+The bootstrap, resource-management and low-level platform layers will
+necessarily know about seL4, but higher-level FacetOS code should avoid
+depending directly on it where practical.
 
-	domains are told that they have domain management authority, either of their own children, or of siblings (by delegating up to their parent)
-	domains can also be told they don't have domain management authority - though technically nothing stops a child domain from doing so anyway, since domains are userland, dominit0 is "well behaved"
+This is partly to keep the architecture clean and partly to leave open the
+possibility of using a different underlying microkernel in the future.
 
-	Not finalized:
-		dominit0 --domain-id=1 --domain-manager-cap=291 --klog-cap=292 --allocator-cap=293 --console-cap=294
-		config file is passed as a multiboot2 module represented in the BootInfo for now, but later on should be parsed by parent dominit0 and passed down
-		in the long run, want to make it not reliant on the seL4 BootInfo and have some custom format, and perhaps a small bootloader stub
 
-bootstub32
-	look into a small stub that allows booting a multiboot2 kernel and modules via a 32-bit stub so that qemu -kernel works properly
-	could be a useful general tool for upstream and other projects
+IMPORTANT SECURITY / AUTHORITY PRINCIPLE
+========================================
+
+Capabilities determine authority.
+
+Names, configuration settings, domain IDs and claims about being a domain
+manager do NOT determine authority.
+
+A process can call itself anything it wants.
+
+A process can run dominit0 itself.
+
+A process can declare itself "Domain 0".
+
+A process can construct an entire nested FacetOS domain hierarchy and call
+the root of that hierarchy "Domain 0".
+
+None of these actions grant it any additional authority.
+
+A process/domain can only operate on resources for which it possesses the
+necessary capabilities, or which some service possessing the necessary
+authority agrees to manipulate on its behalf.
+
+Therefore:
+
+    configuration describes intended behaviour;
+
+    capabilities determine actual authority.
+
+This distinction is fundamental throughout FacetOS.
+
+
+OBJECTS AND INTERFACES
+======================
+
+FacetOS uses an object/interface model inspired primarily by COM and UEFI.
+
+Objects, microkernel servers, devices, special files and other system
+resources can expose one or more interfaces.
+
+An interface CONTRACT is identified by a UUID.
+
+An object can be queried using an interface UUID to obtain an INSTANCE of
+that interface.
+
+Conceptually:
+
+    Object
+      |
+      +-- QueryInterface(IID_FOO) --> IFoo instance
+      |
+      +-- QueryInterface(IID_BAR) --> IBar instance
+      |
+      +-- QueryInterface(IID_BAZ) --> unsupported / NULL
+
+
+Local interfaces
+----------------
+
+Within the same VSpace/address space, an interface instance is represented
+directly as a C structure.
+
+The basic convention is:
+
+    struct IFoo {
+        void *self;
+
+        result_t (*method1)(void *self, ...);
+        result_t (*method2)(void *self, ...);
+        ...
+    };
+
+The first member is always:
+
+    void *self
+
+Everything behind self is private to the implementation.
+
+For example, self might point to:
+
+    - a driver structure
+    - a filesystem object
+    - an seL4-backed kernel object
+    - some completely synthetic FacetOS object
+    - an IPC proxy
+
+The caller does not need to know.
+
+A local call therefore looks roughly like:
+
+    foo->method1(foo->self, ...);
+
+This should be extremely cheap. Once QueryInterface() has succeeded, normal
+method calls are essentially indirect C function calls.
+
+
+Remote interfaces
+-----------------
+
+The same interface model is used when the implementation lives in another
+VSpace/process/domain.
+
+In that case an autogenerated interface instance can contain:
+
+    self            -> IPC proxy/private proxy state
+    method pointers -> autogenerated IPC client stubs
+
+The caller still uses:
+
+    foo->method1(foo->self, ...);
+
+but the implementation of method1 marshals the arguments, performs the
+required microkernel IPC, receives the result, and returns it.
+
+The server side can likewise use autogenerated dispatch code to translate
+the IPC request into a call against the real implementation.
+
+Therefore:
+
+    same VSpace:
+        interface call -> direct function call
+
+    different VSpace:
+        interface call -> generated proxy -> IPC -> server
+
+The source-level interface presented to callers should be the same in both
+cases.
+
+Callers should generally not need to know whether an interface is local or
+remote.
+
+
+Microkernel servers
+-------------------
+
+FacetOS microkernel servers use the SAME object/interface system.
+
+A process manager, domain manager, filesystem server, device driver, etc.
+should not require a separate bespoke programming model simply because it
+happens to be implemented as an isolated server.
+
+For example:
+
+    IDomainManager
+
+could be implemented:
+
+    - directly inside the current VSpace using normal function pointers
+
+or:
+
+    - by a parent domain, with the local IDomainManager instance being an
+      IPC proxy
+
+The caller should not need to care which is true.
+
+
+Kernel objects
+--------------
+
+Objects backed by underlying microkernel objects can also be represented
+through the FacetOS interface model.
+
+The private implementation referenced by self can contain whatever seL4
+state is required, including seL4_CPtr values and bookkeeping information.
+
+Higher layers therefore do not necessarily need to manipulate raw seL4
+capabilities directly.
+
+seL4 capabilities remain the underlying authority mechanism.
+
+FacetOS interfaces are the programming model presented above that
+mechanism.
+
+
+IDL / code generation
+---------------------
+
+Eventually an IDL/code-generation tool should define interfaces and
+generate things such as:
+
+    - interface UUID constants
+    - C interface structures
+    - method declarations
+    - local convenience code
+    - IPC client proxies
+    - IPC server dispatchers
+    - possibly generic introspection/invocation metadata
+
+The exact IDL format is NOT YET FINALIZED.
+
+
+OBJECT STORES
+=============
+
+FacetOS has object stores in addition to traditional filesystems.
+
+There is deliberately no single mandatory global registry containing every
+object in the system.
+
+Object stores can be stored on block devices.
+
+Mounted object stores can appear in the VFS under something like:
+
+    /objects/StoreUUID/ObjectUUID
+
+The StoreUUID identifies the object store.
+
+The ObjectUUID identifies an object within that store.
+
+An object can expose multiple interfaces.
+
+
+Filesystem views of object stores
+---------------------------------
+
+Adapters can present an object store through a traditional filesystem view.
+
+For example, a filesystem view could expose every object supporting:
+
+    IImage
+
+as files in a directory.
+
+This allows traditional POSIX applications to interact with FacetOS objects
+without understanding the native object model.
+
+
+Object views of filesystems
+---------------------------
+
+The reverse should also be possible.
+
+An adapter could present an ordinary filesystem as an object store.
+
+For example, something analogous to the UNIX file(1) mechanism could inspect
+files and select suitable interfaces/object types for them.
+
+Files whose type cannot be usefully identified could simply be represented
+through a generic interface such as:
+
+    IByteStream
+
+Other interfaces might include:
+
+    ITextFile
+    ITextStream
+    IImage
+
+etc.
+
+The exact semantics of these interfaces, including things such as text
+encoding, remain to be designed.
+
+
+Adapters
+--------
+
+Adapters allow the same underlying information/resource to be exposed
+through different views.
+
+Important details such as adapter identity, mutability, persistence and
+whether an adapted object is merely a view or a separately persistent
+object are NOT YET FINALIZED.
+
+
+POSIX INTEGRATION
+=================
+
+The native FacetOS object model can be exported into:
+
+    - a POSIX view
+    - a pure POSIX domain
+
+so that traditional UNIX applications can interact with FacetOS resources.
+
+The intent is not to replace POSIX unnecessarily.
+
+Native interfaces exist where they are useful; ordinary software should
+still be able to live in a recognizable UNIX-like environment.
+
+
+DOMAINS
+=======
+
+A FacetOS domain is primarily a userspace organizational, resource and
+security abstraction built on top of the underlying capability system.
+
+A domain is NOT simply:
+
+    - one process
+    - one thread
+    - one VSpace
+
+A domain may contain many processes, threads, VSpaces, services and drivers.
+
+Normally a domain has a dominit0 instance responsible for initializing and
+managing it.
+
+A domain receives some subset of the resources available to its parent.
+
+This can include:
+
+    - a slice of physical RAM / Untyped resources
+    - hardware devices
+    - MMIO regions
+    - IRQ authority
+    - capabilities to parent-provided services
+    - the ability to request resources from the parent
+    - capabilities useful for constructing child domains
+
+The exact representation of these resources is still evolving.
+
+
+Domains are not globally privileged objects
+-------------------------------------------
+
+IMPORTANT:
+
+There is no requirement that FacetOS globally recognize some particular
+userspace process as the one legitimate dominit0.
+
+Likewise, "Domain 0" is not intended to be an unforgeable global identity.
+
+A process can simply run another copy of dominit0.
+
+A modified dominit0 can decide that it is Domain 0.
+
+A completely unrelated program could implement the relevant FacetOS
+interfaces and construct its own domain tree.
+
+This is allowed.
+
+For example:
+
+    outer Domain 0
+        |
+        +-- outer Domain 1
+        |
+        +-- outer Domain 7
+              |
+              +-- ordinary process
+                    |
+                    +-- nested Domain 0
+                          |
+                          +-- nested Domain 1
+                          |
+                          +-- nested Domain 2
+                                |
+                                +-- nested Domain 3
+
+The nested Domain 0 is perfectly free to consider itself the root of its
+own FacetOS hierarchy.
+
+This is intentional.
+
+It is conceptually similar to running:
+
+    QEMU
+      |
+      +-- guest OS
+            |
+            +-- QEMU
+                  |
+                  +-- nested guest OS
+
+The outer system does not need to prevent the inner system from pretending
+that it owns an entire machine.
+
+It merely needs to ensure that the inner system cannot access resources
+that were never delegated to it.
+
+
+Authority in nested domains
+---------------------------
+
+Creating a domain hierarchy does NOT create authority.
+
+A nested Domain 0 can subdivide, delegate, proxy and reinterpret whatever
+resources and capabilities it possesses.
+
+It cannot manufacture authority over resources it does not possess.
+
+Therefore a process inside Domain 7 could construct an entire FacetOS tree
+which, from the inside, appears to have:
+
+    Domain 0
+    Domain 1
+    Domain 2
+    ...
+
+but the complete nested hierarchy remains confined by the capabilities
+available to the process/domain that created it.
+
+This is a desired property, not a loophole.
+
+
+Domain IDs
+----------
+
+Domain IDs should therefore be understood primarily in the context of a
+particular domain hierarchy.
+
+There may simultaneously be many domains calling themselves:
+
+    Domain 0
+
+at different levels of nesting.
+
+For example:
+
+    host hierarchy               nested hierarchy
+
+    Domain 0
+      |
+      +-- Domain 7
+            |
+            +------------------> Domain 0
+                                   |
+                                   +-- Domain 1
+                                   +-- Domain 2
+
+There is no inherent conflict.
+
+Whether some future facility also provides globally unique domain
+identifiers is a separate question and is NOT YET FINALIZED.
+
+
+Domain management policy versus authority
+-----------------------------------------
+
+A domain configuration can contain a setting indicating whether dominit0
+is expected to manage child domains.
+
+For example, conceptually:
+
+    manage_domains=true
+
+or:
+
+    manage_domains=false
+
+This setting is primarily a POLICY / BOOTSTRAP HINT.
+
+In particular:
+
+    manage_domains=false
+
+does NOT mean:
+
+    "FacetOS must technically prevent this domain from constructing a
+     domain hierarchy."
+
+It means something closer to:
+
+    "You are not being configured as the real/root domain manager of this
+     particular hierarchy."
+
+or:
+
+    "Do not normally expose/use domain-management facilities as part of
+     this configured domain."
+
+Nothing prevents that dominit0 from ignoring the hint.
+
+Nothing prevents another process in the domain from starting its own
+dominit0.
+
+Nothing prevents that process from calling itself Domain 0 and constructing
+its own complete nested domain hierarchy.
+
+This is intentional.
+
+What matters for security is what capabilities the process actually has.
+
+A process told:
+
+    manage_domains=false
+
+may still be able to build an entirely private nested hierarchy from memory,
+CSpace/VSpace resources and other authority that it legitimately possesses.
+
+It cannot thereby obtain control over its parent's domain tree, siblings,
+hardware or other resources unless suitable authority was explicitly
+delegated to it.
+
+Therefore:
+
+    "don't manage domains"
+
+is NOT a security mechanism.
+
+Capability delegation is the security mechanism.
+
+
+Domain types / personalities
+----------------------------
+
+Domains can have different intended personalities.
+
+Current ideas include:
+
+    - pure FacetOS domain
+    - pure POSIX domain
+
+Processes inside a FacetOS domain can also be started with a POSIX view.
+
+
+POSIX view
+----------
+
+A POSIX view presents a UNIX-like environment to a process while remaining
+part of an existing FacetOS domain.
+
+The current idea is that a process using the POSIX view can see the same
+underlying process/resource world as the FacetOS domain, but through POSIX
+abstractions.
+
+It also sees a read-only /etc generated dynamically from FacetOS
+configuration.
+
+The precise PID/process namespace semantics are NOT YET FINALIZED.
+
+
+Pure POSIX domain
+-----------------
+
+A pure POSIX domain is a separate FacetOS domain whose primary personality
+is POSIX.
+
+Conceptually it is similar to a POSIX view, except that it has its own
+domain-level UNIX environment, including:
+
+    - its own /etc
+    - its own process environment / namespace
+    - a POSIX process running as PID 1
+    - /sbin/init or equivalent
+    - getty/login etc. if desired
+
+It remains a FacetOS domain underneath.
+
+
+Inter-domain UNIX compatibility
+--------------------------------
+
+POSIX domains and conventional UNIX systems running inside VMs should be
+able to consume services exported by FacetOS domains using conventional
+mechanisms where useful.
+
+Current ideas include:
+
+    NFS
+    NIS
+
+This allows ordinary UNIX environments to coexist with the native FacetOS
+object/interface model without requiring every guest/application to
+understand FacetOS.
+
+
+VIRTUAL CONSOLES
+================
+
+One possible setup:
+
+    Alt-F1:
+        Domain 0
+        Pure FacetOS login/shell
+
+    Alt-F2:
+        POSIX view of Domain 0
+
+    Alt-F3:
+        Pure POSIX domain
+        Own /sbin/init as PID 1
+        getty/login etc.
+
+    Alt-F4:
+        VM running something like OpenBSD
+        Possibly providing networking services
+
+    Alt-F5:
+        VM running a minimal Linux environment
+        Possibly providing Wayland/X11/GPU services
+
+This is an example of what the domain architecture should make possible,
+not a mandatory fixed console layout.
+
+
+DOMINIT0
+========
+
+dominit0 is the program normally responsible for bootstrapping and managing
+a FacetOS domain.
+
+The same basic dominit0 design should be usable for:
+
+    - Domain 0, started by the underlying microkernel
+    - child domains, started by another dominit0
+    - nested/private FacetOS hierarchies started by ordinary processes
+
+This recursive model is intentional.
+
+There should not need to be a fundamentally different "domain loader"
+architecture for Domain 0 and child domains.
+
+
+Domain 0 startup
+----------------
+
+Currently the underlying microkernel is seL4.
+
+The initial startup path is approximately:
+
+    bootloader
+        |
+        v
+    seL4
+        |
+        v
+    seL4 root task environment / BootInfo
+        |
+        v
+    dominit0
+        |
+        v
+    Domain 0
+
+For now, dominit0 is configured using:
+
+    - a Multiboot2 module containing a configuration file
+    - initrd/module data
+    - command-line arguments
+    - seL4 BootInfo
+
+Long term, dominit0 should NOT depend unnecessarily on seL4_BootInfo.
+
+There should eventually be a FacetOS bootstrap/environment abstraction so
+that the seL4-specific startup code translates seL4's BootInfo into the
+generic information dominit0 actually needs.
+
+Conceptually:
+
+    seL4 BootInfo
+        |
+        v
+    seL4 bootstrap adapter
+        |
+        v
+    FacetOS domain environment
+        |
+        v
+    generic dominit0
+
+This leaves open the possibility of replacing seL4 or introducing another
+bootstrap mechanism in the future without redesigning the FacetOS domain
+model.
+
+
+Child domain startup
+--------------------
+
+A child domain is conceptually given a subset of the environment/resources
+that its parent possesses.
+
+The parent dominit0 creates the resources required for the child, including
+things such as:
+
+    - child CSpace
+    - child VSpace
+    - initial TCB/thread
+    - memory/resources
+    - dominit0 executable mappings
+    - configuration/environment
+    - explicitly delegated capabilities
+
+The resulting startup environment should deliberately resemble, at a
+semantic level, the environment that the underlying microkernel gives to
+Domain 0.
+
+From the child's point of view:
+
+    "This is the hardware/resources available to my domain."
+
+The child should not need to care whether those resources ultimately came
+from physical hardware, its parent, a VM, or another abstraction layer.
+
+
+Recursive bootstrap
+-------------------
+
+The intended recursive model is roughly:
+
+    physical machine
+          |
+         seL4
+          |
+          v
+      dominit0
+      Domain 0
+          |
+          +-- processes/services
+          |
+          +-- dominit0
+          |   Domain 1
+          |       |
+          |       +-- processes/services
+          |       |
+          |       +-- dominit0
+          |           Domain 3
+          |
+          +-- dominit0
+              Domain 2
+
+But nothing says that only the officially configured dominit0 processes may
+do this.
+
+For example:
+
+    Domain 2
+        |
+        +-- random userspace process
+              |
+              +-- dominit0
+                  nested Domain 0
+                      |
+                      +-- nested Domain 1
+                      +-- nested Domain 2
+
+This should work provided the random process possesses sufficient resources
+to construct the nested environment.
+
+The nested hierarchy remains constrained by those resources.
+
+
+CSpace and capability passing
+-----------------------------
+
+The parent constructs the child's CSpace.
+
+A capability is NOT passed merely by writing its numeric value into the
+child's command line.
+
+Instead:
+
+    1. The parent copies/mints/delegates the capability into a slot in the
+       child's CSpace.
+
+    2. The parent tells the child which CPtr identifies that capability in
+       the CHILD'S CSpace.
+
+The CPtr can conveniently be supplied as a human-readable integer in the
+command line/config/environment.
+
+For example:
+
+    --domain-manager-cap=291
+
+means approximately:
+
+    "The capability you should use for IDomainManager is available as CPtr
+     291 in your CSpace."
+
+The integer itself grants no authority.
+
+If slot 291 does not contain the appropriate capability, the argument is
+useless.
+
+The exact CSpace layout does not necessarily need to be globally fixed.
+
+FacetOS needs a defined enough startup convention for dominit0 to discover
+the resources/capabilities available to it, but individual CPtr values can
+be described by the startup environment.
+
+
+Human-readable startup environment
+----------------------------------
+
+Human-readable configuration/startup arguments are deliberately desirable.
+
+They make early development, debugging and manually constructing unusual
+domain configurations much easier.
+
+A possible early command line might look like:
+
+    dominit0 \
+        --domain-id=1 \
+        --domain-manager-cap=291 \
+        --klog-cap=292 \
+        --allocator-cap=293 \
+        --console-cap=294
+
+This syntax is NOT FINALIZED.
+
+It is currently preferable to keep this sort of configuration easy to read
+and edit rather than prematurely replacing it with an opaque binary ABI.
+
+If the environment becomes too large for command-line arguments, a
+human-readable configuration/environment file can serve the same purpose.
+
+
+Configuration versus environment
+--------------------------------
+
+Keep these concepts distinct:
+
+    CONFIGURATION
+
+        What this instance of dominit0 is intended to construct/run/do.
+
+        This includes policy hints such as whether it is expected to act as
+        the domain manager for its configured hierarchy.
+
+
+    ENVIRONMENT / DELEGATED AUTHORITY
+
+        What resources and capabilities are actually available.
+
+        These determine what dominit0 can really do.
+
+For Domain 0, much of the initial environment currently originates in seL4
+BootInfo.
+
+For child domains, the parent constructs the environment.
+
+For a nested hierarchy started by an ordinary process, that process
+constructs whatever environment it can from the resources available to it.
+
+
+Domain management through a parent
+----------------------------------
+
+A domain may also be given an IDomainManager capability/interface implemented
+by its parent.
+
+For example:
+
+    child
+      |
+      +-- IDomainManager proxy
+              |
+              | IPC
+              v
+          parent dominit0
+
+This allows the child to REQUEST domain-management operations involving
+resources controlled by its parent.
+
+For example, the parent might allow a child to request operations relating
+to sibling domains.
+
+The child is not necessarily given raw authority over those siblings.
+
+Instead, the parent retains that authority and decides whether to perform
+the requested operation.
+
+This is normal FacetOS interface delegation:
+
+    interface presented locally
+        |
+        v
+    generated IPC proxy
+        |
+        v
+    implementation possessing actual authority
+
+
+INITRD AND DRIVER/SERVICE LOADING
+=================================
+
+dominit0 should eventually load required drivers/services from an initrd.
+
+Drivers should normally run isolated rather than simply becoming threads
+with unrestricted access to dominit0's VSpace.
+
+The parent/domain resource manager should grant each driver only the
+resources/capabilities required for that driver.
+
+Drivers and services should expose their functionality using the normal
+FacetOS interface system.
+
+The exact initrd format and driver metadata/configuration format are NOT YET
+FINALIZED.
+
+
+PROCESS MODEL
+=============
+
+The domain's process table is expected to be managed by dominit0/root-domain
+infrastructure.
+
+Early development can begin with kernel/service threads running inside the
+dominit0 VSpace.
+
+Later, proper processes/services should receive:
+
+    - their own VSpace where appropriate
+    - restricted CSpaces
+    - explicitly delegated capabilities
+    - TCBs/threads configured by the domain manager
+
+The distinction between "kernel thread", service and process needs further
+design as implementation progresses.
+
+
+MEMORY / RESOURCE MANAGEMENT
+============================
+
+Initial dependency chain:
+
+    bootstrap allocator
+        |
+        v
+    parse bootstrap/BootInfo resources
+        |
+        v
+    CSpace allocator
+        |
+        v
+    Untyped/resource manager
+        |
+        v
+    seL4 kernel-object allocation
+        |
+        v
+    physical Frames
+        |
+        v
+    VSpace management
+        |
+        v
+    real kernel heap / kmalloc
+        |
+        v
+    higher-level objects/processes/services
+
+
+Bootstrap allocator
+-------------------
+
+Use a large static chunk in .bss.
+
+The bootstrap allocator should be deliberately simple:
+
+    - monotonic/bump allocation
+    - alignment support
+    - bounds checking
+    - no meaningful free()
+
+It exists to break allocator bootstrap dependency cycles.
+
+Memory used permanently for early allocator metadata does not necessarily
+need to be reclaimed later.
+
+
+Untyped/resource management
+---------------------------
+
+Parse the resources supplied by seL4 BootInfo and record all Untyped
+capabilities/resources.
+
+Track at least:
+
+    - capability/slot
+    - physical address where available
+    - sizeBits
+    - device/non-device
+    - allocation/retype/provenance state
+
+The resource manager should eventually be able to select suitable Untyped
+resources and retype them into required seL4 objects.
+
+Higher layers should not need to understand Untyped allocation directly.
+
+
+Kernel object allocation
+------------------------
+
+Provide a layer that combines:
+
+    - destination CSlot allocation
+    - suitable Untyped selection
+    - seL4_Untyped_Retype()
+    - bookkeeping/provenance
+    - cleanup/error handling
+
+The low-level implementation can expose higher-level FacetOS interfaces
+rather than leaking raw seL4 capabilities everywhere.
+
+
+Kernel heap
+-----------
+
+Once physical Frames and VSpace management work, implement a real dynamic
+kernel heap:
+
+    kmalloc()
+    kfree()
+
+The real heap should acquire additional backing memory through the normal
+FacetOS resource/frame/VSpace machinery.
+
+Bootstrap allocations can remain permanently allocated.
+
+
+KLOG
+====
+
+Early klog exists / is being developed specifically so that memory
+management can be debugged without depending on dynamic allocation.
+
+Early boot:
+
+    - write into static buffer
+    - emit to seL4 debug output
+
+Later:
+
+    - add VGA/console output
+    - once kmalloc is available, migrate/preserve the early log into larger
+      dynamically allocated storage
+    - eventually use a proper ring buffer or equivalent
+    - support dynamically registered sinks
+    - expose retained log through a dmesg-like interface
+
+The important invariant is:
+
+    Logging required to debug the allocator must not itself require the
+    allocator to work.
+
+
+BOOTSTUB32
+==========
+
+SIDE PROJECT / NOT CURRENTLY ON THE FACETOS CRITICAL PATH.
+
+Investigate a small 32-bit boot stub that can load a Multiboot2 kernel and
+modules in a form that allows QEMU's:
+
+    -kernel
+
+mechanism to work conveniently.
+
+This might also be useful as a standalone/upstream tool for other projects.
+
+Do not accidentally spend three days writing this instead of the FacetOS
+memory manager.
