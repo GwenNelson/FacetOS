@@ -276,7 +276,8 @@ FACET_NATIVE_TARGETS := \
 	facet-clean \
 	bootstub32-clean \
 	sdk-clean \
-	full-clean
+	full-clean \
+	check-sdk
 
 all: facetos
 
@@ -391,7 +392,19 @@ dominit0: $(FACET_DOMINIT0_TARGET)
 # Complete native FacetOS build.
 #
 
-facetos: $(FACET_NATIVE_TARGETS)
+SDK_KERNEL := $(SDK_BUILD)/kernel/kernel.elf
+SDK_LIBSEL4 := $(SDK_BUILD)/libsel4/libsel4.a
+SDK_RUNTIME := $(SDK_BUILD)/sel4runtime/libsel4runtime.a
+
+check-sdk:
+	@test -f $(SDK_KERNEL) || \
+		{ echo "FacetOS SDK missing; run 'make sdk' first."; exit 1; }
+	@test -f $(SDK_LIBSEL4) || \
+		{ echo "FacetOS SDK incomplete; run 'make sdk' first."; exit 1; }
+	@test -f $(SDK_RUNTIME) || \
+		{ echo "FacetOS SDK incomplete; run 'make sdk' first."; exit 1; }
+
+facetos: check-sdk $(FACET_NATIVE_TARGETS)
 
 
 #
