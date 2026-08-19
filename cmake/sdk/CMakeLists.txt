@@ -111,23 +111,21 @@ endfunction()
 #
 # FacetOS klibc.
 #
-# CONFIGURE_DEPENDS makes Ninja/CMake notice newly-created or removed source
-# files as well as ordinary edits to files already in the target.
+# klibc is built by the top-level Makefile, deliberately outside the
+# seL4/musl CMake environment.  CMake only imports the finished archive.
 #
 
-file(GLOB FACET_KLIBC_SRCS CONFIGURE_DEPENDS
-    "${FACETOS_ROOT}/src/klibc/*.c"
+set(FACET_KLIBC_ARCHIVE
+    "${FACETOS_ROOT}/build/facetos/klibc/klibc.a"
 )
 
-add_library(facet_klibc STATIC
-    ${FACET_KLIBC_SRCS}
-)
+add_library(facet_klibc STATIC IMPORTED GLOBAL)
 
-facetos_configure_target(facet_klibc)
-
-# klibc headers are part of the FacetOS include surface for consumers.
-target_include_directories(facet_klibc PUBLIC
-    "${FACETOS_ROOT}/include"
+set_target_properties(facet_klibc PROPERTIES
+    IMPORTED_LOCATION
+        "${FACET_KLIBC_ARCHIVE}"
+    INTERFACE_INCLUDE_DIRECTORIES
+        "${FACETOS_ROOT}/include"
 )
 
 
@@ -170,6 +168,7 @@ target_link_libraries(dominit0 PRIVATE
     sel4simple-default
     sel4allocman
     sel4vka
+    sel4vspace
     sel4utils
 )
 

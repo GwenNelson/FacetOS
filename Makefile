@@ -29,6 +29,45 @@ SDK_KERNEL     := $(SDK_BUILD)/kernel/kernel.elf
 FACET_DOMINIT0 := $(SDK_BUILD)/dominit0
 
 #
+# FacetOS klibc.
+#
+# klibc is deliberately built outside the seL4/musl CMake environment.
+# It is a freestanding FacetOS library and uses the host compiler's
+# freestanding compiler headers (stddef.h, stdarg.h, etc.).
+#
+
+CC ?= gcc
+AR ?= ar
+
+FACET_KLIBC_BUILD := $(ROOT)/build/facetos/klibc
+FACET_KLIBC       := $(FACET_KLIBC_BUILD)/klibc.a
+
+FACET_KLIBC_SRCS := $(wildcard $(ROOT)/src/klibc/*.c)
+FACET_KLIBC_OBJS := \
+	$(patsubst $(ROOT)/src/klibc/%.c,$(FACET_KLIBC_BUILD)/%.o,$(FACET_KLIBC_SRCS))
+FACET_KLIBC_DEPS := $(FACET_KLIBC_OBJS:.o=.d)
+
+FACET_KLIBC_CFLAGS := \
+	-std=gnu11 \
+	-ffreestanding \
+	-fno-builtin \
+	-fno-stack-protector \
+	-fno-pic \
+	-fno-pie \
+	-mno-red-zone \
+	-Wall \
+	-Wextra \
+	-I$(ROOT)/include \
+	-MMD \
+	-MP
+
+ifeq ($(DEBUG),1)
+	FACET_KLIBC_CFLAGS += -Og -g -DDEBUG
+else
+	FACET_KLIBC_CFLAGS += -O2
+endif
+
+#
 # Files whose changes require an explicit CMake configure pass.
 # Source-file changes do NOT belong here: Ninja/CMake CONFIGURE_DEPENDS
 # tracks those itself.
@@ -54,6 +93,7 @@ endif
 	sdk \
 	facetos \
 	dominit0 \
+	klibc \
 	kernel \
 	build \
 	bootstub32 \
@@ -144,6 +184,25 @@ configure: patches
 
 
 #
+# FacetOS klibc build.
+#
+# Keep this outside CMake so it remains independent of musl/seL4.
+#
+
+$(FACET_KLIBC_BUILD)/%.o: $(ROOT)/src/klibc/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(FACET_KLIBC_CFLAGS) -c $< -o $@
+
+$(FACET_KLIBC): $(FACET_KLIBC_OBJS)
+	@mkdir -p $(dir $@)
+	$(AR) rcs $@ $^
+
+klibc: $(FACET_KLIBC)
+
+-include $(FACET_KLIBC_DEPS)
+
+
+#
 # Ninja-backed build targets.
 #
 # These are intentionally phony from Make's point of view. Make does not know
@@ -155,7 +214,7 @@ kernel: configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf
 
 
-dominit0: configure
+dominit0: klibc configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) dominit0
 
 
@@ -163,7 +222,7 @@ facetos: dominit0
 
 
 # Build everything needed to boot FacetOS.
-build: configure
+build: klibc configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf dominit0
 
 
@@ -256,6 +315,7 @@ run-iso: image
 #
 
 facet-clean:
+	rm -rf $(ROOT)/build/facetos
 	rm -rf $(ISO_ROOT)
 	rm -f $(FACETOS_ISO)
 
