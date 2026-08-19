@@ -2,7 +2,7 @@
 #include <facetos/dominit0/klog.h>
 #include <facetos/dominit0/kmalloc.h>
 #include <facetos/dominit0/kpanic.h>
-#include <facetos/interfaces/IFrameAllocator.h>
+#include <facetos/interfaces/IPageAllocator.h>
 
 #include <sel4/sel4.h>
 #include <sel4runtime.h>
@@ -24,31 +24,31 @@ static simple_t sel4_simple;
 static allocman_t *sel4_allocman;
 static vka_t sel4_vka;
 
-static IFrameAllocator *frame_allocator;
-static IFrameAllocator frame_alloc_instance;
+static IPageAllocator *page_allocator;
+static IPageAllocator page_alloc_instance;
 
-size_t sel4_frame_alloc_get_frame_size(void* self) {
+size_t sel4_page_alloc_get_page_size(void* self) {
 	// temporary hack
 	return 4096;
 }
 
-int sel4_frame_alloc_alloc(void* self, size_t count, IFrame **frames) {
+int sel4_page_alloc_alloc(void* self, size_t count, void **pages) {
 	return -1;
 }
 
-int sel4_frame_alloc_free(void* self, size_t count, IFrame **frames) {
+int sel4_page_alloc_free(void* self, size_t count, void *base) {
 	return -1;
 }
 
-IFrameAllocator* sel4_frame_allocator_create(vka_t *vka) {
-	klog(LOG_WARN,"sel4_frame_allocator_create() - not yet fully implemented!\n");
-	IFrameAllocator *retval = &frame_alloc_instance;
+IPageAllocator* sel4_page_allocator_create(vka_t *vka) {
+	klog(LOG_DEBUG,"sel4_page_allocator_create()\n");
+	IPageAllocator *retval = &page_alloc_instance;
 	retval->self = (void*)retval;
 	retval->priv = (void*)vka;
-	retval->get_frame_size = &sel4_frame_alloc_get_frame_size;
-	retval->alloc          = &sel4_frame_alloc_alloc;
-	retval->free           = &sel4_frame_alloc_free;
-	return NULL; // cos it's not yet implemented yet
+	retval->get_page_size = &sel4_page_alloc_get_page_size;
+	retval->alloc         = &sel4_page_alloc_alloc;
+	retval->free          = &sel4_page_alloc_free;
+	return retval;
 }
 
 void platform_init_early(void) {
@@ -81,10 +81,11 @@ void platform_init(void) {
      klog(LOG_DEBUG,"platform_init() - setting up VKA\n");
      allocman_make_vka(&sel4_vka, sel4_allocman);
 
-     klog(LOG_DEBUG,"platform_init() - setting up IFrameAllocator\n");
-     frame_allocator = sel4_frame_allocator_create(&sel4_vka);
-     if(frame_allocator == NULL) kpanic("Unable to create frame allocator instance!");
+     klog(LOG_DEBUG,"platform_init() - setting up IPageAllocator\n");
+     page_allocator = sel4_page_allocator_create(&sel4_vka);
+     if(page_allocator == NULL) kpanic("Unable to create page allocator instance!");
 
+     kmalloc_init(page_allocator);
      klog(LOG_INFO,"seL4 platform ready\n");
 }
 

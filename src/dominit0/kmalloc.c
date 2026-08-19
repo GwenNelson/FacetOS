@@ -5,7 +5,7 @@
 #include <facetos/dominit0/klock.h>
 #include <facetos/dominit0/kpanic.h>
 
-#include <facetos/interfaces/IFrameAllocator.h>
+#include <facetos/interfaces/IPageAllocator.h>
 
 static unsigned char bootstrap_heap[KMALLOC_BOOTSTRAP_HEAP_SIZE]
 	__attribute__((aligned(KMALLOC_ALIGNMENT)));
@@ -15,6 +15,8 @@ static size_t bootstrap_heap_used;
 
 typedef void* (*kmalloc_impl_fn)(size_t size);
 typedef void  (*kfree_impl_fn)(void* p);
+
+static IPageAllocator* kmalloc_allocator;
 
 static void* kmalloc_impl_early(size_t size) {
 	size_t pos;
@@ -36,6 +38,13 @@ static void kfree_impl_early(void* p) {
        (void)p;
 }
 
+static void* kmalloc_impl_real(size_t size) {
+
+}
+
+static void kfree_impl_real(void* p) {
+}
+
 static kmalloc_impl_fn kmalloc_impl = kmalloc_impl_early;
 static kfree_impl_fn   kfree_impl   = kfree_impl_early;
 
@@ -48,9 +57,15 @@ void kmalloc_init_early(void) {
      klog(LOG_INFO,"Early bootstrap heap ready!\n");
 }
 
-void kmalloc_init(IFrameAllocator *allocator) {
-     (void)allocator;
-     klog(LOG_ERROR,"kmalloc_init: not yet implemented!\n");
+void kmalloc_init(IPageAllocator *allocator) {
+     klock_lock(&kmalloc_lock);
+     klog(LOG_DEBUG,"Early bootstrap heap switching to IPageAllocator with %llukb free!\n", ((KMALLOC_BOOTSTRAP_HEAP_SIZE-bootstrap_heap_used)/1024));
+     // TODO - when we import liballoc, should probably add the remaining bootstrap heap to the liballoc heap
+     //        but only after verifying that IPageAllocator is working
+     kmalloc_allocator = allocator;
+     //kmalloc_impl      = &kmalloc_impl_real;
+     //kfree_imp         = &kfree_impl_real;
+     klock_unlock(&kmalloc_lock);
 }
 
 void *kmalloc(size_t size) {
@@ -67,4 +82,17 @@ void kfree(void* ptr) {
      klock_lock(&kmalloc_lock);
      kfree_impl(ptr);
      klock_unlock(&kmalloc_lock);
+}
+
+void kmalloc_dump(void) {
+     klog_lock();
+     klog(LOG_DEBUG,"kmalloc_dump\n");
+     if(kmalloc_impl == &kmalloc_impl_early) {
+	klog(LOG_DEBUG,"\t Using early bootstrap still, %llukb used and %llu free\n",(bootstrap_heap_used/1024),
+										     ((KMALLOC_BOOTSTRAP_HEAP_SIZE-bootstrap_heap_used)/1024));
+     } else {
+	klog(LOG_DEBUG,"\t No longer using early bootstrap, %llukb of bootstrap heap for reclaiming\n", ((KMALLOC_BOOTSTRAP_HEAP_SIZE-bootstrap_heap_used)/1024));
+     }
+     klog(LOG_DEBUG,"\t IPageAllocator at %p\n",kmalloc_allocator);
+     klog_unlock();
 }

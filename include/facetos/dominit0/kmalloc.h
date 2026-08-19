@@ -2,10 +2,10 @@
 
 #include <stddef.h>
 
-#include <facetos/interfaces/IFrameAllocator.h>
+#include <facetos/interfaces/IPageAllocator.h>
 
-// Fucking 128MB bootstrap, 80MB of this will go to allocman, which should be enough for most realistic systems
-#define KMALLOC_BOOTSTRAP_HEAP_SIZE (128UL * 1024 * 1024)
+// Fucking 90MB bootstrap, 80MB of this will go to allocman, which should be enough for most realistic systems
+#define KMALLOC_BOOTSTRAP_HEAP_SIZE (90UL * 1024 * 1024)
 #define KMALLOC_ALIGNMENT sizeof(uintptr_t)
 
 // these two functions should be obvious
@@ -16,4 +16,6 @@ void  kfree(void* p);
 void kmalloc_init_early();
 
 // this function is called only once there's page allocation in place
-void kmalloc_init(IFrameAllocator *allocator);
+void kmalloc_init(IPageAllocator *allocator);
+
+void kmalloc_dump(void); // used to spit out debugging stuff
