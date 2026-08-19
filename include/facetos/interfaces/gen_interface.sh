@@ -1,0 +1,25 @@
+#!/bin/bash
+
+if [ $# -eq 0 ]; then
+    echo "FacetOS interface template generator"
+    echo "Usage: $0 <interface_name>"
+    exit 1
+fi
+
+interface_name="$1"
+uuid=$(uuidgen)
+uuid_no_dash=${uuid//-/}
+
+cat << EOF
+#pragma once
+
+#include <facetos/uuid.h>
+static const uuid_t IID_${interface_name} = UUID_INIT(0x${uuid_no_dash:0:8},0x${uuid_no_dash:8:4},0x${uuid_no_dash:12:4},0x${uuid_no_dash:16:4},0x${uuid_no_dash:20:12}ULL);
+
+typedef struct ${interface_name} {
+	void *self; // required by ALL interfaces
+	void *priv; // private data
+	// fill in your methods and variables here, remember to always make first argument void* self
+} ${interface_name};
+EOF
+

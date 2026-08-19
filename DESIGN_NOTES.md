@@ -544,7 +544,6 @@ dominit0 is the program normally responsible for bootstrapping and managing
 a native FacetOS domain.
 
 Not every FacetOS domain necessarily runs dominit0 as its internal workload.
-
 For example, a VM domain may instead be constructed by its parent and begin
 execution directly in a VMM/guest environment.
 
@@ -560,8 +559,166 @@ The same basic dominit0 design should be usable for:
 
 This recursive model is intentional.
 
-There should not need to be a fundamentally different "domain loader"
-architecture for Domain 0 and child domains.
+
+Configuration model
+-------------------
+
+dominit0 has one generic configuration model describing the domain it is
+being asked to initialize.
+
+Configuration can originate from three sources:
+
+    1. command-line arguments
+    2. a root-domain configuration file
+    3. a startup environment supplied by a parent
+
+All three sources should ultimately populate/update the same generic
+configuration structures. The parsing and application of configuration
+belongs in generic code, initially config.c/config.h, rather than in the
+seL4 platform layer.
+
+Conceptually:
+
+    defaults
+       |
+       v
+    DomainConfig
+       ^
+       |
+       +-- command-line parser
+       |
+       +-- root configuration-file parser
+       |
+       +-- parent-supplied environment parser
+
+A configuration source need not specify every field. Unspecified fields keep
+their defaults or values established by an earlier configuration layer.
+
+The exact precedence rules are not yet finalized, but for Domain 0 a sensible
+initial rule is:
+
+    built-in defaults
+        -> root configuration file
+        -> command-line overrides
+
+For a child, the parent-supplied startup environment is the normal source of
+its configuration.
+
+
+Per-domain configuration
+------------------------
+
+The generic per-domain configuration should describe policy and intended
+behaviour for one domain.
+
+Initial fields are expected to include things such as:
+
+    - domain ID
+    - human-readable domain name
+    - domain type/personality
+        - native
+        - POSIX
+        - later VM/other personalities
+    - console assignment
+        - default console, initially tty1
+        - whether to start a console server
+        - console/seat name, initially seat0
+    - domain-management mode
+        - no domain management
+        - manage children locally
+        - request domain-management operations through a parent-provided
+          IDomainManager interface
+    - log level for the domain
+    - other per-domain startup policy as it becomes necessary
+
+The configuration structure should remain independent of seL4 where practical.
+Raw seL4_CPtr values, BootInfo pointers, VKA/VSpace objects and similar
+platform details do not belong in the generic DomainConfig.
+
+Configuration describes intended behaviour. It does not grant authority.
+
+
+Root-domain configuration file
+------------------------------
+
+The configuration file is specifically a root-of-hierarchy input.
+
+It describes:
+
+    - the configuration of the root domain itself
+    - the child domains the root should construct
+    - the configuration to supply to each child
+    - hierarchy/parent relationships where necessary
+    - per-child policy such as log level, console, personality and
+      domain-management mode
+    - eventually requested/delegated resources, initial services, drivers,
+      programs and other startup policy
+
+Conceptually:
+
+    SystemConfig
+        |
+        +-- root DomainConfig
+        |
+        +-- child DomainConfig
+        |
+        +-- child DomainConfig
+        |
+        +-- ...
+
+The file is not intended to be the normal mechanism by which an already
+running parent configures a child. The parent reads the hierarchy
+configuration, selects the relevant DomainConfig for a child, constructs the
+child's startup environment, and starts the child with that environment.
+
+A child therefore does not need to parse or possess the root's complete
+configuration file.
+
+The exact human-readable file syntax is NOT YET FINALIZED.
+
+
+Parent-supplied startup environment
+-----------------------------------
+
+A parent configures a child by constructing a startup environment for it.
+
+That environment carries two logically distinct categories of information:
+
+    CONFIGURATION
+
+        The child's DomainConfig: what the child is intended to construct,
+        run and do.
+
+    DELEGATED ENVIRONMENT / AUTHORITY
+
+        The resources, interfaces and capabilities the parent has actually
+        made available to the child.
+
+The representation may initially be human-readable and may share parsing
+machinery with command-line configuration. It does not have to remain an
+argv-style command line forever.
+
+For example, the parent may tell a child:
+
+    domain.id=2
+    domain.name=posix
+    domain.type=posix
+    log.level=debug
+    console.device=tty3
+    domain.manager=parent
+
+while separately making the corresponding resources/interfaces available in
+the child's startup environment.
+
+The configuration statement:
+
+    domain.manager=parent
+
+means that the child is configured to use domain-management services supplied
+by its parent. It does not itself grant access to such a service.
+
+Likewise, a numeric capability reference is meaningful only if the parent has
+actually installed the corresponding capability into the child's CSpace.
 
 
 Domain 0 startup
@@ -585,20 +742,30 @@ The initial startup path is approximately:
         v
     Domain 0
 
-For now, dominit0 is configured using:
+Domain 0 obtains two different kinds of startup input:
 
-    - a Multiboot2 module containing a configuration file
-    - initrd/module data
-    - command-line arguments
-    - seL4 BootInfo
+    CONFIGURATION
 
-Long term, dominit0 should NOT depend unnecessarily on seL4_BootInfo.
+        - built-in defaults
+        - optional root-domain configuration file/module
+        - command-line arguments
 
-There should eventually be a FacetOS bootstrap/environment abstraction so
-that the seL4-specific startup code translates seL4's BootInfo into the
-generic information dominit0 actually needs.
+    PLATFORM ENVIRONMENT
+
+        - seL4 BootInfo and the resources/capabilities represented by it
+
+The seL4 platform/bootstrap layer should translate BootInfo into the generic
+FacetOS environment/resource abstractions needed by dominit0.
+
+Long term, generic configuration code should not depend on seL4_BootInfo.
 
 Conceptually:
+
+    command line ---------+
+                          |
+    root config file -----+--> config.c --> DomainConfig/SystemConfig
+                          |
+    defaults -------------+
 
     seL4 BootInfo
         |
@@ -606,14 +773,9 @@ Conceptually:
     seL4 bootstrap adapter
         |
         v
-    FacetOS domain environment
-        |
-        v
-    generic dominit0
+    FacetOS delegated/resource environment
 
-This leaves open the possibility of replacing seL4 or introducing another
-bootstrap mechanism in the future without redesigning the FacetOS domain
-model.
+These meet in dominit0, but remain conceptually separate.
 
 
 Child domain startup
@@ -622,24 +784,37 @@ Child domain startup
 A child domain is conceptually given a subset of the environment/resources
 that its parent possesses.
 
-The parent dominit0 creates the resources required for the child, including
-things such as:
+The parent creates the resources required for the child, including things
+such as:
 
     - child CSpace
     - child VSpace
     - initial TCB/thread
     - memory/resources
     - dominit0 executable mappings
-    - configuration/environment
-    - explicitly delegated capabilities
+    - child's DomainConfig/startup environment
+    - explicitly delegated capabilities/interfaces
 
-The resulting startup environment should deliberately resemble, at a
-semantic level, the environment that the underlying microkernel gives to
-Domain 0.
+The parent does not pass its complete root configuration file to the child.
+It constructs the child's effective configuration from the relevant
+DomainConfig and supplies that configuration as part of the child's startup
+environment.
+
+This means a root configuration can say, for example:
+
+    "start child 3 with debug logging, tty4, POSIX personality and
+     parent-proxied domain management"
+
+without requiring child 3 to know anything about the configuration of its
+siblings.
+
+The resulting startup environment should deliberately resemble, at a semantic
+level, the environment that the underlying microkernel gives to Domain 0.
 
 From the child's point of view:
 
-    "This is the hardware/resources available to my domain."
+    "This is my configuration, and these are the resources/authority available
+     to my domain."
 
 The child should not need to care whether those resources ultimately came
 from physical hardware, its parent, a VM, or another abstraction layer.
@@ -655,8 +830,8 @@ The intended recursive model is roughly:
          seL4
           |
           v
-      dominit0
-      Domain 0
+       dominit0
+       Domain 0
           |
           +-- processes/services
           |
@@ -671,95 +846,50 @@ The intended recursive model is roughly:
           +-- dominit0
               Domain 2
 
-But nothing says that only the officially configured dominit0 processes may
-do this.
+Nothing says that only the officially configured dominit0 processes may do
+this. Any process with sufficient resources and authority can construct a
+nested hierarchy and configure its children using the same environment model.
 
-For example:
-
-    Domain 2
-        |
-        +-- random userspace process
-              |
-              +-- dominit0
-                  nested Domain 0
-                      |
-                      +-- nested Domain 1
-                      +-- nested Domain 2
-
-This should work provided the random process possesses sufficient resources
-to construct the nested environment.
-
-The nested hierarchy remains constrained by those resources.
+The nested hierarchy remains constrained by the resources and capabilities
+available to the process constructing it.
 
 
-CSpace and capability passing
------------------------------
+Capability references in startup environments
+---------------------------------------------
 
 The parent constructs the child's CSpace.
 
-A capability is NOT passed merely by writing its numeric value into the
-child's command line.
+A capability is NOT passed merely by writing its numeric value into
+configuration or a startup environment.
 
 Instead:
 
     1. The parent copies/mints/delegates the capability into a slot in the
        child's CSpace.
 
-    2. The parent tells the child which CPtr identifies that capability in
-       the CHILD'S CSpace.
+    2. The parent describes how the child can find/use that capability in the
+       child's startup environment.
 
-The CPtr can conveniently be supplied as a human-readable integer in the
-command line/config/environment.
+During early development this may be represented by human-readable numeric
+CPtr values.
 
 For example:
 
-    --domain-manager-cap=291
+    domain-manager-cap=291
 
 means approximately:
 
-    "The capability you should use for IDomainManager is available as CPtr
-     291 in your CSpace."
+    "The capability you should use for the parent-provided IDomainManager is
+     available as CPtr 291 in your CSpace."
 
 The integer itself grants no authority.
 
-If slot 291 does not contain the appropriate capability, the argument is
-useless.
-
-The exact CSpace layout does not necessarily need to be globally fixed.
-
-FacetOS needs a defined enough startup convention for dominit0 to discover
-the resources/capabilities available to it, but individual CPtr values can
-be described by the startup environment.
+The long-term representation of delegated interfaces/resources is NOT YET
+FINALIZED and should not be baked unnecessarily into DomainConfig.
 
 
-Human-readable startup environment
-----------------------------------
-
-Human-readable configuration/startup arguments are deliberately desirable.
-
-They make early development, debugging and manually constructing unusual
-domain configurations much easier.
-
-A possible early command line might look like:
-
-    dominit0 \
-        --domain-id=1 \
-        --domain-manager-cap=291 \
-        --klog-cap=292 \
-        --allocator-cap=293 \
-        --console-cap=294
-
-This syntax is NOT FINALIZED.
-
-It is currently preferable to keep this sort of configuration easy to read
-and edit rather than prematurely replacing it with an opaque binary ABI.
-
-If the environment becomes too large for command-line arguments, a
-human-readable configuration/environment file can serve the same purpose.
-
-
-Configuration versus environment
---------------------------------
+Configuration versus authority
+------------------------------
 
 Keep these concepts distinct:
 
@@ -767,30 +897,32 @@ Keep these concepts distinct:
 
         What this instance of dominit0 is intended to construct/run/do.
 
-        This includes policy hints such as whether it is expected to act as
-        the domain manager for its configured hierarchy.
-
+        Configuration may come from a command line, the root hierarchy file,
+        or a parent-supplied startup environment.
 
     ENVIRONMENT / DELEGATED AUTHORITY
 
-        What resources and capabilities are actually available.
+        What resources, interfaces and capabilities are actually available.
 
-        These determine what dominit0 can really do.
+        For Domain 0 this currently originates largely in seL4 BootInfo.
 
-For Domain 0, much of the initial environment currently originates in seL4
-BootInfo.
+        For child domains the parent constructs it.
 
-For child domains, the parent constructs the environment.
+        For a nested hierarchy started by an ordinary process, that process
+        constructs whatever environment it can from the resources available
+        to it.
 
-For a nested hierarchy started by an ordinary process, that process
-constructs whatever environment it can from the resources available to it.
+The fundamental rule remains:
+
+    configuration describes intended behaviour;
+    capabilities determine actual authority.
 
 
 Domain management through a parent
 ----------------------------------
 
-A domain may also be given an IDomainManager capability/interface implemented
-by its parent.
+A domain may be configured to use an IDomainManager interface implemented by
+its parent.
 
 For example:
 
@@ -800,18 +932,14 @@ For example:
               |
               | IPC
               v
-          parent dominit0
+           parent dominit0
 
 This allows the child to REQUEST domain-management operations involving
 resources controlled by its parent.
 
-For example, the parent might allow a child to request operations relating
-to sibling domains.
-
-The child is not necessarily given raw authority over those siblings.
-
-Instead, the parent retains that authority and decides whether to perform
-the requested operation.
+The child is not necessarily given raw authority over those resources.
+Instead, the parent retains that authority and decides whether to perform the
+requested operation.
 
 This is normal FacetOS interface delegation:
 

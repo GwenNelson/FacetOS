@@ -44,7 +44,7 @@ EARLY BOOTSTRAP
     - Must not depend on the real memory manager
     - Allow early permanent metadata to remain allocated indefinitely
 
-[ ] 3. Parse seL4 BootInfo
+[*] 3. Parse seL4 BootInfo
     - Store/access the BootInfo pointer through a small bootstrap layer
     - Enumerate all Untyped caps
     - Record:
@@ -57,17 +57,38 @@ EARLY BOOTSTRAP
     - Inventory other resources needed to construct the initial domain
     - Avoid spreading direct seL4_BootInfo dependencies throughout dominit0
 
-[ ] 4. Define generic FacetOS bootstrap/domain environment
-    - Define the information generic dominit0 actually needs at startup
-    - Separate:
-        CONFIGURATION
-            what this dominit0 is intended to construct/do
-        ENVIRONMENT
-            what resources/capabilities are actually available
-    - Keep the environment independent of seL4 where practical
-    - Implement an seL4 BootInfo -> FacetOS environment adapter
-    - Leave room for another microkernel/bootstrap mechanism later
-    - Keep human-readable command-line/config input where useful
+[ ] 4. Define generic FacetOS configuration and bootstrap environment
+    - Add generic config.c/config.h
+    - Define DomainConfig for one domain
+    - Define SystemConfig for the root domain plus configured children
+    - Establish built-in defaults, initially including:
+        - domain ID 0
+        - native personality
+        - tty1 console
+        - spawn console server
+        - seat0
+        - local domain management for the root
+        - default log level
+    - Parse/update DomainConfig from command-line arguments
+    - Define one common setting/application path so command-line, file and
+      parent-environment parsing do not duplicate configuration semantics
+    - Define root-only human-readable hierarchy configuration file
+        - root DomainConfig
+        - child DomainConfigs
+        - parent/hierarchy relationships as needed
+        - per-child log level
+        - per-child console/personality/domain-management policy
+        - later resource/service/driver/process startup policy
+    - Define parent-supplied startup environment for children
+        - carries the child's effective DomainConfig
+        - carries/describes delegated resources/interfaces/capabilities
+        - does NOT require giving the child the root hierarchy file
+    - Keep CONFIGURATION separate from ENVIRONMENT / DELEGATED AUTHORITY
+    - Keep generic configuration independent of seL4 where practical
+    - Implement seL4 BootInfo -> generic FacetOS resource/environment adapter
+    - Keep human-readable startup/environment representation during early
+      development
+
 
 
 CAPABILITY / PHYSICAL RESOURCE MANAGEMENT
@@ -282,39 +303,47 @@ DOMAIN ARCHITECTURE / DOMINIT0
     - Document that domain IDs are hierarchy-relative, not inherently global
     - Keep unresolved design questions explicitly marked as unresolved
 
-[ ] 27. Define human-readable domain configuration
-    - Initial domain-0 config can be loaded as a Multiboot module
-    - Describe domain personality/type
-    - Describe desired resources
-    - Describe initial services/drivers/processes
-    - Include policy hints such as:
-        manage_domains=true/false
-    - Keep format easy to edit by hand
-    - Keep format extensible
+[ ] 27. Complete root hierarchy configuration format
+    - File is consumed by the root of a configured hierarchy
+    - Describe the root DomainConfig
+    - Describe child DomainConfigs and hierarchy relationships
+    - Allow per-domain policy including:
+        - domain personality/type
+        - log level
+        - console/seat configuration
+        - domain-management mode
+        - desired resources
+        - initial services/drivers/processes
+    - Root converts each child entry into that child's effective startup
+      configuration/environment
+    - Children do not need the complete hierarchy file
+    - Keep format easy to edit by hand and extensible
 
-[ ] 28. Define human-readable dominit0 startup environment
-    - Describe resources/capabilities actually available
-    - Allow CPtrs to be named by integer strings, e.g.:
-        --domain-manager-cap=291
-    - Make explicit that the integer does NOT transfer authority
-    - Parent must first install/mint/copy the cap into the child's CSpace
-    - The numeric value only identifies the cap in the child's CSpace
-    - Include domain ID / hierarchy information where useful
-    - Keep environment representation easy to inspect/debug
-    - Move from argv to a human-readable environment/config file if it grows
-      too large, rather than requiring an opaque binary format
+[ ] 28. Complete parent-supplied child startup environment
+    - Carry the child's effective DomainConfig
+    - Describe resources/interfaces/capabilities actually delegated
+    - Allow early human-readable CPtr references where useful
+    - Make explicit that numeric references do NOT transfer authority
+    - Parent must first install/mint/copy capabilities into the child's CSpace
+    - Keep representation inspectable/debuggable
+    - Permit replacement of argv-style representation later without changing
+      DomainConfig semantics
 
-[ ] 29. Define domain-management policy semantics
-    - manage_domains=false is a policy/bootstrap hint, NOT a security boundary
-    - Meaning is approximately:
-        "you are not configured as the root manager of this hierarchy"
-    - A modified dominit0 may ignore it
-    - Any process may run dominit0 and construct its own nested domain tree
-    - Any nested tree may call its own root "Domain 0"
-    - This is intentional, analogous to nested virtualization
-    - Security comes only from capabilities:
-        a nested tree may subdivide/delegate authority it possesses
-        it may not manufacture authority it was never given
+[ ] 29. Define domain-management configuration semantics
+    - Use an explicit mode rather than ambiguous combinations of booleans:
+        - none
+        - local
+        - parent
+    - local means this dominit is configured to construct/manage children using
+      authority available in its own environment
+    - parent means use a parent-provided IDomainManager interface/proxy
+    - none means this dominit is not configured to provide domain management
+    - These are policy/bootstrap choices, NOT security boundaries
+    - A modified dominit0 may ignore them
+    - Security still comes only from capabilities/delegated authority
+    - Any sufficiently authorized process may construct its own nested domain
+      tree and call its root Domain 0
+
 
 [ ] 30. Implement native child-domain creation
     - Parent allocates resources for child
