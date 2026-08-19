@@ -534,4 +534,43 @@ void*   liballoc_realloc_impl(void *p, size_t size)
 }
 
 
+int
+liballoc_add_region(void *base, size_t size)
+{
+    struct boundary_tag *tag;
+    int index;
 
+    if (base == NULL)
+        return -1;
+
+    if (size <= sizeof(struct boundary_tag))
+        return -1;
+
+    liballoc_lock();
+
+    if (!l_initialized) {
+        for (index = 0; index < MAXEXP; index++) {
+            l_freePages[index] = NULL;
+            l_completePages[index] = 0;
+        }
+
+        l_initialized = 1;
+    }
+
+    tag = (struct boundary_tag *)base;
+
+    tag->magic       = LIBALLOC_MAGIC;
+    tag->size        = 0;
+    tag->real_size   = size;
+    tag->index       = -1;
+    tag->split_left  = NULL;
+    tag->split_right = NULL;
+    tag->next        = NULL;
+    tag->prev        = NULL;
+
+    insert_tag(tag, -1);
+
+    liballoc_unlock();
+
+    return 0;
+}

@@ -123,41 +123,16 @@ void platform_init(void) {
 
      klog(LOG_DEBUG,"platform_init() - setting up vSpace for dominit0\n");
 
-int error;
+     int error;
 
-/*
- * First describe/bootstrap the current root-task VSpace.
- *
- * This one is intentionally leaky because we're attaching to an
- * address space the kernel already created before our VSpace manager
- * existed.
- */
+     error = sel4utils_bootstrap_vspace_with_bootinfo_leaky(
+        &sel4_vspace,
+        &sel4_vspace_data,
+        seL4_CapInitThreadVSpace,
+        &sel4_vka,
+        platform_sel4_bi);
 
- error = sel4utils_bootstrap_vspace_with_bootinfo_leaky(
-    &sel4_vspace,
-    &sel4_vspace_data,
-    seL4_CapInitThreadVSpace,
-    &sel4_vka,
-    platform_sel4_bi
-);
-
-if (error)
-    kpanic("Unable to bootstrap dominit0 VSpace");
-
-
-/*
- * Now construct the VSpace interface we'll actually use for allocation.
- */
-/*error = sel4utils_get_vspace_leaky(
-    &sel4_loader_vspace,
-    &sel4_vspace,
-    &sel4_vspace_data,
-    &sel4_vka,
-    seL4_CapInitThreadVSpace
-);
-
-if (error)
-    kpanic("Unable to initialise root VSpace");*/
+     if (error) kpanic("Unable to bootstrap dominit0 VSpace");
 
      klog(LOG_DEBUG,"platform_init() - setting up IPageAllocator\n");
      page_allocator = sel4_page_allocator_create(&sel4_vka);
