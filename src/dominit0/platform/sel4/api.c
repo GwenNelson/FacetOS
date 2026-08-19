@@ -18,7 +18,7 @@
 
 extern seL4_BootInfo* platform_sel4_bi;
 
-#define ALLOCMAN_BOOTSTRAP_POOL_SIZE (4 * 1024 * 1024)
+#define ALLOCMAN_BOOTSTRAP_POOL_SIZE (80 * 1024 * 1024)
 
 static simple_t sel4_simple;
 static allocman_t *sel4_allocman;
