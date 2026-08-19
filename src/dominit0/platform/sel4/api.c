@@ -147,3 +147,7 @@ void platform_init(void) {
 void platform_yield(void) {
      seL4_Yield();
 }
+
+void platform_debug_print(char* str) {
+     seL4_DebugPutString(str);
+}

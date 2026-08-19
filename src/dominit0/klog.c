@@ -3,8 +3,6 @@
 #include <facetos/dominit0/kmalloc.h>
 #include <facetos/dominit0/kpanic.h>
 
-#include <sel4/sel4.h>
-
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -27,7 +25,7 @@ static klog_store_fn klog_cur_store_fn;
 
 static void klog_early_store_fn(const char *data, size_t len);
 static void klog_dummy_sink(const char *data, size_t len);
-static void klog_sink_sel4(const char *data, size_t len);
+static void klog_sink_platform_debug(const char *data, size_t len);
 
 
 struct klog_emit_ctx {
@@ -65,7 +63,7 @@ void klog_init_early(void)
 	}
 
 	/* Add the first sink. */
-	klog_add_sink(&klog_sink_sel4);
+	klog_add_sink(&klog_sink_platform_debug);
 
 	/* Configure the initial log store. */
 	klog_cur_store_fn = &klog_early_store_fn;
@@ -203,12 +201,8 @@ klog_unlock(void)
 
 
 static void
-klog_sink_sel4(const char *data, size_t len)
+klog_sink_platform_debug(const char *data, size_t len)
 {
-	/*
-	 * seL4_DebugPutString() requires a NUL-terminated string,
-	 * while our internal sink interface is length-based.
-	 */
 	char tmp[128];
 
 	while (len) {
@@ -222,7 +216,7 @@ klog_sink_sel4(const char *data, size_t len)
 
 		tmp[n] = '\0';
 
-		seL4_DebugPutString(tmp);
+		platform_debug_print(tmp);
 
 		data += n;
 		len  -= n;
