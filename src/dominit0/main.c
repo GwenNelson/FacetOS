@@ -7,7 +7,9 @@ void main(int argc, char **argv, char **envp) {
      klog(LOG_INFO,"Starting FacetOS...\n");
      klog_dump_debug();
      kmalloc_init_early();
-     klog(LOG_DEBUG,"Testing an allocation...\n");
+
+     // TODO - consider some kind of test build that does stuff like this, with more extensive testing
+     /*     klog(LOG_DEBUG,"Testing an allocation...\n");
      void* my_buf = kmalloc(32);
      klog(LOG_DEBUG,"Allocated 32 bytes\n");
      kfree(my_buf);
@@ -15,7 +17,8 @@ void main(int argc, char **argv, char **envp) {
      
      klog(LOG_DEBUG,"About to try a stupid large allocation, should panic...\n");
      kmalloc(2*1024*1024);
-     klog(LOG_DEBUG,"If you see this, fuck\n");
+     klog(LOG_DEBUG,"If you see this, fuck\n");*/
+
      for (;;) {
         seL4_Yield();
      }
