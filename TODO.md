@@ -35,7 +35,7 @@ CURRENT BOOTSTRAP / TREE CLEANUP
 EARLY BOOTSTRAP
 ===============
 
-[ ] 2. Bootstrap allocator
+[*] 2. Bootstrap allocator
     - Reserve a large static arena in .bss
     - Implement boot_alloc(size, align)
     - Monotonic allocation only; no real free

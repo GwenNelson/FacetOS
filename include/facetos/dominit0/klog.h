@@ -22,13 +22,13 @@ struct klog_sink {
     bool enabled;
 };
 
-void klog_init_early();    // setup the early boot stuff
-void klog_init_postboot(); // setup the "system ready" stuff - after boot, so we don't spam everything all over the console etc
+void klog_init_early(void);    // setup the early boot stuff
+void klog_init_postboot(void); // setup the "system ready" stuff - after boot, so we don't spam everything all over the console etc
 
 // public locking functions
-void klog_lock();
-void klog_unlock();
+void klog_lock(void);
+void klog_unlock(void);
 
 int klog_add_sink(klog_sink_fn write); // tries to add a new sink, returns 0 on success, -1 on failure
 void klog(enum log_level level, const char* fmt, ...); // main klog() function, called by other code to log stuff
-void klog_dump_debug(); // dump debug data
+void klog_dump_debug(void); // dump debug data
