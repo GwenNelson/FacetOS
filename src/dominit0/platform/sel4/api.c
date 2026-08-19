@@ -11,6 +11,8 @@
 #include <allocman/bootstrap.h>
 #include <allocman/vka.h>
 #include <vka/vka.h>
+#include <vspace/vspace.h>
+#include <sel4utils/vspace.h>
 
 #include <stddef.h>
 
@@ -23,6 +25,12 @@ extern seL4_BootInfo* platform_sel4_bi;
 static simple_t sel4_simple;
 static allocman_t *sel4_allocman;
 static vka_t sel4_vka;
+
+static vspace_t sel4_loader_vspace;
+static vspace_t sel4_vspace;
+
+static sel4utils_alloc_data_t sel4_loader_data;
+static sel4utils_alloc_data_t sel4_vspace_data;
 
 static IPageAllocator *page_allocator;
 static IPageAllocator page_alloc_instance;
@@ -80,6 +88,42 @@ void platform_init(void) {
 
      klog(LOG_DEBUG,"platform_init() - setting up VKA\n");
      allocman_make_vka(&sel4_vka, sel4_allocman);
+
+     klog(LOG_DEBUG,"platform_init() - setting up vSpace for dominit0\n");
+
+int error;
+
+/*
+ * First describe/bootstrap the current root-task VSpace.
+ *
+ * This one is intentionally leaky because we're attaching to an
+ * address space the kernel already created before our VSpace manager
+ * existed.
+ */
+error = sel4utils_bootstrap_vspace_with_bootinfo_leaky(
+    &sel4_loader_vspace,
+    &sel4_loader_data,
+    seL4_CapInitThreadVSpace,
+    &sel4_vka,
+    platform_sel4_bi
+);
+
+if (error)
+    kpanic("Unable to bootstrap loader VSpace");
+
+/*
+ * Now construct the VSpace interface we'll actually use for allocation.
+ */
+error = sel4utils_get_vspace_leaky(
+    &sel4_loader_vspace,
+    &sel4_vspace,
+    &sel4_vspace_data,
+    &sel4_vka,
+    seL4_CapInitThreadVSpace
+);
+
+if (error)
+    kpanic("Unable to initialise root VSpace");
 
      klog(LOG_DEBUG,"platform_init() - setting up IPageAllocator\n");
      page_allocator = sel4_page_allocator_create(&sel4_vka);

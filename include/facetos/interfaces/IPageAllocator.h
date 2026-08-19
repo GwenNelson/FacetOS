@@ -10,6 +10,6 @@ typedef struct IPageAllocator {
 	void *self; // required by ALL interfaces
 	void *priv; // private data
 	size_t (*get_page_size)(void* self);
-	int    (*alloc)         (void *self, size_t count, void **pages);  // returns number of pages, -1 on error
-	int    (*free)          (void *self, size_t count, void *base);    // returns number of pages freed, -1 on error
+	int    (*alloc)         (void *self, size_t count, void **pages);  // returns 0 on success, -1 on error
+	int    (*free)          (void *self, size_t count, void *base);    // returns 0 on success, -1 on error
 } IPageAllocator;

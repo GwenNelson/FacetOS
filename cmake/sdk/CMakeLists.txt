@@ -170,6 +170,7 @@ target_link_libraries(dominit0 PRIVATE
     sel4simple-default
     sel4allocman
     sel4vka
+    sel4vspace
     sel4utils
 )
 
