@@ -1,6 +1,7 @@
 #include <facetos/dominit0/platform/api.h>
 #include <facetos/dominit0/klog.h>
 #include <facetos/dominit0/kmalloc.h>
+#include <facetos/dominit0/kpanic.h>
 #include <facetos/interfaces/IFrameAllocator.h>
 
 #include <sel4/sel4.h>
@@ -41,7 +42,7 @@ int sel4_frame_alloc_free(void* self, size_t count, IFrame **frames) {
 
 IFrameAllocator* sel4_frame_allocator_create(vka_t *vka) {
 	klog(LOG_WARN,"sel4_frame_allocator_create() - not yet fully implemented!\n");
-	retval = &frame_alloc_instance;
+	IFrameAllocator *retval = &frame_alloc_instance;
 	retval->self = (void*)retval;
 	retval->priv = (void*)vka;
 	retval->get_frame_size = &sel4_frame_alloc_get_frame_size;
@@ -75,7 +76,6 @@ void platform_init(void) {
 
      klog(LOG_DEBUG,"platform_init() - setting up VKA\n");
      allocman_make_vka(&sel4_vka, sel4_allocman);
-     if(sel4_vka == NULL) kpanic("Unable to make VKA!");
 
      klog(LOG_DEBUG,"platform_init() - setting up IFrameAllocator\n");
      frame_allocator = sel4_frame_allocator_create(&sel4_vka);

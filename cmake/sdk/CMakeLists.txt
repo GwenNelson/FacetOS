@@ -137,6 +137,21 @@ target_compile_options(dominit0 PRIVATE
     -fno-stack-protector
     -fno-pic
     -mno-red-zone
+    -g
+)
+
+execute_process(
+    COMMAND ${CMAKE_C_COMPILER} -print-file-name=include
+    OUTPUT_VARIABLE GCC_BUILTIN_INCLUDE_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+target_include_directories(facet_klibc SYSTEM PRIVATE
+    "${GCC_BUILTIN_INCLUDE_DIR}"
+)
+
+target_include_directories(dominit0 SYSTEM PRIVATE
+    "${GCC_BUILTIN_INCLUDE_DIR}"
 )
 
 if(FACETOS_DEBUG)

@@ -1,5 +1,4 @@
 #include <facetos/dominit0/klock.h>
-#include <stdatomic.h>
 
 static inline void klock_cpu_relax() {
 #if defined(__x86_64__) || defined(__i386__)
