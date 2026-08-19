@@ -6,7 +6,7 @@
 
 static const uuid_t IID_IGenericObject = UUID_INIT(0xb8713abf,0x0c5b,0x4f2d,0x87be,0x90e9494ba2b0ULL);
 
-static const  IGenericObject_RequiredInterfacesCount = 0;
+static const size_t IGenericObject_RequiredInterfacesCount = 0;
 
 typedef struct IGenericObject {
 	void   *self; // required by ALL interfaces
