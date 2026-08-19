@@ -93,11 +93,11 @@ static void klog_kpanic(char* msg) {
 static void klog_prod_store_fn(const char* data, size_t len) {
        size_t available = klog_prod_buf_size - klog_prod_buf_used;
        if (len > available) {
-	  void* new_buf = krealloc(klog_prod_buf,klog_prod_buf_size + len + 64);
+	  void* new_buf = krealloc(klog_prod_buf,klog_prod_buf_size + len + 1);
 	  if(new_buf==NULL) klog_kpanic("Could not expand klog buffer!"); // TODO - at some point make it use a ringbuffer instead
           klog_prod_buf = new_buf;
        }
-       klog_prod_buf_size = klog_prod_buf_size + len + 64;
+       klog_prod_buf_size = klog_prod_buf_size + len + 1;
 
 	for (size_t i = 0; i < len; i++)
 		klog_prod_buf[klog_prod_buf_used + i] = data[i];
@@ -109,10 +109,10 @@ static void klog_prod_store_fn(const char* data, size_t len) {
 
 void klog_init_postboot(void) {
 	
-	klog_prod_buf = (char*)kmalloc(klog_early_buf_used+64+1); // we want a tiny bit of space already available, and avoid weird off by one errors crashing it
+	klog_prod_buf = (char*)kmalloc(klog_early_buf_used+1); // we want a tiny bit of space already available, and avoid weird off by one errors crashing it
 	if(klog_prod_buf == NULL) kpanic("Could not allocate klog_prod_buf!");
 	klog_prod_buf_used = klog_early_buf_used;
-	klog_prod_buf_size = klog_early_buf_used + 64;
+	klog_prod_buf_size = klog_early_buf_used + 1;
 
 	klog_lock();
 	klock_lock(&klog_internal_lock);	
@@ -121,6 +121,7 @@ void klog_init_postboot(void) {
 
 	klock_unlock(&klog_internal_lock);
 	if(klog_early_truncated) klog(LOG_INFO,"...\n(early logbuf truncated)\n");
+	klog(LOG_INFO,"Switched to dynamic log buffer!\n");
 	klog_unlock();
 }
 

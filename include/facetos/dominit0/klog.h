@@ -5,7 +5,7 @@
 
 #define KLOG_MAX_SINKS 8
 // we only want a small buffer, 2KB is plenty before the dynamic heap is online and we can use that
-#define KLOG_EARLY_BUFSIZE (2 * 1024)
+#define KLOG_EARLY_BUFSIZE (100)
 
 enum log_level {
 	LOG_DEBUG,

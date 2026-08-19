@@ -150,7 +150,9 @@ void kfree(void* ptr) {
 }
 
 void* krealloc(void* p, size_t size) {
+      klock_lock(&kmalloc_lock);
       krealloc_impl(p,size);
+      klock_unlock(&kmalloc_lock);
 }
 
 void kmalloc_dump(void) {

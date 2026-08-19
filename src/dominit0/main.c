@@ -34,12 +34,11 @@ void main(int argc, char **argv, char **envp) {
         test_kmalloc();
      #endif
      platform_init();
+     klog_init_postboot();
 
      #ifdef DEBUG
         test_kmalloc();
      #endif
-
-     klog_init_postboot();
 
      for (;;) {
         platform_yield();

@@ -108,6 +108,7 @@ static void* 	liballoc_memcpy(void* s1, const void* s2, size_t n)
 #ifdef DEBUG
 static void dump_array()
 {
+	return;
 	int i = 0;
 	struct boundary_tag *tag = NULL;
 
