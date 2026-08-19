@@ -7,9 +7,12 @@
 
 #include <facetos/interfaces/IPageAllocator.h>
 
+#include <liballoc.h>
+
 static unsigned char bootstrap_heap[KMALLOC_BOOTSTRAP_HEAP_SIZE]
 	__attribute__((aligned(KMALLOC_ALIGNMENT)));
-static klock_t kmalloc_lock = KLOCK_INITIALIZER;
+static klock_t kmalloc_lock          = KLOCK_INITIALIZER;
+static klock_t kmalloc_liballoc_lock = KLOCK_INITIALIZER;
 
 static size_t bootstrap_heap_used;
 
@@ -63,8 +66,9 @@ void kmalloc_init(IPageAllocator *allocator) {
      // TODO - when we import liballoc, should probably add the remaining bootstrap heap to the liballoc heap
      //        but only after verifying that IPageAllocator is working
      kmalloc_allocator = allocator;
-     //kmalloc_impl      = &kmalloc_impl_real;
-     //kfree_imp         = &kfree_impl_real;
+     kmalloc_impl      = &liballoc_malloc_impl;
+     kfree_impl        = &liballoc_free_impl;
+     klock_init(&kmalloc_liballoc_lock);
      klock_unlock(&kmalloc_lock);
 }
 
@@ -95,4 +99,43 @@ void kmalloc_dump(void) {
      }
      klog(LOG_DEBUG,"\t IPageAllocator at %p\n",kmalloc_allocator);
      klog_unlock();
+}
+
+int liballoc_lock(void)
+{
+    klock_lock(&kmalloc_liballoc_lock);
+    return 0;
+}
+
+int liballoc_unlock(void)
+{
+    klock_unlock(&kmalloc_liballoc_lock);
+    return 0;
+}
+
+void *liballoc_alloc(int pages)
+{
+    void *base = NULL;
+
+    if (kmalloc_allocator == NULL)
+        return NULL;
+
+    if (kmalloc_allocator->alloc(
+            kmalloc_allocator->self,
+            pages,
+            &base) != 0)
+        return NULL;
+
+    return base;
+}
+
+int liballoc_free(void *ptr, int pages)
+{
+    if (kmalloc_allocator == NULL)
+        return -1;
+
+    return kmalloc_allocator->free(
+        kmalloc_allocator->self,
+        pages,
+        ptr);
 }
