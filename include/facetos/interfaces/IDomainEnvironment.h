@@ -9,6 +9,8 @@
 static const uuid_t IID_IDomainEnvironment =
     UUID_INIT(0xe391d460, 0x87ef, 0x44ff, 0xb853, 0x035e7932f094ULL);
 
+static const char IDomainEnvironment_InterfaceName[] = "IDomainEnvironment";
+
 static const uuid_t IDomainEnvironment_RequiredInterfaces[] = {
     IID_IGenericObject,
 };

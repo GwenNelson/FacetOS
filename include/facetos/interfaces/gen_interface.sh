@@ -20,6 +20,8 @@ cat << EOF
 
 static const uuid_t IID_${interface_name} = UUID_INIT(0x${uuid_no_dash:0:8},0x${uuid_no_dash:8:4},0x${uuid_no_dash:12:4},0x${uuid_no_dash:16:4},0x${uuid_no_dash:20:12}ULL);
 
+static const char ${interface_name}_InterfaceName[] = "${interface_name}";
+
 static const size_t uuid_t ${interface_name}_RequiredInterfaces[] = {
 	IID_IGenericObject, // this is needed by everything
 };

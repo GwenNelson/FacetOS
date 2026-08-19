@@ -5,8 +5,9 @@
 #include <facetos/uuid.h>
 #include <facetos/interfaces/IGenericObject.h>
 
-static const uuid_t IID_IPageAllocator =
-    UUID_INIT(0xbb0edfa1, 0xfb32, 0x476f, 0xa37a, 0x12380b12757cULL);
+static const uuid_t IID_IPageAllocator = UUID_INIT(0xbb0edfa1, 0xfb32, 0x476f, 0xa37a, 0x12380b12757cULL);
+
+static const char IPageAllocator_InterfaceName[] = "IPageAllocator";
 
 static const uuid_t IPageAllocator_RequiredInterfaces[] = {
     IID_IGenericObject,

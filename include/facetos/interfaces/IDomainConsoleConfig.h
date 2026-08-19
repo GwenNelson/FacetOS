@@ -8,6 +8,8 @@
 static const uuid_t IID_IDomainConsoleConfig =
     UUID_INIT(0x5a772cdf, 0x72f1, 0x43c7, 0x89ae, 0xb9a71a8e8242ULL);
 
+static const char IDomainConsoleConfig_InterfaceName[] = "IDomainConsoleConfig";
+
 static const uuid_t IDomainConsoleConfig_RequiredInterfaces[] = {
     IID_IGenericObject,
 };

@@ -6,8 +6,9 @@
 #include <facetos/uuid.h>
 #include <facetos/interfaces/IGenericObject.h>
 
-static const uuid_t IID_ILoggingConfig =
-    UUID_INIT(0xde78131b, 0xb3d3, 0x4783, 0x98c5, 0xa4c44daafb59ULL);
+static const uuid_t IID_ILoggingConfig = UUID_INIT(0xde78131b, 0xb3d3, 0x4783, 0x98c5, 0xa4c44daafb59ULL);
+
+static const char ILoggingConfig_InterfaceName[] = "ILoggingConfig";
 
 static const uuid_t ILoggingConfig_RequiredInterfaces[] = {
     IID_IGenericObject,

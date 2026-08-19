@@ -9,8 +9,10 @@
 #include <facetos/interfaces/ILoggingConfig.h>
 #include <facetos/interfaces/IDomainConsoleConfig.h>
 
-static const uuid_t IID_IDomainConfig =
-    UUID_INIT(0xa9de0307, 0xc51f, 0x4d3a, 0x9740, 0xcfdadffaf33bULL);
+static const uuid_t IID_IDomainConfig = UUID_INIT(0xa9de0307, 0xc51f, 0x4d3a, 0x9740, 0xcfdadffaf33bULL);
+
+static const char IDomainConfig_InterfaceName[] = "IDomainConfig";
+
 
 static const uuid_t IDomainConfig_RequiredInterfaces[] = {
     IID_IGenericObject,
