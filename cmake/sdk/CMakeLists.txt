@@ -42,6 +42,9 @@ set(SEL4_LIBS_DIR
 
 option(FACETOS_DEBUG "Build FacetOS userspace with debug support" OFF)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+
 #
 # Upstream CMake modules.
 #
@@ -55,6 +58,7 @@ list(APPEND CMAKE_MODULE_PATH
     "${SEL4_LIBS_DIR}"
 )
 
+
 #
 # Upstream packages.
 #
@@ -63,6 +67,7 @@ find_package(seL4 REQUIRED)
 find_package(musllibc REQUIRED)
 find_package(util_libs REQUIRED)
 find_package(seL4_libs REQUIRED)
+
 
 #
 # Build environment.
@@ -79,7 +84,35 @@ sel4_libs_import_libraries()
 
 
 #
+# Common FacetOS userspace build settings.
+#
+
+function(facetos_configure_target target)
+    target_include_directories(${target} PRIVATE
+        "${FACETOS_ROOT}/include"
+    )
+
+    target_compile_options(${target} PRIVATE
+        -ffreestanding
+        -fno-stack-protector
+        -fno-pic
+        -mno-red-zone
+    )
+
+    if(FACETOS_DEBUG)
+        target_compile_options(${target} PRIVATE -Og -g)
+        target_compile_definitions(${target} PRIVATE DEBUG)
+    else()
+        target_compile_options(${target} PRIVATE -O2)
+    endif()
+endfunction()
+
+
+#
 # FacetOS klibc.
+#
+# CONFIGURE_DEPENDS makes Ninja/CMake notice newly-created or removed source
+# files as well as ordinary edits to files already in the target.
 #
 
 file(GLOB FACET_KLIBC_SRCS CONFIGURE_DEPENDS
@@ -90,23 +123,12 @@ add_library(facet_klibc STATIC
     ${FACET_KLIBC_SRCS}
 )
 
+facetos_configure_target(facet_klibc)
+
+# klibc headers are part of the FacetOS include surface for consumers.
 target_include_directories(facet_klibc PUBLIC
     "${FACETOS_ROOT}/include"
 )
-
-target_compile_options(facet_klibc PRIVATE
-    -ffreestanding
-    -fno-stack-protector
-    -fno-pic
-    -mno-red-zone
-)
-
-if(FACETOS_DEBUG)
-    target_compile_options(facet_klibc PRIVATE -Og -g)
-    target_compile_definitions(facet_klibc PRIVATE DEBUG)
-else()
-    target_compile_options(facet_klibc PRIVATE -O2)
-endif()
 
 
 #
@@ -124,49 +146,16 @@ add_executable(dominit0
     ${FACET_DOMINIT0_SRCS}
 )
 
-target_include_directories(dominit0 PRIVATE
-    "${FACETOS_ROOT}/include"
-)
+facetos_configure_target(dominit0)
 
 target_compile_definitions(dominit0 PRIVATE
     FACET_PLATFORM_SEL4=1
 )
 
-target_compile_options(dominit0 PRIVATE
-    -ffreestanding
-    -fno-stack-protector
-    -fno-pic
-    -mno-red-zone
-    -g
-)
-
-execute_process(
-    COMMAND ${CMAKE_C_COMPILER} -print-file-name=include
-    OUTPUT_VARIABLE GCC_BUILTIN_INCLUDE_DIR
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-
-target_include_directories(facet_klibc SYSTEM PRIVATE
-    "${GCC_BUILTIN_INCLUDE_DIR}"
-)
-
-target_include_directories(dominit0 SYSTEM PRIVATE
-    "${GCC_BUILTIN_INCLUDE_DIR}"
-)
-
-if(FACETOS_DEBUG)
-    target_compile_options(dominit0 PRIVATE -Og -g)
-    target_compile_definitions(dominit0 PRIVATE DEBUG)
-else()
-    target_compile_options(dominit0 PRIVATE -O2)
-endif()
 
 #
-# Let upstream CMake targets carry their own transitive include paths,
-# compile definitions, generated headers and library dependencies.
-#
-# libsel4allocman uses sel4utils internally, so include it explicitly as
-# part of the root-task dependency set.
+# Let upstream CMake targets carry their transitive include paths, generated
+# configuration headers, compile definitions, and library dependencies.
 #
 
 target_link_libraries(dominit0 PRIVATE
@@ -183,6 +172,7 @@ target_link_libraries(dominit0 PRIVATE
     sel4vka
     sel4utils
 )
+
 
 #
 # Configure dominit0 as the initial seL4 userspace task.

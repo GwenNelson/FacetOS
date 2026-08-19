@@ -1,5 +1,8 @@
 #
-# FacetOS
+# FacetOS top-level build orchestrator
+#
+# CMake/Ninja owns the seL4 userspace build graph.
+# Make provides the convenient human-facing targets.
 #
 
 .DEFAULT_GOAL := all
@@ -13,17 +16,28 @@ SEL4_RUNTIME := $(ROOT)/external/sel4runtime
 
 SDK_BUILD := $(ROOT)/build/sdk
 
-FACET_BUILD := $(ROOT)/build/facetos
-
 BOOTSTUB32_DIR := $(ROOT)/bootstub32
 BOOTSTUB32     := $(BOOTSTUB32_DIR)/bootstub32
 
 SEL4_CONFIG := $(ROOT)/config/FacetOS-seL4.cmake
+CMAKE_SOURCE := $(ROOT)/cmake/sdk
+CMAKE_LISTS  := $(CMAKE_SOURCE)/CMakeLists.txt
 
 SEL4_ENV := PATH="$(VENV)/bin:$(PATH)"
 
 SDK_KERNEL     := $(SDK_BUILD)/kernel/kernel.elf
 FACET_DOMINIT0 := $(SDK_BUILD)/dominit0
+
+#
+# Files whose changes require an explicit CMake configure pass.
+# Source-file changes do NOT belong here: Ninja/CMake CONFIGURE_DEPENDS
+# tracks those itself.
+#
+CMAKE_CONFIG_INPUTS := \
+	$(CMAKE_LISTS) \
+	$(SEL4_CONFIG)
+
+CMAKE_STATE := $(SDK_BUILD)/.facet-config
 
 ifeq ($(DEBUG),1)
 	FACETOS_CMAKE_DEBUG := ON
@@ -40,6 +54,8 @@ endif
 	sdk \
 	facetos \
 	dominit0 \
+	kernel \
+	build \
 	bootstub32 \
 	image \
 	run \
@@ -84,46 +100,79 @@ patches:
 
 
 #
-# Configure the complete seL4 + FacetOS userspace build universe.
+# Configure the seL4 + FacetOS CMake universe only when necessary.
+#
+# `configure` is deliberately a phony convenience target, but the shell
+# below avoids rerunning CMake unless:
+#
+#   * build/sdk/build.ninja does not exist;
+#   * the requested DEBUG setting changed; or
+#   * one of the explicit CMake/config inputs changed.
+#
+# Ordinary .c/.h edits are left to Ninja's own dependency graph.
 #
 
 configure: patches
-	mkdir -p $(SDK_BUILD)
-
-	$(SEL4_ENV) cmake \
-		-G Ninja \
-		-C $(SEL4_CONFIG) \
-		-DCMAKE_TOOLCHAIN_FILE=$(SEL4_SRC)/gcc.cmake \
-		-DFACETOS_DEBUG=$(FACETOS_CMAKE_DEBUG) \
-		-S $(ROOT)/cmake/sdk \
-		-B $(SDK_BUILD)
+	@mkdir -p $(SDK_BUILD)
+	@desired='FACETOS_DEBUG=$(FACETOS_CMAKE_DEBUG)'; \
+	need_configure=0; \
+	if [ ! -f '$(SDK_BUILD)/build.ninja' ]; then \
+		need_configure=1; \
+	fi; \
+	if [ ! -f '$(CMAKE_STATE)' ] || \
+	   [ "$$(cat '$(CMAKE_STATE)' 2>/dev/null)" != "$$desired" ]; then \
+		need_configure=1; \
+	fi; \
+	for input in $(CMAKE_CONFIG_INPUTS); do \
+		if [ "$$input" -nt '$(SDK_BUILD)/build.ninja' ]; then \
+			need_configure=1; \
+		fi; \
+	done; \
+	if [ $$need_configure -eq 1 ]; then \
+		echo "Configuring FacetOS/seL4 build..."; \
+		$(SEL4_ENV) cmake \
+			-G Ninja \
+			-C $(SEL4_CONFIG) \
+			-DCMAKE_TOOLCHAIN_FILE=$(SEL4_SRC)/gcc.cmake \
+			-DFACETOS_DEBUG=$(FACETOS_CMAKE_DEBUG) \
+			-S $(CMAKE_SOURCE) \
+			-B $(SDK_BUILD) && \
+		printf '%s\n' "$$desired" > '$(CMAKE_STATE)'; \
+	else \
+		echo "CMake configuration is up to date."; \
+	fi
 
 
 #
-# Build the seL4 substrate plus FacetOS root task.
+# Ninja-backed build targets.
+#
+# These are intentionally phony from Make's point of view. Make does not know
+# the CMake/Ninja dependency graph, so it should always ASK Ninja whether a
+# target needs rebuilding. An up-to-date Ninja invocation is essentially free.
 #
 
-sdk: configure
-	$(SEL4_ENV) ninja -C $(SDK_BUILD) \
-		kernel.elf \
-		dominit0
+kernel: configure
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf
 
-
-#
-# Normal FacetOS userspace build.
-#
-# CMake owns the actual dominit0 build so it inherits the complete
-# seL4/musl/sel4runtime build environment and transitive dependencies.
-#
 
 dominit0: configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) dominit0
 
+
 facetos: dominit0
 
 
+# Build everything needed to boot FacetOS.
+build: configure
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf dominit0
+
+
+# Keep `make sdk` as a familiar name, but it no longer implies cleaning.
+sdk: build
+
+
 #
-# Sanity checks.
+# Optional sanity check for scripts/manual use.
 #
 
 check-sdk:
@@ -136,48 +185,29 @@ check-sdk:
 #
 # bootstub32.
 #
+# Its own Makefile handles incremental rebuilding.
+#
 
 bootstub32:
 	$(MAKE) -C $(BOOTSTUB32_DIR) DEBUG=$(DEBUG)
 
 
 #
-# ISO image contents.
+# ISO image.
+#
+# Re-populating the tiny ISO staging tree is cheap and avoids trying to make
+# GNU Make duplicate Ninja's knowledge of when kernel.elf/dominit0 changed.
 #
 
 ISO_ROOT    := $(ROOT)/build/iso
 FACETOS_ISO := $(ROOT)/build/facetos.iso
 
-ISO_FILES := \
-	KERNEL \
-	DOMINIT0 \
-	GRUBCFG
-
-ISO_KERNEL_SRC := $(SDK_KERNEL)
-ISO_KERNEL_DST := boot/kernel.elf
-
-ISO_DOMINIT0_SRC := $(FACET_DOMINIT0)
-ISO_DOMINIT0_DST := boot/dominit0
-
-ISO_GRUBCFG_SRC := $(ROOT)/boot/grub.cfg
-ISO_GRUBCFG_DST := boot/grub/grub.cfg
-
-
-define ISO_FILE_RULE
-ISO_$(1)_TARGET := $$(ISO_ROOT)/$$(ISO_$(1)_DST)
-
-$$(ISO_$(1)_TARGET): $$(ISO_$(1)_SRC)
-	mkdir -p $$(dir $$@)
-	cp $$< $$@
-endef
-
-$(foreach file,$(ISO_FILES),$(eval $(call ISO_FILE_RULE,$(file))))
-
-ISO_TARGETS := \
-	$(foreach file,$(ISO_FILES),$(ISO_$(file)_TARGET))
-
-
-image: facetos check-sdk $(ISO_TARGETS)
+image: build
+	rm -rf $(ISO_ROOT)
+	mkdir -p $(ISO_ROOT)/boot/grub
+	cp $(SDK_KERNEL) $(ISO_ROOT)/boot/kernel.elf
+	cp $(FACET_DOMINIT0) $(ISO_ROOT)/boot/dominit0
+	cp $(ROOT)/boot/grub.cfg $(ISO_ROOT)/boot/grub/grub.cfg
 	grub-mkrescue \
 		-o $(FACETOS_ISO) \
 		$(ISO_ROOT)
@@ -207,7 +237,9 @@ QEMU_ISO_FLAGS := \
 	-cdrom $(FACETOS_ISO)
 
 
-run: facetos check-sdk bootstub32
+# One command now does the incremental kernel/dominit0 build, incrementally
+# builds bootstub32, and boots the result.
+run: build bootstub32
 	$(QEMU) \
 		$(QEMU_FLAGS) \
 		$(QEMU_DIRECT_FLAGS)
@@ -224,7 +256,6 @@ run-iso: image
 #
 
 facet-clean:
-	rm -rf $(FACET_BUILD)
 	rm -rf $(ISO_ROOT)
 	rm -f $(FACETOS_ISO)
 
@@ -238,10 +269,5 @@ sdk-clean:
 	git -C $(SEL4_RUNTIME) reset --hard
 
 
-EXTERNAL_CLEAN_TARGETS := \
-	sdk-clean \
-	bootstub32-clean
-
-
-full-clean: facet-clean $(EXTERNAL_CLEAN_TARGETS)
+full-clean: facet-clean sdk-clean bootstub32-clean
 	rm -rf $(ROOT)/build
