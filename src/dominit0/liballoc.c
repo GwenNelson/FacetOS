@@ -1,4 +1,6 @@
 #include <liballoc.h>
+#include <stddef.h>
+#include <stdint.h>
 
 /**  Durand's Ridiculously Amazing Super Duper Memory functions.  */
 
@@ -110,7 +112,7 @@ static void dump_array()
 	struct boundary_tag *tag = NULL;
 
 	klog_lock();
-	klog("------ Free pages array ---------\n");
+	klog(LOG_DEBUG,"------ Free pages array ---------\n");
 	klog(LOG_DEBUG,"System memory allocated: %i\n", l_allocated );
 	klog(LOG_DEBUG,"Memory in used (malloc'ed): %i\n", l_inuse );
 
@@ -207,7 +209,7 @@ static inline struct boundary_tag* split_tag( struct boundary_tag* tag )
 	unsigned int remainder = tag->real_size - sizeof(struct boundary_tag) - tag->size;
 		
 	struct boundary_tag *new_tag = 
-				   (struct boundary_tag*)((unsigned int)tag + sizeof(struct boundary_tag) + tag->size);	
+				   (struct boundary_tag*)((uintptr_t)tag + sizeof(struct boundary_tag) + tag->size);	
 	
 						new_tag->magic = LIBALLOC_MAGIC;
 						new_tag->real_size = remainder;	
@@ -374,7 +376,7 @@ void *liballoc_malloc_impl(size_t size)
 		
 		
 
-	ptr = (void*)((unsigned int)tag + sizeof( struct boundary_tag ) );
+	ptr = (void*)((uintptr_t)tag + sizeof( struct boundary_tag ) );
 
 
 	
@@ -403,7 +405,7 @@ void liballoc_free_impl(void *ptr)
 	liballoc_lock();
 	
 
-		tag = (struct boundary_tag*)((unsigned int)ptr - sizeof( struct boundary_tag ));
+		tag = (struct boundary_tag*)((uintptr_t)ptr - sizeof( struct boundary_tag ));
 	
 		if ( tag->magic != LIBALLOC_MAGIC ) 
 		{
@@ -518,7 +520,7 @@ void*   liballoc_realloc_impl(void *p, size_t size)
 	if ( p == NULL ) return liballoc_malloc_impl( size );
 
 	if ( liballoc_lock != NULL ) liballoc_lock();		// lockit
-		tag = (struct boundary_tag*)((unsigned int)p - sizeof( struct boundary_tag ));
+		tag = (struct boundary_tag*)((uintptr_t)p - sizeof( struct boundary_tag ));
 		real_size = tag->size;
 	if ( liballoc_unlock != NULL ) liballoc_unlock();
 

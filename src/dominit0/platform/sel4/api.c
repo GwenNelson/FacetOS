@@ -47,7 +47,7 @@ sel4_page_alloc_alloc(void *self, size_t count, void **pages)
     vspace_t *vspace = allocator->priv;
 
     void *base = vspace_new_pages(
-        vspace,
+        &sel4_vspace,
         seL4_AllRights,
         count,
         seL4_PageBits
@@ -132,21 +132,23 @@ int error;
  * address space the kernel already created before our VSpace manager
  * existed.
  */
-error = sel4utils_bootstrap_vspace_with_bootinfo_leaky(
-    &sel4_loader_vspace,
-    &sel4_loader_data,
+
+ error = sel4utils_bootstrap_vspace_with_bootinfo_leaky(
+    &sel4_vspace,
+    &sel4_vspace_data,
     seL4_CapInitThreadVSpace,
     &sel4_vka,
     platform_sel4_bi
 );
 
 if (error)
-    kpanic("Unable to bootstrap loader VSpace");
+    kpanic("Unable to bootstrap dominit0 VSpace");
+
 
 /*
  * Now construct the VSpace interface we'll actually use for allocation.
  */
-error = sel4utils_get_vspace_leaky(
+/*error = sel4utils_get_vspace_leaky(
     &sel4_loader_vspace,
     &sel4_vspace,
     &sel4_vspace_data,
@@ -155,7 +157,7 @@ error = sel4utils_get_vspace_leaky(
 );
 
 if (error)
-    kpanic("Unable to initialise root VSpace");
+    kpanic("Unable to initialise root VSpace");*/
 
      klog(LOG_DEBUG,"platform_init() - setting up IPageAllocator\n");
      page_allocator = sel4_page_allocator_create(&sel4_vka);

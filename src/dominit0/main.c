@@ -27,6 +27,7 @@ void main(int argc, char **argv, char **envp) {
      kmalloc_init_early();
      test_kmalloc();
      platform_init();
+
      test_kmalloc();
 
      for (;;) {
