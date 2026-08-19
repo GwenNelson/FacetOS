@@ -10,6 +10,8 @@ VENV := $(ROOT)/.venv
 
 SEL4_SRC     := $(ROOT)/external/seL4
 SEL4_RUNTIME := $(ROOT)/external/sel4runtime
+SEL4_LIBS    := $(ROOT)/external/seL4_libs
+UTIL_LIBS    := $(ROOT)/external/util_libs
 
 SDK_BUILD := $(ROOT)/build/sdk
 SDK       := $(ROOT)/sdk
@@ -78,7 +80,24 @@ SEL4_INCLUDES := \
 	-I$(ROOT)/external/sel4runtime/include/mode/64 \
 	-I$(ROOT)/external/sel4runtime/include/arch/x86 \
 	-I$(ROOT)/external/sel4runtime/include/sel4_arch/x86_64 \
-	-I$(ROOT)/build/sdk/sel4runtime/gen_config
+	-I$(ROOT)/build/sdk/sel4runtime/gen_config \
+	-I$(SEL4_LIBS)/libsel4simple/include \
+	-I$(SEL4_LIBS)/libsel4simple/arch_include/x86 \
+	-I$(SEL4_LIBS)/libsel4simple-default/include \
+	-I$(SEL4_LIBS)/libsel4allocman/include \
+	-I$(SEL4_LIBS)/libsel4allocman/arch/x86 \
+	-I$(SEL4_LIBS)/libsel4allocman/sel4_arch/x86_64 \
+	-I$(SEL4_LIBS)/libsel4vka/include \
+	-I$(SEL4_LIBS)/libsel4vka/arch_include/x86 \
+	-I$(SEL4_LIBS)/libsel4vka/sel4_arch_include/x86_64 \
+	-I$(UTIL_LIBS)/libutils/include \
+	-I$(UTIL_LIBS)/libutils/arch_include/x86 \
+	-I$(SDK_BUILD)/seL4_libs/libsel4simple/gen_config \
+	-I$(SDK_BUILD)/seL4_libs/libsel4simple-default/gen_config \
+	-I$(SDK_BUILD)/seL4_libs/libsel4allocman/gen_config \
+	-I$(SDK_BUILD)/seL4_libs/libsel4vka/gen_config \
+	-I$(SDK_BUILD)/util_libs/libutils/gen_config
+
 
 FACET_INCLUDES := \
 	-I$(ROOT)/include
@@ -262,6 +281,20 @@ ifeq ($(FACET_PLATFORM),sel4)
 endif
 
 #
+# seL4 SDK library outputs used by FacetOS.
+#
+# These are built by the CMake/Ninja SDK build and linked manually into
+# dominit0's special root-task link.
+#
+
+SDK_SIMPLE         := $(SDK_BUILD)/seL4_libs/libsel4simple/libsel4simple.a
+SDK_SIMPLE_DEFAULT := $(SDK_BUILD)/seL4_libs/libsel4simple-default/libsel4simple-default.a
+SDK_ALLOCMAN       := $(SDK_BUILD)/seL4_libs/libsel4allocman/libsel4allocman.a
+SDK_VKA            := $(SDK_BUILD)/seL4_libs/libsel4vka/libsel4vka.a
+SDK_UTILS          := $(SDK_BUILD)/util_libs/libutils/libutils.a
+
+
+#
 # Per-component library dependencies.
 #
 # List actual library targets here.  These are both Make prerequisites
@@ -269,7 +302,12 @@ endif
 #
 
 FACET_DOMINIT0_LIBS := \
-	$(FACET_KLIBC_TARGET)
+	$(FACET_KLIBC_TARGET) \
+	$(SDK_SIMPLE_DEFAULT) \
+	$(SDK_SIMPLE) \
+	$(SDK_ALLOCMAN) \
+	$(SDK_VKA) \
+	$(SDK_UTILS)
 
 
 #
@@ -370,7 +408,12 @@ sdk: patches
 
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) \
 		kernel.elf \
-		sel4runtime
+		sel4runtime \
+		sel4simple \
+		sel4simple-default \
+		sel4allocman \
+		sel4vka \
+		utils
 
 	$(SEL4_ENV) cmake --install $(SDK_BUILD)
 
@@ -424,7 +467,7 @@ dominit0: $(FACET_DOMINIT0_TARGET)
 # Complete native FacetOS build.
 #
 
-SDK_KERNEL := $(SDK_BUILD)/kernel/kernel.elf
+SDK_KERNEL  := $(SDK_BUILD)/kernel/kernel.elf
 SDK_LIBSEL4 := $(SDK_BUILD)/libsel4/libsel4.a
 SDK_RUNTIME := $(SDK_BUILD)/sel4runtime/libsel4runtime.a
 
@@ -435,6 +478,16 @@ check-sdk:
 		{ echo "FacetOS SDK incomplete; run 'make sdk' first."; exit 1; }
 	@test -f $(SDK_RUNTIME) || \
 		{ echo "FacetOS SDK incomplete; run 'make sdk' first."; exit 1; }
+	@test -f $(SDK_SIMPLE) || \
+		{ echo "FacetOS SDK missing libsel4simple; run 'make sdk' first."; exit 1; }
+	@test -f $(SDK_SIMPLE_DEFAULT) || \
+		{ echo "FacetOS SDK missing libsel4simple-default; run 'make sdk' first."; exit 1; }
+	@test -f $(SDK_ALLOCMAN) || \
+		{ echo "FacetOS SDK missing libsel4allocman; run 'make sdk' first."; exit 1; }
+	@test -f $(SDK_VKA) || \
+		{ echo "FacetOS SDK missing libsel4vka; run 'make sdk' first."; exit 1; }
+	@test -f $(SDK_UTILS) || \
+		{ echo "FacetOS SDK missing libutils; run 'make sdk' first."; exit 1; }
 
 facetos: check-sdk $(FACET_NATIVE_TARGETS)
 
