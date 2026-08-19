@@ -6,6 +6,8 @@
 #include <facetos/uuid.h>
 #include <facetos/interfaces/IGenericObject.h>
 
+// TODO - implement ISerializeable and add it to this
+
 static const uuid_t IID_IDomainEnvironment =
     UUID_INIT(0xe391d460, 0x87ef, 0x44ff, 0xb853, 0x035e7932f094ULL);
 
