@@ -81,6 +81,7 @@ SEL4_INCLUDES := \
 	-I$(ROOT)/external/sel4runtime/include/arch/x86 \
 	-I$(ROOT)/external/sel4runtime/include/sel4_arch/x86_64 \
 	-I$(ROOT)/build/sdk/sel4runtime/gen_config \
+	-I$(SEL4_LIBS)/libsel4utils/include \
 	-I$(SEL4_LIBS)/libsel4simple/include \
 	-I$(SEL4_LIBS)/libsel4simple/arch_include/x86 \
 	-I$(SEL4_LIBS)/libsel4simple-default/include \
@@ -277,7 +278,7 @@ FACET_KLIBC_CFLAGS    :=
 FACET_DOMINIT0_CFLAGS :=
 
 ifeq ($(FACET_PLATFORM),sel4)
-	FACET_DOMINIT0_CFLAGS += -DFACET_PLATFORM_SEL4=1
+	FACET_DOMINIT0_CFLAGS += --sysroot=$(SDK_BUILD) -DFACET_PLATFORM_SEL4=1
 endif
 
 #
@@ -292,7 +293,7 @@ SDK_SIMPLE_DEFAULT := $(SDK_BUILD)/seL4_libs/libsel4simple-default/libsel4simple
 SDK_ALLOCMAN       := $(SDK_BUILD)/seL4_libs/libsel4allocman/libsel4allocman.a
 SDK_VKA            := $(SDK_BUILD)/seL4_libs/libsel4vka/libsel4vka.a
 SDK_UTILS          := $(SDK_BUILD)/util_libs/libutils/libutils.a
-
+SDK_SEL4UTILS      := $(SDK_BUILD)/seL4_libs/libsel4utils/libsel4utils.a
 
 #
 # Per-component library dependencies.
@@ -307,7 +308,8 @@ FACET_DOMINIT0_LIBS := \
 	$(SDK_SIMPLE) \
 	$(SDK_ALLOCMAN) \
 	$(SDK_VKA) \
-	$(SDK_UTILS)
+	$(SDK_UTILS) \
+	$(SDK_SEL4UTILS)
 
 
 #
@@ -413,6 +415,7 @@ sdk: patches
 		sel4simple-default \
 		sel4allocman \
 		sel4vka \
+		sel4utils \
 		utils
 
 	$(SEL4_ENV) cmake --install $(SDK_BUILD)
