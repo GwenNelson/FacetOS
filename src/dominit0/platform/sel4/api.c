@@ -62,7 +62,7 @@ void platform_init(void) {
 
      klog(LOG_DEBUG, "platform_init() - setting up simple....\n");
 
-     klog(LOG_DEBUG,"platform_init() - allocating %llu for allocman_pool\n", ALLOCMAN_BOOTSTRAP_POOL_SIZE);
+     klog(LOG_DEBUG,"platform_init() - allocating %zu for allocman_pool\n", ALLOCMAN_BOOTSTRAP_POOL_SIZE);
      simple_default_init_bootinfo(&sel4_simple, platform_sel4_bi);
 
      allocman_pool = kmalloc(ALLOCMAN_BOOTSTRAP_POOL_SIZE);
