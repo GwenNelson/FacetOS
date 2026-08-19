@@ -17,6 +17,21 @@ SEL4_SDK  := $(SDK)/sel4
 
 FACET_BUILD := $(ROOT)/build/facetos
 
+#
+# Platform backend.
+#
+# Platform-specific dominit0 sources live under:
+#
+#     src/dominit0/platform/<platform>/
+#
+# Override at build time if/when another backend exists:
+#
+#     make FACET_PLATFORM=whatever
+#
+
+FACET_PLATFORM ?= sel4
+FACET_PLATFORM_DIR := $(ROOT)/src/dominit0/platform/$(FACET_PLATFORM)
+
 BOOTSTUB32_DIR := $(ROOT)/bootstub32
 BOOTSTUB32     := $(BOOTSTUB32_DIR)/bootstub32
 
@@ -90,6 +105,7 @@ FACET_INCLUDES := \
 #
 # $(1) = uppercase component name
 # $(2) = source/build directory name
+# $(3) = optional additional source files
 #
 
 COMPONENTS :=
@@ -102,7 +118,8 @@ FACET_$(1)_DIR := $(2)
 FACET_$(1)_BUILD := $$(FACET_BUILD)/$(2)
 
 FACET_$(1)_SRCS := \
-	$$(wildcard $$(ROOT)/src/$(2)/*.c)
+	$$(wildcard $$(ROOT)/src/$(2)/*.c) \
+	$(3)
 
 FACET_$(1)_OBJS := \
 	$$(patsubst \
@@ -120,6 +137,7 @@ $$(FACET_$(1)_BUILD):
 	mkdir -p $$@
 
 $$(FACET_$(1)_BUILD)/%.o: $$(ROOT)/src/$(2)/%.c | $$(FACET_$(1)_BUILD)
+	@mkdir -p $$(dir $$@)
 	$$(CC) \
 		$$(FACET_CFLAGS) \
 		$$(FACET_$(1)_CFLAGS) \
@@ -146,7 +164,7 @@ endef
 #
 
 define FACET_STATIC_LIBRARY
-$$(eval $$(call FACET_COMPONENT,$(1),$(2)))
+$$(eval $$(call FACET_COMPONENT,$(1),$(2),))
 
 FACET_$(1)_TARGET := \
 	$$(FACET_$(1)_BUILD)/$(3).a
@@ -183,7 +201,7 @@ endef
 #
 
 define FACET_EXECUTABLE
-$$(eval $$(call FACET_COMPONENT,$(1),$(2)))
+$$(eval $$(call FACET_COMPONENT,$(1),$(2),))
 
 FACET_$(1)_TARGET := \
 	$$(FACET_$(1)_BUILD)/$(3)
@@ -210,8 +228,18 @@ endef
 # Component declarations.
 #
 
+#
+# dominit0 consists of its generic sources plus the selected platform backend.
+#
+# Keeping the platform source list explicit means we never accidentally compile
+# multiple platform backends into the same dominit0.
+#
+
+FACET_DOMINIT0_PLATFORM_SRCS := \
+	$(wildcard $(FACET_PLATFORM_DIR)/*.c)
+
 $(eval $(call FACET_STATIC_LIBRARY,KLIBC,klibc,klibc,klibc))
-$(eval $(call FACET_COMPONENT,DOMINIT0,dominit0))
+$(eval $(call FACET_COMPONENT,DOMINIT0,dominit0,$(FACET_DOMINIT0_PLATFORM_SRCS)))
 
 FACET_DOMINIT0_TARGET := $(FACET_DOMINIT0_BUILD)/dominit0
 
@@ -228,6 +256,10 @@ FACET_DOMINIT0_TARGET := $(FACET_DOMINIT0_BUILD)/dominit0
 
 FACET_KLIBC_CFLAGS    :=
 FACET_DOMINIT0_CFLAGS :=
+
+ifeq ($(FACET_PLATFORM),sel4)
+	FACET_DOMINIT0_CFLAGS += -DFACET_PLATFORM_SEL4=1
+endif
 
 #
 # Per-component library dependencies.
