@@ -4,6 +4,7 @@
 #include <facetos/dominit0/platform/api.h>
 
 void test_kmalloc(void) {
+#ifdef DEBUG
      kmalloc_dump();
      klog(LOG_DEBUG,"test_kmalloc() - allocating 17kb buffer\n");
      void* buf_a = kmalloc(17 * 1024);
@@ -17,6 +18,7 @@ void test_kmalloc(void) {
      kfree(buf_a);
      kfree(buf_b);
      kmalloc_dump();
+#endif
 }
 
 void main(int argc, char **argv, char **envp) {

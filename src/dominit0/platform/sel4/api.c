@@ -98,7 +98,9 @@ void* allocman_pool;
 void platform_init(void) {
      klog(LOG_INFO,"platform_init() for seL4\n");
      platform_sel4_bi = platform_sel4_get_bootinfo();
+     #ifdef DEBUG
      platform_sel4_bootinfo_dump(platform_sel4_bi);
+     #endif
 
      klog(LOG_DEBUG, "platform_init() - setting up simple....\n");
 

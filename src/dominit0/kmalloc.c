@@ -60,11 +60,25 @@ void kmalloc_init_early(void) {
      klog(LOG_INFO,"Early bootstrap heap ready!\n");
 }
 
+// used to reclaim the BSS heap
+static void kmalloc_reclaim(void) {
+       size_t pos = (bootstrap_heap_used + KMALLOC_ALIGNMENT - 1) & ~(KMALLOC_ALIGNMENT - 1);
+       void *remaining = &bootstrap_heap[pos];
+       size_t remaining_size = KMALLOC_BOOTSTRAP_HEAP_SIZE - pos;
+       klog(LOG_DEBUG,"Reclaiming %zukb from early bootstrap\n",remaining_size/1024);       
+       void* region=kmalloc_impl_early(remaining_size);
+       if(region==NULL) {
+	       klog(LOG_WARN,"Failed to reclaim bootstrap buffer!\n");
+       } else {
+	       liballoc_add_region(region,remaining_size);
+	       klog(LOG_DEBUG,"Reclaimed %zukb, registered with liballoc @ %p\n",remaining_size/1024, region);
+       }
+}
+
 void kmalloc_init(IPageAllocator *allocator) {
      klock_lock(&kmalloc_lock);
      klog(LOG_DEBUG,"Early bootstrap heap switching to IPageAllocator with %zukb free!\n", ((KMALLOC_BOOTSTRAP_HEAP_SIZE-bootstrap_heap_used)/1024));
-     // TODO - when we import liballoc, should probably add the remaining bootstrap heap to the liballoc heap
-     //        but only after verifying that IPageAllocator is working
+     kmalloc_reclaim();
      kmalloc_allocator = allocator;
      kmalloc_impl      = &liballoc_malloc_impl;
      kfree_impl        = &liballoc_free_impl;

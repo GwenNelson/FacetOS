@@ -25,6 +25,12 @@ struct	boundary_tag
 };
 
 
+/*
+ * non-standard extension to liballoc, allows adding space that's already allocated
+ * used in FacetOS to reclaim the unused buffer space
+ *
+ */
+extern int liballoc_add_region(void *base, size_t size);
  
 
 /** This function is supposed to lock the memory data structures. It
