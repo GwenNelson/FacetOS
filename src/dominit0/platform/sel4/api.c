@@ -40,19 +40,51 @@ size_t sel4_page_alloc_get_page_size(void* self) {
 	return 4096;
 }
 
-int sel4_page_alloc_alloc(void* self, size_t count, void **pages) {
-	return -1;
+static int
+sel4_page_alloc_alloc(void *self, size_t count, void **pages)
+{
+    IPageAllocator *allocator = self;
+    vspace_t *vspace = allocator->priv;
+
+    void *base = vspace_new_pages(
+        vspace,
+        seL4_AllRights,
+        count,
+        seL4_PageBits
+    );
+
+    if (base == NULL)
+        return -1;
+
+    *pages = base;
+    return 0;
 }
 
-int sel4_page_alloc_free(void* self, size_t count, void *base) {
-	return -1;
+static int
+sel4_page_alloc_free(void *self, size_t count, void *base)
+{
+    IPageAllocator *allocator = self;
+    vspace_t *vspace = allocator->priv;
+
+    if (base == NULL || count == 0)
+        return -1;
+
+    vspace_unmap_pages(
+        vspace,
+        base,
+        count,
+        seL4_PageBits,
+        VSPACE_FREE
+    );
+
+    return 0;
 }
 
 IPageAllocator* sel4_page_allocator_create(vka_t *vka) {
 	klog(LOG_DEBUG,"sel4_page_allocator_create()\n");
 	IPageAllocator *retval = &page_alloc_instance;
 	retval->self = (void*)retval;
-	retval->priv = (void*)vka;
+	retval->priv = (void*)&sel4_vspace;
 	retval->get_page_size = &sel4_page_alloc_get_page_size;
 	retval->alloc         = &sel4_page_alloc_alloc;
 	retval->free          = &sel4_page_alloc_free;
