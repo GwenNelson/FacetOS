@@ -18,7 +18,7 @@
 
 extern seL4_BootInfo* platform_sel4_bi;
 
-#define ALLOCMAN_BOOTSTRAP_POOL_SIZE (64 * 1024)
+#define ALLOCMAN_BOOTSTRAP_POOL_SIZE (2 * 1024 * 1024)
 
 static simple_t sel4_simple;
 static allocman_t *sel4_allocman;
@@ -54,15 +54,19 @@ IFrameAllocator* sel4_frame_allocator_create(vka_t *vka) {
 void platform_init_early(void) {
 }
 
+void* allocman_pool;
 void platform_init(void) {
      klog(LOG_INFO,"platform_init() for seL4\n");
      platform_sel4_bi = platform_sel4_get_bootinfo();
      platform_sel4_bootinfo_dump(platform_sel4_bi);
 
+     klog(LOG_DEBUG, "platform_init() - setting up simple....\n");
+
      klog(LOG_DEBUG,"platform_init() - allocating %llu for allocman_pool\n", ALLOCMAN_BOOTSTRAP_POOL_SIZE);
-     void* allocman_pool;
      simple_default_init_bootinfo(&sel4_simple, platform_sel4_bi);
+
      allocman_pool = kmalloc(ALLOCMAN_BOOTSTRAP_POOL_SIZE);
+     klog(LOG_DEBUG,"platform_init() - allocated pool at %p\n",allocman_pool);     
 
      if(allocman_pool==NULL) kpanic("Unable to allocate allocman bootstrap pool!");
 

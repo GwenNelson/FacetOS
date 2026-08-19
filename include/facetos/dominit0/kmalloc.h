@@ -4,8 +4,8 @@
 
 #include <facetos/interfaces/IFrameAllocator.h>
 
-// 1MB bootstrap
-#define KMALLOC_BOOTSTRAP_HEAP_SIZE (1UL * 1024 * 1024)
+// 8MB bootstrap
+#define KMALLOC_BOOTSTRAP_HEAP_SIZE (8UL * 1024 * 1024)
 #define KMALLOC_ALIGNMENT sizeof(uintptr_t)
 
 // these two functions should be obvious
