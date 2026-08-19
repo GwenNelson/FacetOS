@@ -1,18 +1,24 @@
 #include <facetos/dominit0/klog.h>
 #include <facetos/dominit0/klock.h>
+#include <facetos/dominit0/kmalloc.h>
+#include <facetos/dominit0/kpanic.h>
 
 #include <sel4/sel4.h>
 
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
-
+#include <string.h>
 
 static klock_t klog_public_lock   = KLOCK_INITIALIZER;
 static klock_t klog_internal_lock = KLOCK_INITIALIZER;
 
 static struct klog_sink klog_sinks[KLOG_MAX_SINKS];
 static char klog_early_buf[KLOG_EARLY_BUFSIZE];
+
+static char  *klog_prod_buf = NULL;
+static size_t klog_prod_buf_used = 0;
+static size_t klog_prod_buf_size = 0;
 
 static size_t klog_early_buf_used = 0;
 static bool klog_early_truncated = false;
@@ -46,8 +52,7 @@ static inline void klog_lock_internal(void);
 static inline void klog_unlock_internal(void);
 
 
-void
-klog_init_early(void)
+void klog_init_early(void)
 {
 	/* Set up our locks. */
 	klock_init(&klog_public_lock);
@@ -66,6 +71,58 @@ klog_init_early(void)
 	klog_cur_store_fn = &klog_early_store_fn;
 }
 
+static void klog_kpanic_msg(char* msg) {
+	// this is a stupid hack to make kpanic() work deep inside the guts of klog
+	for (size_t i = 0; i < KLOG_MAX_SINKS; i++) {
+		if (klog_sinks[i].enabled) {
+			for (size_t c_i = 0; msg[c_i] != '\0'; i++) {
+			    char c = msg[c_i];
+			    klog_sinks[i].write(&c,1);
+			}
+		}
+	}
+}
+
+static void klog_kpanic(char* msg) {
+	klog_kpanic_msg("\n\n\nKERNEL PANIC: ");
+	klog_kpanic_msg(msg);
+	klog_kpanic_msg("\n\n\n");
+	for(;;) kpanic_halt();
+}
+
+static void klog_prod_store_fn(const char* data, size_t len) {
+       size_t available = klog_prod_buf_size - klog_prod_buf_used;
+       if (len > available) {
+	  void* new_buf = krealloc(klog_prod_buf,klog_prod_buf_size + len + 64);
+	  if(new_buf==NULL) klog_kpanic("Could not expand klog buffer!"); // TODO - at some point make it use a ringbuffer instead
+          klog_prod_buf = new_buf;
+       }
+       klog_prod_buf_size = klog_prod_buf_size + len + 64;
+
+	for (size_t i = 0; i < len; i++)
+		klog_prod_buf[klog_prod_buf_used + i] = data[i];
+
+	klog_prod_buf_used += len;
+}
+
+
+
+void klog_init_postboot(void) {
+	
+	klog_prod_buf = (char*)kmalloc(klog_early_buf_used+64+1); // we want a tiny bit of space already available, and avoid weird off by one errors crashing it
+	if(klog_prod_buf == NULL) kpanic("Could not allocate klog_prod_buf!");
+	klog_prod_buf_used = klog_early_buf_used;
+	klog_prod_buf_size = klog_early_buf_used + 64;
+
+	klog_lock();
+	klock_lock(&klog_internal_lock);	
+	memcpy(klog_prod_buf,klog_early_buf,klog_early_buf_used);
+	klog_cur_store_fn = klog_prod_store_fn;
+
+	klock_unlock(&klog_internal_lock);
+	if(klog_early_truncated) klog(LOG_INFO,"...\n(early logbuf truncated)\n");
+	klog_unlock();
+}
 
 static void
 klog_early_store_fn(const char *data, size_t len)
@@ -82,7 +139,6 @@ klog_early_store_fn(const char *data, size_t len)
 
 	klog_early_buf_used += len;
 }
-
 
 static void
 klog_dummy_sink(const char *data, size_t len)

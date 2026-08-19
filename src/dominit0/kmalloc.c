@@ -16,46 +16,92 @@ static klock_t kmalloc_liballoc_lock = KLOCK_INITIALIZER;
 
 static size_t bootstrap_heap_used;
 
+// most recent allocation and the size
+// ideally we'd want a small stack to do this properly, maybe later?
+static void*  bootstrap_last_ptr;
+static size_t bootstrap_last_size;
+static size_t bootstrap_last_old_used;
+
 typedef void* (*kmalloc_impl_fn)(size_t size);
 typedef void  (*kfree_impl_fn)(void* p);
+typedef void* (*krealloc_impl_fn)(void *p, size_t size);
 
 static IPageAllocator* kmalloc_allocator;
 
-static void* kmalloc_impl_early(size_t size) {
-	size_t pos;
-	void *ptr;
+static void *kmalloc_impl_early(size_t size) {
+    size_t old_used = bootstrap_heap_used;
 
-	pos = (bootstrap_heap_used + KMALLOC_ALIGNMENT - 1) & ~(KMALLOC_ALIGNMENT - 1);
+    size_t pos =
+        (bootstrap_heap_used + KMALLOC_ALIGNMENT - 1)
+        & ~(KMALLOC_ALIGNMENT - 1);
 
-	if (pos > KMALLOC_BOOTSTRAP_HEAP_SIZE || size > KMALLOC_BOOTSTRAP_HEAP_SIZE - pos) {
-		return NULL;
-	}
+    if (pos > KMALLOC_BOOTSTRAP_HEAP_SIZE ||
+        size > KMALLOC_BOOTSTRAP_HEAP_SIZE - pos) {
+        return NULL;
+    }
 
-	ptr = &bootstrap_heap[pos];
-	bootstrap_heap_used = pos + size;
+    void *ptr = &bootstrap_heap[pos];
 
-	return ptr;
+    bootstrap_heap_used = pos + size;
+
+    bootstrap_last_ptr      = ptr;
+    bootstrap_last_size     = size;
+    bootstrap_last_old_used = old_used;
+
+    return ptr;
 }
 
-static void kfree_impl_early(void* p) {
-       (void)p;
+static void kfree_impl_early(void *p) {
+    if (p != bootstrap_last_ptr)
+        return;
+
+    bootstrap_heap_used = bootstrap_last_old_used;
+
+    bootstrap_last_ptr      = NULL;
+    bootstrap_last_size     = 0;
+    bootstrap_last_old_used = 0;
 }
 
-static void* kmalloc_impl_real(size_t size) {
+static void *krealloc_impl_early(void *p, size_t size) {
+    if (p == NULL)
+        return kmalloc_impl_early(size);
 
+    if (size == 0) {
+        kfree_impl_early(p);
+        return NULL;
+    }
+
+    /*
+     * For now we can only realloc the most recent allocation.
+     */
+    if (p != bootstrap_last_ptr)
+        return NULL;
+
+    /*
+     * p itself is already aligned. We only need to make sure
+     * the resized allocation still fits in the bootstrap heap.
+     */
+    size_t pos = (size_t)((unsigned char *)p - bootstrap_heap);
+
+    if (size > KMALLOC_BOOTSTRAP_HEAP_SIZE - pos)
+        return NULL;
+
+    bootstrap_last_size = size;
+    bootstrap_heap_used = pos + size;
+
+    return p;
 }
 
-static void kfree_impl_real(void* p) {
-}
-
-static kmalloc_impl_fn kmalloc_impl = kmalloc_impl_early;
-static kfree_impl_fn   kfree_impl   = kfree_impl_early;
+static kmalloc_impl_fn  kmalloc_impl  = kmalloc_impl_early;
+static kfree_impl_fn    kfree_impl    = kfree_impl_early;
+static krealloc_impl_fn krealloc_impl = krealloc_impl_early;
 
 void kmalloc_init_early(void) {
      klog(LOG_INFO,"Starting early bootstrap heap...\n");
      klock_init(&kmalloc_lock);
      kmalloc_impl        = &kmalloc_impl_early;
      kfree_impl          = &kfree_impl_early;
+     krealloc_impl       = &krealloc_impl_early;
      bootstrap_heap_used = 0;
      klog(LOG_INFO,"Early bootstrap heap ready!\n");
 }
@@ -82,6 +128,7 @@ void kmalloc_init(IPageAllocator *allocator) {
      kmalloc_allocator = allocator;
      kmalloc_impl      = &liballoc_malloc_impl;
      kfree_impl        = &liballoc_free_impl;
+     krealloc_impl     = &liballoc_realloc_impl;
      klock_init(&kmalloc_liballoc_lock);
      klock_unlock(&kmalloc_lock);
 }
@@ -100,6 +147,10 @@ void kfree(void* ptr) {
      klock_lock(&kmalloc_lock);
      kfree_impl(ptr);
      klock_unlock(&kmalloc_lock);
+}
+
+void* krealloc(void* p, size_t size) {
+      krealloc_impl(p,size);
 }
 
 void kmalloc_dump(void) {

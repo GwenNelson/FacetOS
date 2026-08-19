@@ -8,9 +8,10 @@
 #define KMALLOC_BOOTSTRAP_HEAP_SIZE (90UL * 1024 * 1024)
 #define KMALLOC_ALIGNMENT sizeof(uintptr_t)
 
-// these two functions should be obvious
+// these three functions should be obvious
 void *kmalloc(size_t size);
 void  kfree(void* p);
+void *krealloc(void* p, size_t size);
 
 // this function is called at startup before anything else
 void kmalloc_init_early();

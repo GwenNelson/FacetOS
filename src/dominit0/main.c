@@ -3,8 +3,8 @@
 #include <facetos/dominit0/kpanic.h>
 #include <facetos/dominit0/platform/api.h>
 
-void test_kmalloc(void) {
 #ifdef DEBUG
+void test_kmalloc(void) {
      kmalloc_dump();
      klog(LOG_DEBUG,"test_kmalloc() - allocating 17kb buffer\n");
      void* buf_a = kmalloc(17 * 1024);
@@ -18,19 +18,28 @@ void test_kmalloc(void) {
      kfree(buf_a);
      kfree(buf_b);
      kmalloc_dump();
-#endif
 }
-
+#endif
 void main(int argc, char **argv, char **envp) {
      platform_init_early();
      klog_init_early();
      klog(LOG_INFO,"Starting FacetOS...\n");
-     klog_dump_debug();
+
+     #ifdef DEBUG
+        klog_dump_debug();
+     #endif
+
      kmalloc_init_early();
-     test_kmalloc();
+     #ifdef DEBUG
+        test_kmalloc();
+     #endif
      platform_init();
 
-     test_kmalloc();
+     #ifdef DEBUG
+        test_kmalloc();
+     #endif
+
+     klog_init_postboot();
 
      for (;;) {
         platform_yield();
