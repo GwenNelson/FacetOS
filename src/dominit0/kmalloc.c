@@ -3,6 +3,7 @@
 #include <facetos/dominit0/kmalloc.h>
 #include <facetos/dominit0/klog.h>
 #include <facetos/dominit0/klock.h>
+#include <facetos/dominit0/kpanic.h>
 
 #include <facetos/interfaces/IFrameAllocator.h>
 
@@ -56,6 +57,9 @@ void *kmalloc(size_t size) {
       klock_lock(&kmalloc_lock);
       void* retval = kmalloc_impl(size);
       klock_unlock(&kmalloc_lock);
+      if(retval==NULL) {
+	 kpanic("RAN OUT OF KERNEL MEMORY!\n");
+      }
       return retval;
 }
 

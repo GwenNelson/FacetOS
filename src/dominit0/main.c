@@ -12,6 +12,10 @@ void main(int argc, char **argv, char **envp) {
      klog(LOG_DEBUG,"Allocated 32 bytes\n");
      kfree(my_buf);
      klog(LOG_DEBUG,"If we're still here, yay, it didn't crash\n");
+     
+     klog(LOG_DEBUG,"About to try a stupid large allocation, should panic...\n");
+     kmalloc(2*1024*1024);
+     klog(LOG_DEBUG,"If you see this, fuck\n");
      for (;;) {
         seL4_Yield();
      }
