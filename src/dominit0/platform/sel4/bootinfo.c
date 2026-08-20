@@ -1,6 +1,7 @@
 #include <sel4/sel4.h>
 #include <sel4/bootinfo.h>
 #include <stdint.h>
+#include <string.h>
 #include <sel4/arch/bootinfo_types.h>
 #include <sel4runtime.h>
 #include <facetos/dominit0/klog.h>
@@ -9,39 +10,77 @@
 seL4_BootInfo* platform_sel4_bi;
 
 void platform_sel4_bootinfo_dump_mods(const seL4_BootInfo *bi) {
+	const uint8_t *cur;
+	const uint8_t *end;
 
-	uint8_t *cur = (uint8_t *)bi + seL4_BootInfoFrameSize;
-     uint8_t *end = cur + bi->extraLen;
+	if (bi == NULL) {
+		return;
+	}
 
-  while (cur < end) {
-      seL4_BootInfoHeader *header = (seL4_BootInfoHeader *)cur;
+	cur = (const uint8_t *)bi + seL4_BootInfoFrameSize;
+	end = cur + bi->extraLen;
 
-      if (header->len < sizeof(*header) || cur + header->len > end) {
-          break;
-      }
+	while ((size_t)(end - cur) >= sizeof(seL4_BootInfoHeader)) {
+		seL4_BootInfoHeader header;
 
-      if (header->id == SEL4_BOOTINFO_HEADER_X86_MODULES) {
-          seL4_X86_BootInfo_modules_t *modules =
-              (seL4_X86_BootInfo_modules_t *)cur;
+		/* Extended bootinfo chunks need not be naturally aligned. */
+		memcpy(&header, cur, sizeof(header));
+		if (header.len < sizeof(header) || header.len > (size_t)(end - cur)) {
+			klog(LOG_ERROR, "Invalid extended BootInfo chunk length\n");
+			return;
+		}
 
-	  seL4_X86_BootInfo_module_t *descs =
-              (seL4_X86_BootInfo_module_t *)(modules + 1);
+		if (header.id == SEL4_BOOTINFO_HEADER_X86_MODULES) {
+			seL4_X86_BootInfo_modules_t modules;
+			size_t descriptor_offset = sizeof(modules);
 
-          for (seL4_Word i = 0; i < modules->module_count; i++) {
-              const char *name =
-                  (const char *)modules + descs[i].name_offset;
+			if (header.len < sizeof(modules)) {
+				klog(LOG_ERROR, "Invalid multiboot module information\n");
+				return;
+			}
 
-              klog(LOG_INFO,
-                   "Got module at %p of size %llu: %s\n",
-                   (void *)descs[i].start,
-                   (unsigned long long)descs[i].size,
-                   name);
-          }
-          break;
-      }
+			memcpy(&modules, cur, sizeof(modules));
+			if (modules.module_count >
+			    (header.len - descriptor_offset) / sizeof(seL4_X86_BootInfo_module_t)) {
+				klog(LOG_ERROR, "Invalid multiboot module count\n");
+				return;
+			}
 
-      cur += header->len;
-  }
+			size_t names_offset = descriptor_offset +
+				modules.module_count * sizeof(seL4_X86_BootInfo_module_t);
+
+			for (seL4_Word i = 0; i < modules.module_count; i++) {
+				seL4_X86_BootInfo_module_t desc;
+				const char *name;
+				size_t name_length;
+
+				memcpy(&desc,
+				       cur + descriptor_offset + i * sizeof(desc),
+				       sizeof(desc));
+
+				if (desc.name_offset < names_offset || desc.name_offset >= header.len) {
+					klog(LOG_ERROR, "Invalid multiboot module name offset\n");
+					return;
+				}
+
+				name = (const char *)cur + desc.name_offset;
+				name_length = header.len - desc.name_offset;
+				if (memchr(name, '\0', name_length) == NULL) {
+					klog(LOG_ERROR, "Unterminated multiboot module name\n");
+					return;
+				}
+
+				klog(LOG_INFO,
+				     "Got module at %p of size %llu: %s\n",
+				     (void *)(uintptr_t)desc.start,
+				     (unsigned long long)desc.size,
+				     name);
+			}
+			return;
+		}
+
+		cur += header.len;
+	}
 }
 
 void platform_sel4_bootinfo_dump(const seL4_BootInfo *bi) {
