@@ -9,8 +9,9 @@
 seL4_BootInfo* platform_sel4_bi;
 
 void platform_sel4_bootinfo_dump_mods(const seL4_BootInfo *bi) {
- uint8_t *cur = (uint8_t *)bi + seL4_BootInfoFrameSize;
-  uint8_t *end = cur + bi->extraLen;
+
+	uint8_t *cur = (uint8_t *)bi + seL4_BootInfoFrameSize;
+     uint8_t *end = cur + bi->extraLen;
 
   while (cur < end) {
       seL4_BootInfoHeader *header = (seL4_BootInfoHeader *)cur;
@@ -23,7 +24,7 @@ void platform_sel4_bootinfo_dump_mods(const seL4_BootInfo *bi) {
           seL4_X86_BootInfo_modules_t *modules =
               (seL4_X86_BootInfo_modules_t *)cur;
 
-          seL4_X86_BootInfo_module_t *descs =
+	  seL4_X86_BootInfo_module_t *descs =
               (seL4_X86_BootInfo_module_t *)(modules + 1);
 
           for (seL4_Word i = 0; i < modules->module_count; i++) {
