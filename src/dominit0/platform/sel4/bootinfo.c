@@ -9,7 +9,7 @@
 seL4_BootInfo* platform_sel4_bi;
 
 void platform_sel4_bootinfo_dump_mods(const seL4_BootInfo *bi) {
-     const char *extra = (const char *)bi + sizeof(seL4_BootInfo);
+     const char *extra = (char *)bi + seL4_BootInfoFrameSize;
      const char *end = extra + bi->extraLen;
 
      while (extra < end) {
@@ -23,6 +23,7 @@ void platform_sel4_bootinfo_dump_mods(const seL4_BootInfo *bi) {
                     const char *name = extra + desc[i].name_offset;
                     seL4_Word start = desc[i].start;
                     seL4_Word size = desc[i].size;
+
                     klog(LOG_DEBUG,"Got module at %p of size %zu: %s\n",start,size,name);
                 }
             }
