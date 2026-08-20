@@ -9,26 +9,38 @@
 seL4_BootInfo* platform_sel4_bi;
 
 void platform_sel4_bootinfo_dump_mods(const seL4_BootInfo *bi) {
-     const char *extra = (char *)bi + seL4_BootInfoFrameSize;
-     const char *end = extra + bi->extraLen;
+ uint8_t *cur = (uint8_t *)bi + seL4_BootInfoFrameSize;
+  uint8_t *end = cur + bi->extraLen;
 
-     while (extra < end) {
-            const seL4_BootInfoHeader *hdr = (const seL4_BootInfoHeader *)extra;
+  while (cur < end) {
+      seL4_BootInfoHeader *header = (seL4_BootInfoHeader *)cur;
 
-            if (hdr->id == SEL4_BOOTINFO_HEADER_X86_MODULES) {
-                const seL4_X86_BootInfo_modules_t *mods = (const seL4_X86_BootInfo_modules_t *)extra;
-                const seL4_X86_BootInfo_module_t *desc  = (const seL4_X86_BootInfo_module_t *)(mods + 1);
-
-                for (seL4_Word i = 0; i < mods->module_count; i++) {
-                    const char *name = extra + desc[i].name_offset;
-                    seL4_Word start = desc[i].start;
-                    seL4_Word size = desc[i].size;
-
-                    klog(LOG_DEBUG,"Got module at %p of size %zu: %s\n",start,size,name);
-                }
-            }
-            extra += hdr->len;
+      if (header->len < sizeof(*header) || cur + header->len > end) {
+          break;
       }
+
+      if (header->id == SEL4_BOOTINFO_HEADER_X86_MODULES) {
+          seL4_X86_BootInfo_modules_t *modules =
+              (seL4_X86_BootInfo_modules_t *)cur;
+
+          seL4_X86_BootInfo_module_t *descs =
+              (seL4_X86_BootInfo_module_t *)(modules + 1);
+
+          for (seL4_Word i = 0; i < modules->module_count; i++) {
+              const char *name =
+                  (const char *)modules + descs[i].name_offset;
+
+              klog(LOG_INFO,
+                   "Got module at %p of size %llu: %s\n",
+                   (void *)descs[i].start,
+                   (unsigned long long)descs[i].size,
+                   name);
+          }
+          break;
+      }
+
+      cur += header->len;
+  }
 }
 
 void platform_sel4_bootinfo_dump(const seL4_BootInfo *bi) {
