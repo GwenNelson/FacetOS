@@ -1,9 +1,34 @@
 #include <sel4/sel4.h>
+#include <sel4/bootinfo.h>
+#include <stdint.h>
+#include <sel4/arch/bootinfo_types.h>
 #include <sel4runtime.h>
 #include <facetos/dominit0/klog.h>
 #include <facetos/dominit0/kpanic.h>
 
 seL4_BootInfo* platform_sel4_bi;
+
+void platform_sel4_bootinfo_dump_mods(const seL4_BootInfo *bi) {
+     const char *extra = (const char *)bi + sizeof(seL4_BootInfo);
+     const char *end = extra + bi->extraLen;
+
+     while (extra < end) {
+            const seL4_BootInfoHeader *hdr = (const seL4_BootInfoHeader *)extra;
+
+            if (hdr->id == SEL4_BOOTINFO_HEADER_X86_MODULES) {
+                const seL4_X86_BootInfo_modules_t *mods = (const seL4_X86_BootInfo_modules_t *)extra;
+                const seL4_X86_BootInfo_module_t *desc  = (const seL4_X86_BootInfo_module_t *)(mods + 1);
+
+                for (seL4_Word i = 0; i < mods->module_count; i++) {
+                    const char *name = extra + desc[i].name_offset;
+                    seL4_Word start = desc[i].start;
+                    seL4_Word size = desc[i].size;
+                    klog(LOG_DEBUG,"Got module at %p of size %zu: %s\n",start,size,name);
+                }
+            }
+            extra += hdr->len;
+      }
+}
 
 void platform_sel4_bootinfo_dump(const seL4_BootInfo *bi) {
 	size_t untyped_count;
@@ -80,6 +105,8 @@ void platform_sel4_bootinfo_dump(const seL4_BootInfo *bi) {
 		     (unsigned)desc->sizeBits,
 		     (unsigned)desc->isDevice);
 	}
+
+        platform_sel4_bootinfo_dump_mods(bi);
 
 
 	klog_unlock();

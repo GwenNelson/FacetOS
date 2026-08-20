@@ -50,7 +50,7 @@ index 66c97aa51..b585463fb 100644
      SEL4_BOOTINFO_HEADER_NUM,
      SEL4_FORCE_LONG_ENUM(seL4_BootInfoID)
 diff --git a/src/arch/x86/kernel/boot.c b/src/arch/x86/kernel/boot.c
-index 93b320964..b1823cf12 100644
+index 93b320964..f969423ad 100644
 --- a/src/arch/x86/kernel/boot.c
 +++ b/src/arch/x86/kernel/boot.c
 @@ -26,6 +26,132 @@
@@ -209,11 +209,12 @@ index 93b320964..b1823cf12 100644
      /* populate tsc frequency block */
      {
          seL4_BootInfoHeader header;
-@@ -226,6 +361,8 @@ BOOT_CODE bool_t init_sys_state(
+@@ -226,6 +361,9 @@ BOOT_CODE bool_t init_sys_state(
          extra_bi_offset += 4;
      }
  
 +    assert(extra_bi_size == extra_bi_offset);
++    ndks_boot.bi_frame->extraLen = extra_bi_offset;
 +
  #ifdef CONFIG_KERNEL_MCS
      /* set up sched control for each core */
