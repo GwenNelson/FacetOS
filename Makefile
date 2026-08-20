@@ -121,11 +121,15 @@ venv:
 
 
 #
-# GCC 16 sel4runtime patch.
+# GCC 16 sel4runtime patch & boot modules preservation
 #
 
 SEL4RUNTIME_GCC16_PATCH := \
 	$(ROOT)/patches/sel4runtime-gcc16.patch
+
+SEL4_PRESERVE_MODULES_PATCH := \
+	$(root)/patches/sel4-preserve-multiboot-mods.patch
+
 
 patches:
 	@if git -C $(SEL4_RUNTIME) apply \
@@ -136,6 +140,15 @@ patches:
 		echo "Applying sel4runtime GCC 16 patch..."; \
 		git -C $(SEL4_RUNTIME) apply \
 			$(SEL4RUNTIME_GCC16_PATCH); \
+	fi
+	@if git -C $(SEL4_SRC) apply \
+		--reverse --check \
+		$(SEL4_PRESERVE_MODULES_PATCH) >/dev/null 2>&1; then \
+		echo "seL4 multiboot modules patch already applied."; \
+	else \
+		echo "Applying seL4 multiboot modules patch..."; \
+		git -C $(SEL4_SRC) apply \
+			$(SEL4_PRESERVE_MODULES_PATCH); \
 	fi
 
 
@@ -327,6 +340,7 @@ bootstub32-clean:
 sdk-clean:
 	rm -rf $(SDK_BUILD)
 	git -C $(SEL4_RUNTIME) reset --hard
+	git -C $(SEL4_SRC) reset --hard
 
 
 full-clean: facet-clean sdk-clean bootstub32-clean

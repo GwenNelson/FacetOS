@@ -1,0 +1,298 @@
+diff --git a/include/arch/x86/arch/kernel/boot_sys.h b/include/arch/x86/arch/kernel/boot_sys.h
+index dac433033..1f47489f0 100644
+--- a/include/arch/x86/arch/kernel/boot_sys.h
++++ b/include/arch/x86/arch/kernel/boot_sys.h
+@@ -22,6 +22,8 @@ typedef struct boot_state {
+     acpi_rsdp_t  acpi_rsdp; /* copy of the rsdp */
+     paddr_t      mods_end_paddr; /* physical address where boot modules end */
+     paddr_t      boot_module_start; /* physical address of first boot module */
++    unsigned long multiboot_magic;
++    void         *multiboot;
+     uint32_t     num_cpus;    /* number of detected cpus */
+     uint32_t     mem_lower;   /* lower memory size for boot code of APs to run in real mode */
+     cpu_id_t     cpus[CONFIG_MAX_NUM_NODES];
+@@ -37,4 +39,3 @@ void boot_sys(
+     unsigned long multiboot_magic,
+     void *multiboot
+ );
+-
+diff --git a/libsel4/arch_include/x86/sel4/arch/bootinfo_types.h b/libsel4/arch_include/x86/sel4/arch/bootinfo_types.h
+index 0f43e2c61..8ee19bdcf 100644
+--- a/libsel4/arch_include/x86/sel4/arch/bootinfo_types.h
++++ b/libsel4/arch_include/x86/sel4/arch/bootinfo_types.h
+@@ -128,5 +128,15 @@ typedef struct seL4_X86_BootInfo_mmap {
+     seL4_X86_mb_mmap_t mmap[SEL4_MULTIBOOT_MAX_MMAP_ENTRIES];
+ } SEL4_PACKED seL4_X86_BootInfo_mmap_t;
+ 
+-typedef struct multiboot2_fb seL4_X86_BootInfo_fb_t;
++typedef struct seL4_X86_BootInfo_module {
++    seL4_Word start;
++    seL4_Word size;
++    seL4_Word name_offset;
++} SEL4_PACKED seL4_X86_BootInfo_module_t;
++
++typedef struct seL4_X86_BootInfo_modules {
++    seL4_BootInfoHeader header;
++    seL4_Word module_count;
++} SEL4_PACKED seL4_X86_BootInfo_modules_t;
+ 
++typedef struct multiboot2_fb seL4_X86_BootInfo_fb_t;
+diff --git a/libsel4/include/sel4/bootinfo_types.h b/libsel4/include/sel4/bootinfo_types.h
+index 66c97aa51..b585463fb 100644
+--- a/libsel4/include/sel4/bootinfo_types.h
++++ b/libsel4/include/sel4/bootinfo_types.h
+@@ -106,6 +106,7 @@ typedef enum {
+     SEL4_BOOTINFO_HEADER_X86_FRAMEBUFFER    = 4,
+     SEL4_BOOTINFO_HEADER_X86_TSC_FREQ       = 5, /* frequency is in MHz */
+     SEL4_BOOTINFO_HEADER_FDT                = 6, /* device tree */
++    SEL4_BOOTINFO_HEADER_X86_MODULES        = 7,
+     /* Add more IDs here, the two elements below must always be at the end. */
+     SEL4_BOOTINFO_HEADER_NUM,
+     SEL4_FORCE_LONG_ENUM(seL4_BootInfoID)
+diff --git a/src/arch/x86/kernel/boot.c b/src/arch/x86/kernel/boot.c
+index 93b320964..1f1ed9731 100644
+--- a/src/arch/x86/kernel/boot.c
++++ b/src/arch/x86/kernel/boot.c
+@@ -26,6 +26,127 @@
+ #define MAX_RESERVED 1
+ BOOT_BSS static region_t reserved[MAX_RESERVED];
+ 
++typedef struct {
++    paddr_t start;
++    paddr_t end;
++    const char *name;
++} boot_module_info_t;
++
++BOOT_CODE static word_t multiboot_module_count(void)
++{
++    if (boot_state.multiboot_magic == MULTIBOOT_MAGIC) {
++        multiboot_info_t *mbi = boot_state.multiboot;
++        return mbi->part1.mod_count;
++    }
++
++    word_t count = 0;
++    multiboot2_header_t *mbi2 = boot_state.multiboot;
++    multiboot2_tag_t const *tag = (multiboot2_tag_t *)(mbi2 + 1);
++    multiboot2_tag_t const *tag_e = (multiboot2_tag_t *)((word_t)mbi2 + mbi2->total_size);
++    while (tag < tag_e && tag->type != MULTIBOOT2_TAG_END) {
++        if (tag->type == MULTIBOOT2_TAG_MODULE) {
++            count++;
++        }
++        tag = (multiboot2_tag_t const *)((word_t)tag + ROUND_UP(tag->size, 3));
++    }
++    return count;
++}
++
++BOOT_CODE static bool_t multiboot_module(word_t index, boot_module_info_t *module)
++{
++    if (boot_state.multiboot_magic == MULTIBOOT_MAGIC) {
++        multiboot_info_t *mbi = boot_state.multiboot;
++        multiboot_module_t *modules = (multiboot_module_t *)(word_t)mbi->part1.mod_list;
++        if (index >= mbi->part1.mod_count) {
++            return false;
++        }
++        module->start = modules[index].start;
++        module->end = modules[index].end;
++        module->name = (const char *)(word_t)modules[index].name;
++        return true;
++    }
++
++    multiboot2_header_t *mbi2 = boot_state.multiboot;
++    multiboot2_tag_t const *tag = (multiboot2_tag_t *)(mbi2 + 1);
++    multiboot2_tag_t const *tag_e = (multiboot2_tag_t const *)((word_t)mbi2 + mbi2->total_size);
++    word_t current = 0;
++    while (tag < tag_e && tag->type != MULTIBOOT2_TAG_END) {
++        if (tag->type == MULTIBOOT2_TAG_MODULE) {
++            if (current == index) {
++                multiboot2_module_t const *mb_module =
++                    (multiboot2_module_t const *)((word_t)tag + sizeof(*tag));
++                module->start = mb_module->start;
++                module->end = mb_module->end;
++                module->name = mb_module->string;
++                return true;
++            }
++            current++;
++        }
++        tag = (multiboot2_tag_t const *)((word_t)tag + ROUND_UP(tag->size, 3));
++    }
++    return false;
++}
++
++BOOT_CODE static word_t module_name_length(const char *name)
++{
++    word_t length = 0;
++    while (name[length] != '\0') {
++        length++;
++    }
++    return length;
++}
++
++BOOT_CODE static word_t multiboot_modules_bootinfo_size(void)
++{
++    word_t count = multiboot_module_count();
++    if (count <= 1) {
++        return 0;
++    }
++
++    word_t size = sizeof(seL4_BootInfoHeader) + sizeof(seL4_Word)
++                  + (count - 1) * sizeof(seL4_X86_BootInfo_module_t);
++    for (word_t i = 1; i < count; i++) {
++        boot_module_info_t module;
++        assert(multiboot_module(i, &module));
++        size += module_name_length(module.name) + 1;
++    }
++    return size;
++}
++
++BOOT_CODE static word_t populate_multiboot_modules(void *destination, ui_info_t ui_info)
++{
++    word_t count = multiboot_module_count();
++    if (count <= 1) {
++        return 0;
++    }
++
++    word_t size = multiboot_modules_bootinfo_size();
++    seL4_X86_BootInfo_modules_t *info = destination;
++    info->header.id = SEL4_BOOTINFO_HEADER_X86_MODULES;
++    info->header.len = size;
++    info->module_count = count - 1;
++
++    word_t module_data_vaddr = ui_info.p_reg.end - ui_info.pv_offset
++                                - (boot_state.mods_end_paddr - boot_state.boot_module_start);
++    word_t descriptor_offset = sizeof(*info);
++    word_t name_offset = descriptor_offset + (count - 1) * sizeof(seL4_X86_BootInfo_module_t);
++
++    for (word_t i = 1; i < count; i++) {
++        boot_module_info_t module;
++        assert(multiboot_module(i, &module));
++        seL4_X86_BootInfo_module_t *descriptor =
++            (seL4_X86_BootInfo_module_t *)((word_t)info + descriptor_offset);
++        descriptor->start = module_data_vaddr + module.start - boot_state.boot_module_start;
++        descriptor->size = module.end - module.start;
++        descriptor->name_offset = name_offset;
++        memcpy((void *)((word_t)info + name_offset), module.name, module_name_length(module.name) + 1);
++        descriptor_offset += sizeof(*descriptor);
++        name_offset += module_name_length(module.name) + 1;
++    }
++    assert(name_offset == size);
++    return size;
++}
++
+ /* functions exactly corresponding to abstract specification */
+ 
+ BOOT_CODE static void init_irqs(cap_t root_cnode_cap)
+@@ -136,6 +257,9 @@ BOOT_CODE bool_t init_sys_state(
+     word_t mb_mmap_size = sizeof(seL4_X86_BootInfo_mmap_t);
+     extra_bi_size += mb_mmap_size;
+ 
++    word_t modules_size = multiboot_modules_bootinfo_size();
++    extra_bi_size += modules_size;
++
+     // room for tsc frequency
+     extra_bi_size += sizeof(seL4_BootInfoHeader) + 4;
+     word_t extra_bi_size_bits = calculate_extra_bi_size_bits(extra_bi_size);
+@@ -215,6 +339,12 @@ BOOT_CODE bool_t init_sys_state(
+     memcpy((void *)(rootserver.extra_bi + extra_bi_offset), mb_mmap, mb_mmap_size);
+     extra_bi_offset += mb_mmap_size;
+ 
++    if (modules_size > 0) {
++        assert(populate_multiboot_modules((void *)(rootserver.extra_bi + extra_bi_offset), ui_info)
++               == modules_size);
++        extra_bi_offset += modules_size;
++    }
++
+     /* populate tsc frequency block */
+     {
+         seL4_BootInfoHeader header;
+@@ -226,6 +356,8 @@ BOOT_CODE bool_t init_sys_state(
+         extra_bi_offset += 4;
+     }
+ 
++    assert(extra_bi_size == extra_bi_offset);
++
+ #ifdef CONFIG_KERNEL_MCS
+     /* set up sched control for each core */
+     init_sched_control(root_cnode_cap, CONFIG_MAX_NUM_NODES);
+diff --git a/src/arch/x86/kernel/boot_sys.c b/src/arch/x86/kernel/boot_sys.c
+index 35b5c894a..88296d7b4 100644
+--- a/src/arch/x86/kernel/boot_sys.c
++++ b/src/arch/x86/kernel/boot_sys.c
+@@ -337,8 +337,11 @@ static BOOT_CODE bool_t is_compiled_for_microarchitecture(void)
+ static BOOT_CODE bool_t try_boot_sys(void)
+ {
+     paddr_t mods_end_paddr = boot_state.mods_end_paddr;
++    paddr_t mods_start_paddr = boot_state.boot_module_start;
+     p_region_t ui_p_regs;
+     paddr_t load_paddr;
++    word_t ui_image_size;
++    word_t mods_size;
+ 
+     boot_state.ki_p_reg = get_p_reg_kernel_img();
+ 
+@@ -460,21 +463,25 @@ static BOOT_CODE bool_t try_boot_sys(void)
+     }
+ 
+     /* calculate final location of userland images */
++    ui_image_size = load_paddr - mods_end_paddr;
++    mods_size = mods_end_paddr - mods_start_paddr;
+     ui_p_regs.start = boot_state.ki_p_reg.end;
+-    ui_p_regs.end = ui_p_regs.start + load_paddr - mods_end_paddr;
++    ui_p_regs.end = ui_p_regs.start + ui_image_size + mods_size;
+ 
+     printf(
+         "Moving loaded userland images to final location: from=0x%lx to=0x%lx size=0x%lx\n",
+-        mods_end_paddr,
++        mods_start_paddr,
+         ui_p_regs.start,
+         ui_p_regs.end - ui_p_regs.start
+     );
+-    memcpy((void *)ui_p_regs.start, (void *)mods_end_paddr, ui_p_regs.end - ui_p_regs.start);
++    /* Move the modules first: the final ELF location can overlap their
++     * original location when the ELF is larger than the gap after the kernel. */
++    memcpy((void *)(ui_p_regs.start + ui_image_size), (void *)mods_start_paddr, mods_size);
++    memcpy((void *)ui_p_regs.start, (void *)mods_end_paddr, ui_image_size);
+ 
+-    /* adjust p_reg and pv_offset to final load address */
+-    boot_state.ui_info.p_reg.start -= mods_end_paddr - ui_p_regs.start;
+-    boot_state.ui_info.p_reg.end   -= mods_end_paddr - ui_p_regs.start;
+-    boot_state.ui_info.pv_offset   -= mods_end_paddr - ui_p_regs.start;
++    /* Include the boot modules after the initial thread's ELF image. */
++    boot_state.ui_info.p_reg = ui_p_regs;
++    boot_state.ui_info.pv_offset -= mods_end_paddr - ui_p_regs.start;
+ 
+     /* ==== following code corresponds to abstract specification after "select" ==== */
+ 
+@@ -545,6 +552,9 @@ static BOOT_CODE bool_t try_boot_sys_mbi1(
+             printf("Invalid boot module size! Possible cause: boot module file not found by QEMU\n");
+             return false;
+         }
++        if (i == 0 || boot_state.boot_module_start > modules[i].start) {
++            boot_state.boot_module_start = modules[i].start;
++        }
+         if (boot_state.mods_end_paddr < modules[i].end) {
+             boot_state.mods_end_paddr = modules[i].end;
+         }
+@@ -647,7 +657,7 @@ static BOOT_CODE bool_t try_boot_sys_mbi2(
+                 module->string
+             );
+ 
+-            if (mod_count == 0) {
++            if (mod_count == 0 || boot_state.boot_module_start > module->start) {
+                 boot_state.boot_module_start = module->start;
+             }
+ 
+@@ -707,6 +717,9 @@ BOOT_CODE VISIBLE void boot_sys(
+ {
+     bool_t result = false;
+ 
++    boot_state.multiboot_magic = multiboot_magic;
++    boot_state.multiboot = mbi;
++
+     if (multiboot_magic == MULTIBOOT_MAGIC) {
+         result = try_boot_sys_mbi1(mbi);
+     } else if (multiboot_magic == MULTIBOOT2_MAGIC) {
+@@ -734,4 +747,3 @@ BOOT_CODE VISIBLE void boot_sys(
+     schedule();
+     activateThread();
+ }
+-
