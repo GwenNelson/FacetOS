@@ -50,10 +50,10 @@ index 66c97aa51..b585463fb 100644
      SEL4_BOOTINFO_HEADER_NUM,
      SEL4_FORCE_LONG_ENUM(seL4_BootInfoID)
 diff --git a/src/arch/x86/kernel/boot.c b/src/arch/x86/kernel/boot.c
-index 93b320964..1f1ed9731 100644
+index 93b320964..b1823cf12 100644
 --- a/src/arch/x86/kernel/boot.c
 +++ b/src/arch/x86/kernel/boot.c
-@@ -26,6 +26,127 @@
+@@ -26,6 +26,132 @@
  #define MAX_RESERVED 1
  BOOT_BSS static region_t reserved[MAX_RESERVED];
  
@@ -63,15 +63,20 @@ index 93b320964..1f1ed9731 100644
 +    const char *name;
 +} boot_module_info_t;
 +
++BOOT_CODE static void *multiboot_paddr_to_pptr(const void *address)
++{
++    return paddr_to_pptr((paddr_t)(word_t)address);
++}
++
 +BOOT_CODE static word_t multiboot_module_count(void)
 +{
 +    if (boot_state.multiboot_magic == MULTIBOOT_MAGIC) {
-+        multiboot_info_t *mbi = boot_state.multiboot;
++        multiboot_info_t *mbi = multiboot_paddr_to_pptr(boot_state.multiboot);
 +        return mbi->part1.mod_count;
 +    }
 +
 +    word_t count = 0;
-+    multiboot2_header_t *mbi2 = boot_state.multiboot;
++    multiboot2_header_t *mbi2 = multiboot_paddr_to_pptr(boot_state.multiboot);
 +    multiboot2_tag_t const *tag = (multiboot2_tag_t *)(mbi2 + 1);
 +    multiboot2_tag_t const *tag_e = (multiboot2_tag_t *)((word_t)mbi2 + mbi2->total_size);
 +    while (tag < tag_e && tag->type != MULTIBOOT2_TAG_END) {
@@ -86,18 +91,18 @@ index 93b320964..1f1ed9731 100644
 +BOOT_CODE static bool_t multiboot_module(word_t index, boot_module_info_t *module)
 +{
 +    if (boot_state.multiboot_magic == MULTIBOOT_MAGIC) {
-+        multiboot_info_t *mbi = boot_state.multiboot;
-+        multiboot_module_t *modules = (multiboot_module_t *)(word_t)mbi->part1.mod_list;
++        multiboot_info_t *mbi = multiboot_paddr_to_pptr(boot_state.multiboot);
++        multiboot_module_t *modules = multiboot_paddr_to_pptr((void *)(word_t)mbi->part1.mod_list);
 +        if (index >= mbi->part1.mod_count) {
 +            return false;
 +        }
 +        module->start = modules[index].start;
 +        module->end = modules[index].end;
-+        module->name = (const char *)(word_t)modules[index].name;
++        module->name = multiboot_paddr_to_pptr((void *)(word_t)modules[index].name);
 +        return true;
 +    }
 +
-+    multiboot2_header_t *mbi2 = boot_state.multiboot;
++    multiboot2_header_t *mbi2 = multiboot_paddr_to_pptr(boot_state.multiboot);
 +    multiboot2_tag_t const *tag = (multiboot2_tag_t *)(mbi2 + 1);
 +    multiboot2_tag_t const *tag_e = (multiboot2_tag_t const *)((word_t)mbi2 + mbi2->total_size);
 +    word_t current = 0;
@@ -108,7 +113,7 @@ index 93b320964..1f1ed9731 100644
 +                    (multiboot2_module_t const *)((word_t)tag + sizeof(*tag));
 +                module->start = mb_module->start;
 +                module->end = mb_module->end;
-+                module->name = mb_module->string;
++                module->name = multiboot_paddr_to_pptr(mb_module->string);
 +                return true;
 +            }
 +            current++;
@@ -181,7 +186,7 @@ index 93b320964..1f1ed9731 100644
  /* functions exactly corresponding to abstract specification */
  
  BOOT_CODE static void init_irqs(cap_t root_cnode_cap)
-@@ -136,6 +257,9 @@ BOOT_CODE bool_t init_sys_state(
+@@ -136,6 +262,9 @@ BOOT_CODE bool_t init_sys_state(
      word_t mb_mmap_size = sizeof(seL4_X86_BootInfo_mmap_t);
      extra_bi_size += mb_mmap_size;
  
@@ -191,7 +196,7 @@ index 93b320964..1f1ed9731 100644
      // room for tsc frequency
      extra_bi_size += sizeof(seL4_BootInfoHeader) + 4;
      word_t extra_bi_size_bits = calculate_extra_bi_size_bits(extra_bi_size);
-@@ -215,6 +339,12 @@ BOOT_CODE bool_t init_sys_state(
+@@ -215,6 +344,12 @@ BOOT_CODE bool_t init_sys_state(
      memcpy((void *)(rootserver.extra_bi + extra_bi_offset), mb_mmap, mb_mmap_size);
      extra_bi_offset += mb_mmap_size;
  
@@ -204,7 +209,7 @@ index 93b320964..1f1ed9731 100644
      /* populate tsc frequency block */
      {
          seL4_BootInfoHeader header;
-@@ -226,6 +356,8 @@ BOOT_CODE bool_t init_sys_state(
+@@ -226,6 +361,8 @@ BOOT_CODE bool_t init_sys_state(
          extra_bi_offset += 4;
      }
  
