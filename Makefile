@@ -128,7 +128,7 @@ SEL4RUNTIME_GCC16_PATCH := \
 	$(ROOT)/patches/sel4runtime-gcc16.patch
 
 SEL4_PRESERVE_MODULES_PATCH := \
-	$(root)/patches/sel4-preserve-multiboot-mods.patch
+	$(ROOT)/patches/sel4-preserve-multiboot-mods.patch
 
 
 patches:
