@@ -1,4 +1,5 @@
 #include <stddef.h>
+#include <string.h>
 
 #include <facetos/dominit0/kmalloc.h>
 #include <facetos/dominit0/klog.h>
@@ -154,6 +155,33 @@ void* krealloc(void* p, size_t size) {
       void* retval=krealloc_impl(p,size);
       klock_unlock(&kmalloc_lock);
       return retval;
+}
+
+/*
+ * seL4 support libraries use the standard allocator interface.  Keep those
+ * allocations on dominit0's heap instead of falling through to musl's
+ * syscall-backed allocator, which has no syscall provider in the root task.
+ */
+void *malloc(size_t size) {
+      return kmalloc(size);
+}
+
+void free(void *ptr) {
+      if (ptr != NULL)
+          kfree(ptr);
+}
+
+void *calloc(size_t count, size_t size) {
+      if (size != 0 && count > (size_t)-1 / size)
+          return NULL;
+
+      size_t bytes = count * size;
+      void *ptr = kmalloc(bytes);
+      return memset(ptr, 0, bytes);
+}
+
+void *realloc(void *ptr, size_t size) {
+      return krealloc(ptr, size);
 }
 
 void kmalloc_dump(void) {
