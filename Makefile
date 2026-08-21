@@ -43,6 +43,12 @@ AR ?= ar
 FACET_KLIBC_BUILD := $(ROOT)/build/facetos/klibc
 FACET_KLIBC       := $(FACET_KLIBC_BUILD)/klibc.a
 
+FACET_COMMON_BUILD := $(ROOT)/build/facetos/libfacet/common
+FACET_COMMON       := $(FACET_COMMON_BUILD)/libfacet-common.a
+
+FACET_IDLC_BUILD := $(ROOT)/build/facet-idlc
+FACET_IDLC       := $(FACET_IDLC_BUILD)/facet-idlc
+
 FACET_KLIBC_SRCS := $(wildcard $(ROOT)/src/klibc/*.c)
 FACET_KLIBC_OBJS := \
 	$(patsubst $(ROOT)/src/klibc/%.c,$(FACET_KLIBC_BUILD)/%.o,$(FACET_KLIBC_SRCS))
@@ -67,6 +73,36 @@ ifeq ($(DEBUG),1)
 else
 	FACET_KLIBC_CFLAGS += -O2
 endif
+
+FACET_COMMON_CFLAGS := \
+	-std=gnu11 \
+	-ffreestanding \
+	-fno-builtin \
+	-fno-stack-protector \
+	-fno-pic \
+	-fno-pie \
+	-mno-red-zone \
+	-Wall \
+	-Wextra \
+	-I$(ROOT)/include \
+	-MMD \
+	-MP
+
+ifeq ($(DEBUG),1)
+	FACET_COMMON_CFLAGS += -Og -g
+else
+	FACET_COMMON_CFLAGS += -O2
+endif
+
+FACET_IDLC_CFLAGS := \
+	-std=gnu11 \
+	-Wall \
+	-Wextra \
+	-I$(ROOT)/include \
+	-Isrc/facet-idlc \
+	-I$(FACET_IDLC_BUILD) \
+	-MMD \
+	-MP
 
 #
 # Files whose changes require an explicit CMake configure pass.
@@ -106,7 +142,11 @@ endif
 	bootstub32-clean \
 	sdk-clean \
 	full-clean \
-	check-sdk
+	check-sdk \
+	facet-idlc \
+	libfacet-common \
+	libfacet-platform-sel4 \
+	libfacet
 
 
 all: facetos
@@ -218,6 +258,77 @@ klibc: $(FACET_KLIBC)
 
 
 #
+# libfacet-common, built independently of the seL4 CMake universe.
+#
+
+FACET_COMMON_SRCS := $(wildcard $(ROOT)/libfacet/src/common/*.c)
+FACET_COMMON_OBJS := \
+	$(patsubst $(ROOT)/libfacet/src/common/%.c,$(FACET_COMMON_BUILD)/%.o,$(FACET_COMMON_SRCS))
+FACET_COMMON_DEPS := $(FACET_COMMON_OBJS:.o=.d)
+
+$(FACET_COMMON_BUILD)/%.o: $(ROOT)/libfacet/src/common/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(FACET_COMMON_CFLAGS) -c $< -o $@
+
+$(FACET_COMMON): $(FACET_COMMON_OBJS)
+	@mkdir -p $(dir $@)
+	$(AR) rcs $@ $^
+
+libfacet-common: $(FACET_COMMON)
+
+-include $(FACET_COMMON_DEPS)
+
+
+#
+# Host-side Flex/Bison IDL compiler.
+#
+
+FACET_IDLC_STATIC_SRCS := \
+	$(ROOT)/src/facet-idlc/ast.c \
+	$(ROOT)/src/facet-idlc/generator.c \
+	$(ROOT)/src/facet-idlc/main.c
+FACET_IDLC_STATIC_OBJS := \
+	$(patsubst $(ROOT)/src/facet-idlc/%.c,$(FACET_IDLC_BUILD)/%.o,$(FACET_IDLC_STATIC_SRCS))
+FACET_IDLC_OBJS := \
+	$(FACET_IDLC_STATIC_OBJS) \
+	$(FACET_IDLC_BUILD)/parser.o \
+	$(FACET_IDLC_BUILD)/lexer.o
+FACET_IDLC_DEPS := $(FACET_IDLC_STATIC_OBJS:.o=.d)
+
+$(FACET_IDLC_BUILD)/parser.c $(FACET_IDLC_BUILD)/parser.h: \
+	$(ROOT)/src/facet-idlc/parser.y $(ROOT)/src/facet-idlc/ast.h
+	@mkdir -p $(FACET_IDLC_BUILD)
+	bison --defines=$(FACET_IDLC_BUILD)/parser.h \
+		-o $(FACET_IDLC_BUILD)/parser.c $<
+
+$(FACET_IDLC_BUILD)/lexer.c: \
+	$(ROOT)/src/facet-idlc/lexer.l $(FACET_IDLC_BUILD)/parser.h
+	@mkdir -p $(FACET_IDLC_BUILD)
+	flex -o $@ $<
+
+$(FACET_IDLC_BUILD)/%.o: $(ROOT)/src/facet-idlc/%.c \
+	$(FACET_IDLC_BUILD)/parser.h
+	@mkdir -p $(dir $@)
+	$(CC) $(FACET_IDLC_CFLAGS) -c $< -o $@
+
+$(FACET_IDLC_BUILD)/parser.o: $(FACET_IDLC_BUILD)/parser.c \
+	$(ROOT)/src/facet-idlc/ast.h
+	$(CC) $(FACET_IDLC_CFLAGS) -c $< -o $@
+
+$(FACET_IDLC_BUILD)/lexer.o: $(FACET_IDLC_BUILD)/lexer.c \
+	$(FACET_IDLC_BUILD)/parser.h
+	$(CC) $(FACET_IDLC_CFLAGS) -c $< -o $@
+
+$(FACET_IDLC): $(FACET_IDLC_OBJS)
+	@mkdir -p $(dir $@)
+	$(CC) $(FACET_IDLC_OBJS) -o $@
+
+facet-idlc: $(FACET_IDLC)
+
+-include $(FACET_IDLC_DEPS)
+
+
+#
 # Ninja-backed build targets.
 #
 # These are intentionally phony from Make's point of view. Make does not know
@@ -237,11 +348,18 @@ dominit0: klibc configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) dominit0 dominit
 
 
-facetos: dominit0
+facetos: dominit0 libfacet
+
+
+libfacet-platform-sel4: libfacet-common configure
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) facet-platform-sel4
+
+
+libfacet: facet-idlc libfacet-common libfacet-platform-sel4
 
 
 # Build everything needed to boot FacetOS.
-build: klibc configure
+build: klibc configure libfacet
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf dominit0 dominit
 
 

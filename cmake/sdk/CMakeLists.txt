@@ -128,6 +128,46 @@ set_target_properties(facet_klibc PROPERTIES
         "${FACETOS_ROOT}/include"
 )
 
+set(FACET_COMMON_ARCHIVE
+    "${FACETOS_ROOT}/build/facetos/libfacet/common/libfacet-common.a"
+)
+
+add_library(facet_common STATIC IMPORTED GLOBAL)
+
+set_target_properties(facet_common PROPERTIES
+    IMPORTED_LOCATION
+        "${FACET_COMMON_ARCHIVE}"
+    INTERFACE_INCLUDE_DIRECTORIES
+        "${FACETOS_ROOT}/include"
+)
+
+
+#
+# FacetOS libfacet seL4 platform backend.
+#
+
+file(GLOB FACET_PLATFORM_SEL4_SRCS CONFIGURE_DEPENDS
+    "${FACETOS_ROOT}/libfacet/src/platform/sel4/*.c"
+)
+
+add_library(facet-platform-sel4 STATIC
+    ${FACET_PLATFORM_SEL4_SRCS}
+)
+
+facetos_configure_target(facet-platform-sel4)
+
+target_link_libraries(facet-platform-sel4 PRIVATE
+    facet_common
+    sel4runtime
+    sel4
+    utils
+    sel4simple
+    sel4simple-default
+    sel4vka
+    sel4vspace
+    sel4utils
+)
+
 
 #
 # FacetOS dominit child process.
