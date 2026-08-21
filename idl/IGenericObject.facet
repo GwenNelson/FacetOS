@@ -1,0 +1,12 @@
+// IGenericObject is the root interface for FacetOS objects.
+//
+// It exists as the base capability-bearing interface that every other
+// interface can extend through `requires IGenericObject;`.
+//
+// Important: it must not require itself. That would create a recursive
+// metadata dependency and is not part of the bootstrap model.
+interface IGenericObject {
+    // The root interface has a fixed UUID because other interfaces will use
+    // this IID in their generated required-interface metadata.
+    uuid "b8713abf-0c5b-4f2d-87be-90e9494ba2b0";
+}
