@@ -27,6 +27,7 @@ SEL4_ENV := PATH="$(VENV)/bin:$(PATH)"
 
 SDK_KERNEL     := $(SDK_BUILD)/kernel/kernel.elf
 FACET_DOMINIT0 := $(SDK_BUILD)/dominit0
+FACET_DOMINIT  := $(SDK_BUILD)/dominit
 
 #
 # FacetOS klibc.
@@ -92,6 +93,7 @@ endif
 	configure \
 	sdk \
 	facetos \
+	dominit \
 	dominit0 \
 	klibc \
 	kernel \
@@ -225,6 +227,10 @@ klibc: $(FACET_KLIBC)
 
 kernel: configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf
+
+
+dominit: configure
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) dominit
 
 
 dominit0: klibc configure

@@ -21,7 +21,10 @@ void platform_debug_print(char* str); // prints a debug string
  * Configure and start a process from a complete ELF image mapped into this
  * task. The process object must remain at the same address for the lifetime of
  * the process and may later be passed to sel4utils_destroy_process(). The ELF
- * buffer is no longer needed after this function returns successfully.
+ * buffer is no longer needed after this function returns successfully. argv
+ * must contain at least argv[0]; argv[1] is inserted by this function and
+ * contains the child-visible debug endpoint CPtr. Existing arguments from
+ * argv[1] onward are shifted up by one slot.
  */
 int load_and_start_domain(sel4utils_process_t *process,
                           const void *elf_buffer,

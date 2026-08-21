@@ -13,8 +13,10 @@
 #include <vka/vka.h>
 #include <vspace/vspace.h>
 #include <elf/elf.h>
+#include <sel4utils/api.h>
 #include <sel4utils/elf.h>
 #include <sel4utils/process.h>
+#include <sel4utils/thread.h>
 #include <sel4utils/vspace.h>
 
 #include <stddef.h>
@@ -38,6 +40,100 @@ static sel4utils_alloc_data_t sel4_vspace_data;
 
 static IPageAllocator *page_allocator;
 static IPageAllocator page_alloc_instance;
+
+static vka_object_t debug_endpoint;
+static sel4utils_thread_t debug_server_thread;
+static seL4_Word next_debug_badge = 1;
+
+static void
+debug_putchar(char c)
+{
+    seL4_DebugPutChar(c);
+}
+
+static void
+debug_server(seL4_CPtr endpoint)
+{
+    for (;;) {
+        seL4_Word badge = 0;
+        seL4_MessageInfo_t info = seL4_Recv(endpoint, &badge);
+
+        if (seL4_MessageInfo_get_length(info) >= 1) {
+            debug_putchar((char)seL4_GetMR(0));
+        }
+    }
+}
+
+static void
+debug_server_entry(void *endpoint, void *unused, void *ipc_buffer)
+{
+    (void)unused;
+    (void)ipc_buffer;
+    debug_server((seL4_CPtr)(uintptr_t)endpoint);
+}
+
+static int
+setup_debug_server(void)
+{
+    int error = vka_alloc_endpoint(&sel4_vka, &debug_endpoint);
+    if (error != 0) {
+        return -1;
+    }
+
+    seL4_Word cspace_data = api_make_guard_skip_word(
+        seL4_WordBits - simple_get_cnode_size_bits(&sel4_simple));
+    sel4utils_thread_config_t config = thread_config_default(
+        &sel4_simple,
+        simple_get_cnode(&sel4_simple),
+        cspace_data,
+        seL4_CapNull,
+        seL4_MaxPrio);
+
+    error = sel4utils_configure_thread_config(&sel4_vka,
+                                              &sel4_vspace,
+                                              &sel4_vspace,
+                                              config,
+                                              &debug_server_thread);
+    if (error != 0) {
+        vka_free_object(&sel4_vka, &debug_endpoint);
+        return -1;
+    }
+
+    error = sel4utils_start_thread(&debug_server_thread,
+                                   debug_server_entry,
+                                   (void *)(uintptr_t)debug_endpoint.cptr,
+                                   NULL,
+                                   1);
+    if (error != 0) {
+        sel4utils_clean_up_thread(&sel4_vka, &sel4_vspace,
+                                  &debug_server_thread);
+        vka_free_object(&sel4_vka, &debug_endpoint);
+        return -1;
+    }
+
+    return 0;
+}
+
+static seL4_CPtr
+mint_debug_endpoint(sel4utils_process_t *process)
+{
+    if (debug_endpoint.cptr == seL4_CapNull) {
+        return seL4_CapNull;
+    }
+
+    cspacepath_t source;
+    vka_cspace_make_path(&sel4_vka, debug_endpoint.cptr, &source);
+
+    seL4_Word badge = next_debug_badge++;
+    if (next_debug_badge == 0) {
+        next_debug_badge = 1;
+    }
+
+    /* The child may send, but cannot receive from the debug endpoint. */
+    seL4_CapRights_t send_only =
+        seL4_CapRights_new(false, false, false, true);
+    return sel4utils_mint_cap_to_process(process, source, send_only, badge);
+}
 
 static int
 copy_elf_program_headers(sel4utils_process_t *process, const elf_t *elf)
@@ -71,10 +167,19 @@ load_and_start_domain(sel4utils_process_t *process,
                       char *argv[])
 {
     if (process == NULL || elf_buffer == NULL || elf_size == 0 ||
-        argc < 0 || (argc > 0 && argv == NULL)) {
+        argc < 1 || argv == NULL) {
         klog(LOG_ERROR, "load_and_start_domain(): invalid argument\n");
         return -1;
     }
+
+    for (int i = 0; i < argc; i++) {
+        if (argv[i] == NULL) {
+            klog(LOG_ERROR, "load_and_start_domain(): invalid argv\n");
+            return -1;
+        }
+    }
+
+    char *spawn_argv[argc + 1];
 
     if (sel4_allocman == NULL) {
         klog(LOG_ERROR,
@@ -103,6 +208,13 @@ load_and_start_domain(sel4utils_process_t *process,
         return -1;
     }
 
+    seL4_CPtr child_debug_endpoint = mint_debug_endpoint(process);
+    if (child_debug_endpoint == seL4_CapNull) {
+        klog(LOG_ERROR,
+             "load_and_start_domain(): could not mint debug endpoint\n");
+        goto fail;
+    }
+
     process->entry_point = sel4utils_elf_load(&process->vspace,
                                               &sel4_vspace,
                                               &sel4_vka,
@@ -119,8 +231,20 @@ load_and_start_domain(sel4utils_process_t *process,
         goto fail;
     }
 
+    char endpoint_string[1][WORD_STRING_SIZE];
+    char *endpoint_argv[1];
+    sel4utils_create_word_args(endpoint_string, endpoint_argv, 1,
+                               (seL4_Word)child_debug_endpoint);
+
+    /* argv[1] is reserved for the child-visible debug endpoint CPtr. */
+    spawn_argv[0] = argv[0];
+    spawn_argv[1] = endpoint_argv[0];
+    for (int i = 1; i < argc; i++) {
+        spawn_argv[i + 1] = argv[i];
+    }
+
     if (sel4utils_spawn_process_v(process, &sel4_vka, &sel4_vspace,
-                                  argc, argv, 1) != 0) {
+                                  argc + 1, spawn_argv, 1) != 0) {
         klog(LOG_ERROR, "load_and_start_domain(): process start failed\n");
         goto fail;
     }
@@ -238,6 +362,11 @@ void platform_init(void) {
      if(page_allocator == NULL) kpanic("Unable to create page allocator instance!");
 
      kmalloc_init(page_allocator);
+
+     klog(LOG_DEBUG, "platform_init() - setting up debug endpoint\n");
+     if (setup_debug_server() != 0)
+         kpanic("Unable to set up debug endpoint server!");
+
      klog(LOG_INFO,"seL4 platform ready\n");
 }
 

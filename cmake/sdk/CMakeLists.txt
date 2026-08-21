@@ -130,6 +130,28 @@ set_target_properties(facet_klibc PROPERTIES
 
 
 #
+# FacetOS dominit child process.
+#
+
+file(GLOB FACET_DOMINIT_SRCS CONFIGURE_DEPENDS
+    "${FACETOS_ROOT}/src/dominit/*.c"
+)
+
+add_executable(dominit
+    ${FACET_DOMINIT_SRCS}
+)
+
+facetos_configure_target(dominit)
+
+# `sel4` is CMake's libsel4 target. sel4runtime supplies process startup,
+# TLS, and the IPC-buffer pointer; dominit deliberately has no libc.
+target_link_libraries(dominit PRIVATE
+    sel4runtime
+    sel4
+)
+
+
+#
 # FacetOS dominit0.
 #
 # Generic dominit0 sources plus the selected seL4 platform backend.
