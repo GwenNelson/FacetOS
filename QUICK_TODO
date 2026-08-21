@@ -1,0 +1,11 @@
+libfacet-platform-sel4.a
+libfacet-common.a
+
+make dominit only link to libfacet-common.a, libfacet-platform-sel4.a (for now) and sel4runtime (which can later be just a generic libc thing or anything we want)
+setup a simple way for dominit (or any other process eventually) to talk to the interfaces it needs as soon as possible
+
+ideally something such as a single endpoint that does getInterface(), and returns an endpoint to the object with that interface
+
+so for example, dominit does getInterface(IDomainEnvironment) and uses that to ask the IDomainEnvironment object for whatever else it needs
+
+this naturally implies locking down some kind of mapping between the interfaces and the endpoints via an IDL compiler, so need to begin on that next
