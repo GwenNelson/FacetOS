@@ -1,7 +1,12 @@
 libfacet-platform-sel4.a
+	implements stuff like platform_ipc_call_XXX that maps behind the scenes to seL4
 libfacet-common.a
+	implements stuff for actually querying interfaces, building objects and IPC proxies and so on and a few common implementations of different interfaces etc
 
 make dominit only link to libfacet-common.a, libfacet-platform-sel4.a (for now) and sel4runtime (which can later be just a generic libc thing or anything we want)
+
+look into whether we can replace sel4runtime so dominit becomes as independent as possible other than libfacet-platform-sel4.a
+
 setup a simple way for dominit (or any other process eventually) to talk to the interfaces it needs as soon as possible
 
 ideally something such as a single endpoint that does getInterface(), and returns an endpoint to the object with that interface
