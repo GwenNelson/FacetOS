@@ -140,8 +140,12 @@ file(GLOB FACET_DOMINIT0_SRCS CONFIGURE_DEPENDS
     "${FACETOS_ROOT}/src/dominit0/platform/sel4/*.c"
 )
 
+include(cpio)
+MakeCPIO(dominit0_cpio.o "")
+
 add_executable(dominit0
     ${FACET_DOMINIT0_SRCS}
+    dominit0_cpio.o
 )
 
 facetos_configure_target(dominit0)

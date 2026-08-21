@@ -12,9 +12,13 @@
 #include <allocman/vka.h>
 #include <vka/vka.h>
 #include <vspace/vspace.h>
+#include <elf/elf.h>
+#include <sel4utils/elf.h>
+#include <sel4utils/process.h>
 #include <sel4utils/vspace.h>
 
 #include <stddef.h>
+#include <stdlib.h>
 
 #include "bootinfo.h"
 
@@ -34,6 +38,99 @@ static sel4utils_alloc_data_t sel4_vspace_data;
 
 static IPageAllocator *page_allocator;
 static IPageAllocator page_alloc_instance;
+
+static int
+copy_elf_program_headers(sel4utils_process_t *process, const elf_t *elf)
+{
+    process->num_elf_phdrs = sel4utils_elf_num_phdrs(elf);
+    process->elf_phdrs = calloc(process->num_elf_phdrs,
+                                sizeof(*process->elf_phdrs));
+    if (process->elf_phdrs == NULL) {
+        return -1;
+    }
+
+    sel4utils_elf_read_phdrs(elf, process->num_elf_phdrs,
+                             process->elf_phdrs);
+
+    /* Match sel4utils_configure_process_custom()'s musl workaround. */
+    for (int i = 0; i < process->num_elf_phdrs; i++) {
+        if (process->elf_phdrs[i].p_type == PT_PHDR) {
+            process->elf_phdrs[i].p_type = PT_NULL;
+        }
+    }
+
+    return 0;
+}
+
+int
+load_and_start_domain(sel4utils_process_t *process,
+                      const void *elf_buffer,
+                      size_t elf_size,
+                      uint8_t priority,
+                      int argc,
+                      char *argv[])
+{
+    if (process == NULL || elf_buffer == NULL || elf_size == 0 ||
+        argc < 0 || (argc > 0 && argv == NULL)) {
+        klog(LOG_ERROR, "load_and_start_domain(): invalid argument\n");
+        return -1;
+    }
+
+    if (sel4_allocman == NULL) {
+        klog(LOG_ERROR,
+             "load_and_start_domain(): platform_init() has not completed\n");
+        return -1;
+    }
+
+    elf_t elf;
+    if (elf_newFile(elf_buffer, elf_size, &elf) < 0) {
+        klog(LOG_ERROR, "load_and_start_domain(): invalid ELF image\n");
+        return -1;
+    }
+
+    uintptr_t sysinfo = sel4utils_elf_get_vsyscall(&elf);
+    sel4utils_process_config_t config =
+        process_config_default_simple(&sel4_simple, "<ELF buffer>", priority);
+
+    /* Bypass the CPIO-only ELF path; the image is loaded below. */
+    config = process_config_noelf(config,
+                                  (void *)elf_getEntryPoint(&elf),
+                                  sysinfo);
+
+    if (sel4utils_configure_process_custom(process, &sel4_vka,
+                                           &sel4_vspace, config) != 0) {
+        klog(LOG_ERROR, "load_and_start_domain(): process setup failed\n");
+        return -1;
+    }
+
+    process->entry_point = sel4utils_elf_load(&process->vspace,
+                                              &sel4_vspace,
+                                              &sel4_vka,
+                                              &sel4_vka,
+                                              &elf);
+    if (process->entry_point == NULL) {
+        klog(LOG_ERROR, "load_and_start_domain(): ELF load failed\n");
+        goto fail;
+    }
+
+    if (copy_elf_program_headers(process, &elf) != 0) {
+        klog(LOG_ERROR,
+             "load_and_start_domain(): could not copy ELF program headers\n");
+        goto fail;
+    }
+
+    if (sel4utils_spawn_process_v(process, &sel4_vka, &sel4_vspace,
+                                  argc, argv, 1) != 0) {
+        klog(LOG_ERROR, "load_and_start_domain(): process start failed\n");
+        goto fail;
+    }
+
+    return 0;
+
+fail:
+    sel4utils_destroy_process(process, &sel4_vka);
+    return -1;
+}
 
 size_t sel4_page_alloc_get_page_size(void* self) {
 	// temporary hack
