@@ -30,7 +30,6 @@ int facet_idl_add_required(FacetIdlContext *context, const char *name)
 
 FacetIdlMethod *facet_idl_add_method(
     FacetIdlContext *context,
-    uint32_t id,
     const char *return_type,
     const char *name)
 {
@@ -40,7 +39,6 @@ FacetIdlMethod *facet_idl_add_method(
     FacetIdlMethod *method = &context->interface.methods[
         context->interface.method_count++];
     memset(method, 0, sizeof(*method));
-    method->id = id;
     copy_name(method->return_type, sizeof(method->return_type), return_type);
     copy_name(method->name, sizeof(method->name), name);
     return method;
@@ -65,7 +63,6 @@ int facet_idl_add_param(
 
 int facet_idl_add_property(
     FacetIdlContext *context,
-    uint32_t id,
     const char *type,
     const char *name,
     int readable,
@@ -77,7 +74,6 @@ int facet_idl_add_property(
     FacetIdlProperty *property = &context->interface.properties[
         context->interface.property_count++];
     memset(property, 0, sizeof(*property));
-    property->id = id;
     copy_name(property->type, sizeof(property->type), type);
     copy_name(property->name, sizeof(property->name), name);
     property->readable = readable;
@@ -86,7 +82,7 @@ int facet_idl_add_property(
     char accessor[FACET_IDL_MAX_NAME];
     if (readable) {
         snprintf(accessor, sizeof(accessor), "get%s", name);
-        if (facet_idl_add_method(context, id, "FacetResult", accessor) == NULL) {
+        if (facet_idl_add_method(context, "FacetResult", accessor) == NULL) {
             return -1;
         }
         FacetIdlMethod *method = &context->interface.methods[
@@ -97,8 +93,7 @@ int facet_idl_add_property(
     }
     if (writable) {
         snprintf(accessor, sizeof(accessor), "set%s", name);
-        uint32_t setter_id = id + (readable ? 1u : 0u);
-        if (facet_idl_add_method(context, setter_id, "FacetResult", accessor) == NULL) {
+        if (facet_idl_add_method(context, "FacetResult", accessor) == NULL) {
             return -1;
         }
         FacetIdlMethod *method = &context->interface.methods[

@@ -17,6 +17,7 @@ NUMBERVAL  [0-9]+
 
 "interface"      return INTERFACE;
 "uuid"           return UUID;
+"auto"           return AUTO;
 "requires"       return REQUIRES;
 "method"         return METHOD;
 "property"       return PROPERTY;

@@ -39,6 +39,7 @@ typedef struct FacetIdlProperty {
 typedef struct FacetIdlInterface {
     char name[FACET_IDL_MAX_NAME];
     char uuid[64];
+    int uuid_auto;
     size_t required_count;
     char required[FACET_IDL_MAX_REQUIRED][FACET_IDL_MAX_NAME];
     size_t method_count;
@@ -49,6 +50,8 @@ typedef struct FacetIdlInterface {
 
 typedef struct FacetIdlContext {
     FacetIdlInterface interface;
+    /* Number of leading methods imported from IGenericObject. */
+    size_t generic_method_count;
     int errors;
     char error[256];
 } FacetIdlContext;
@@ -57,7 +60,6 @@ void facet_idl_context_init(FacetIdlContext *context);
 int facet_idl_add_required(FacetIdlContext *context, const char *name);
 FacetIdlMethod *facet_idl_add_method(
     FacetIdlContext *context,
-    uint32_t id,
     const char *return_type,
     const char *name
 );
@@ -69,7 +71,6 @@ int facet_idl_add_param(
 );
 int facet_idl_add_property(
     FacetIdlContext *context,
-    uint32_t id,
     const char *type,
     const char *name,
     int readable,

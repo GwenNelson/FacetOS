@@ -18,7 +18,7 @@ void yyerror(const char *message);
     uint32_t number;
 }
 
-%token INTERFACE UUID REQUIRES METHOD PROPERTY READ WRITE
+%token INTERFACE UUID AUTO REQUIRES METHOD PROPERTY READ WRITE
 %token IN OUT INOUT
 %token <string> IDENT STRING
 %token <number> NUMBER
@@ -56,6 +56,10 @@ interface_item:
                  "%s", $2);
         free($2);
     }
+  | UUID AUTO ';'
+    {
+        facet_idl_parser_context->interface.uuid_auto = 1;
+    }
   | REQUIRES IDENT ';'
     {
         if (facet_idl_add_required(facet_idl_parser_context, $2) != 0) {
@@ -63,29 +67,29 @@ interface_item:
         }
         free($2);
     }
-  | METHOD NUMBER return_type IDENT '('
+  | METHOD return_type IDENT '('
     {
         facet_idl_current_method = facet_idl_add_method(
-            facet_idl_parser_context, $2, $3, $4);
+            facet_idl_parser_context, $2, $3);
         if (facet_idl_current_method == NULL) {
             yyerror("too many methods");
         }
     }
     parameters ')' ';'
     {
+        free($2);
         free($3);
-        free($4);
         facet_idl_current_method = NULL;
     }
-  | PROPERTY NUMBER type_name IDENT property_access ';'
+  | PROPERTY type_name IDENT property_access ';'
     {
         if (facet_idl_add_property(
-                facet_idl_parser_context, $2, $3, $4,
-                ($5 & 1u) != 0, ($5 & 2u) != 0) != 0) {
+                facet_idl_parser_context, $2, $3,
+                ($4 & 1u) != 0, ($4 & 2u) != 0) != 0) {
             yyerror("invalid property");
         }
+        free($2);
         free($3);
-        free($4);
     }
 ;
 
@@ -95,6 +99,10 @@ return_type:
 
 type_name:
     IDENT { $$ = $1; }
+  | UUID
+    {
+        $$ = strdup("uuid");
+    }
 ;
 
 property_access:

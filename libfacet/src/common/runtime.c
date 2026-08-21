@@ -120,6 +120,13 @@ static int append_input(
         return append_word(message, (uint64_t)(int64_t)va_arg(*arguments, int));
     case FACET_TYPE_I64:
         return append_word(message, (uint64_t)va_arg(*arguments, int64_t));
+    case FACET_TYPE_UUID: {
+        uuid_t value = va_arg(*arguments, uuid_t);
+        uint64_t words[2] = {0, 0};
+        memcpy(words, value.bytes, sizeof(value.bytes));
+        return append_word(message, words[0]) == 0
+            ? append_word(message, words[1]) : -1;
+    }
     case FACET_TYPE_LOCAL_PTR:
         return -1;
     default:
@@ -131,11 +138,19 @@ static int assign_output(
     const FacetParamMeta *parameter,
     void *destination,
     const FacetRpcMessage *reply,
-    size_t *reply_index)
+    size_t *reply_index,
+    size_t *reply_handle_index)
 {
-    if (destination == NULL || *reply_index >= reply->word_count) {
+    if (destination == NULL) {
         return -1;
     }
+
+    if (parameter->type == FACET_TYPE_HANDLE) {
+        if (*reply_handle_index >= reply->handle_count) return -1;
+        *(FacetHandle *)destination = reply->handles[(*reply_handle_index)++];
+        return 0;
+    }
+    if (*reply_index >= reply->word_count) return -1;
 
     uint64_t word = reply->words[(*reply_index)++];
     switch (parameter->type) {
@@ -224,6 +239,7 @@ FacetResult libfacet_proxy_client_call(
     }
 
     size_t reply_index = 1;
+    size_t reply_handle_index = 0;
     size_t output_index = 0;
     for (size_t i = 0; i < method->parameter_count; i++) {
         const FacetParamMeta *parameter = &method->parameters[i];
@@ -231,7 +247,7 @@ FacetResult libfacet_proxy_client_call(
             continue;
         }
         if (assign_output(parameter, outputs[output_index++],
-                          &reply, &reply_index) != 0) {
+                          &reply, &reply_index, &reply_handle_index) != 0) {
             return FACET_PROTOCOL_ERROR;
         }
     }
