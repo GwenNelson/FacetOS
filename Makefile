@@ -234,7 +234,7 @@ dominit: configure
 
 
 dominit0: klibc configure
-	$(SEL4_ENV) ninja -C $(SDK_BUILD) dominit0
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) dominit0 dominit
 
 
 facetos: dominit0
@@ -242,7 +242,7 @@ facetos: dominit0
 
 # Build everything needed to boot FacetOS.
 build: klibc configure
-	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf dominit0
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf dominit0 dominit
 
 
 # Keep `make sdk` as a familiar name, but it no longer implies cleaning.
@@ -258,6 +258,8 @@ check-sdk:
 		{ echo "seL4 kernel missing; run 'make sdk' first."; exit 1; }
 	@test -f $(FACET_DOMINIT0) || \
 		{ echo "FacetOS dominit0 missing; run 'make' first."; exit 1; }
+	@test -f $(FACET_DOMINIT) || \
+		{ echo "FacetOS dominit missing; run 'make' first."; exit 1; }
 
 
 #
@@ -285,6 +287,7 @@ image: build
 	mkdir -p $(ISO_ROOT)/boot/grub
 	cp $(SDK_KERNEL) $(ISO_ROOT)/boot/kernel.elf
 	cp $(FACET_DOMINIT0) $(ISO_ROOT)/boot/dominit0
+	cp $(FACET_DOMINIT) $(ISO_ROOT)/boot/dominit
 	cp $(ROOT)/boot/grub.cfg $(ISO_ROOT)/boot/grub/grub.cfg
 	grub-mkrescue \
 		-o $(FACETOS_ISO) \
@@ -309,13 +312,13 @@ endif
 
 QEMU_DIRECT_FLAGS := \
 	-kernel $(BOOTSTUB32) \
-	-initrd $(SDK_KERNEL),$(FACET_DOMINIT0)
+	-initrd $(SDK_KERNEL),$(FACET_DOMINIT0),$(FACET_DOMINIT)
 
 QEMU_ISO_FLAGS := \
 	-cdrom $(FACETOS_ISO)
 
 
-# One command now does the incremental kernel/dominit0 build, incrementally
+# One command now does the incremental kernel/dominit0/dominit build, incrementally
 # builds bootstub32, and boots the result.
 run: build bootstub32
 	$(QEMU) \

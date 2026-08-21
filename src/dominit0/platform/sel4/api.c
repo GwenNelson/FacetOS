@@ -5,6 +5,8 @@
 #include <facetos/interfaces/IPageAllocator.h>
 
 #include <sel4/sel4.h>
+#include <sel4/bootinfo.h>
+#include <sel4/arch/bootinfo_types.h>
 #include <sel4runtime.h>
 
 #include <simple-default/simple-default.h>
@@ -21,6 +23,7 @@
 
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "bootinfo.h"
 
@@ -44,6 +47,108 @@ static IPageAllocator page_alloc_instance;
 static vka_object_t debug_endpoint;
 static sel4utils_thread_t debug_server_thread;
 static seL4_Word next_debug_badge = 1;
+static sel4utils_process_t dominit_process;
+
+typedef struct boot_module {
+    const void *data;
+    size_t size;
+    const char *name;
+} boot_module_t;
+
+static int
+module_name_matches(const char *name, const char *wanted)
+{
+    const char *base = name;
+    const char *end = name;
+
+    while (*end != '\0' && *end != ' ' && *end != '\t') {
+        if (*end == '/' || *end == '\\') {
+            base = end + 1;
+        }
+        end++;
+    }
+
+    size_t basename_length = (size_t)(end - base);
+    return strlen(wanted) == basename_length &&
+           memcmp(base, wanted, basename_length) == 0;
+}
+
+static int
+find_boot_module(const seL4_BootInfo *bi, const char *wanted,
+                 boot_module_t *result)
+{
+    if (bi == NULL || wanted == NULL || result == NULL) {
+        return -1;
+    }
+
+    const uint8_t *cur =
+        (const uint8_t *)bi + seL4_BootInfoFrameSize;
+    const uint8_t *end = cur + bi->extraLen;
+
+    while ((size_t)(end - cur) >= sizeof(seL4_BootInfoHeader)) {
+        seL4_BootInfoHeader header;
+        memcpy(&header, cur, sizeof(header));
+
+        if (header.len < sizeof(header) ||
+            header.len > (size_t)(end - cur)) {
+            return -1;
+        }
+
+        if (header.id == SEL4_BOOTINFO_HEADER_X86_MODULES) {
+            seL4_X86_BootInfo_modules_t modules;
+            size_t descriptor_offset = sizeof(modules);
+
+            if (header.len < sizeof(modules)) {
+                return -1;
+            }
+
+            memcpy(&modules, cur, sizeof(modules));
+            if (modules.module_count >
+                (header.len - descriptor_offset) /
+                    sizeof(seL4_X86_BootInfo_module_t)) {
+                return -1;
+            }
+
+            size_t names_offset = descriptor_offset +
+                modules.module_count *
+                    sizeof(seL4_X86_BootInfo_module_t);
+
+            for (seL4_Word i = 0; i < modules.module_count; i++) {
+                seL4_X86_BootInfo_module_t descriptor;
+                memcpy(&descriptor,
+                       cur + descriptor_offset +
+                           i * sizeof(descriptor),
+                       sizeof(descriptor));
+
+                if (descriptor.name_offset < names_offset ||
+                    descriptor.name_offset >= header.len) {
+                    return -1;
+                }
+
+                const char *name =
+                    (const char *)cur + descriptor.name_offset;
+                size_t available = header.len - descriptor.name_offset;
+                if (memchr(name, '\0', available) == NULL) {
+                    return -1;
+                }
+
+                if (module_name_matches(name, wanted)) {
+                    result->data =
+                        (const void *)(uintptr_t)descriptor.start;
+                    result->size = (size_t)descriptor.size;
+                    result->name = name;
+                    return 0;
+                }
+            }
+
+            return -1;
+        }
+
+        cur += header.len;
+    }
+
+    return -1;
+}
 
 static void
 debug_putchar(char c)
@@ -366,6 +471,25 @@ void platform_init(void) {
      klog(LOG_DEBUG, "platform_init() - setting up debug endpoint\n");
      if (setup_debug_server() != 0)
          kpanic("Unable to set up debug endpoint server!");
+
+     klog(LOG_DEBUG, "platform_init() - locating dominit module\n");
+     boot_module_t dominit_module;
+     if (find_boot_module(platform_sel4_bi, "dominit",
+                          &dominit_module) != 0)
+         kpanic("Unable to find dominit boot module!");
+
+     klog(LOG_INFO,
+          "Starting dominit from %s at %p (%zu bytes)\n",
+          dominit_module.name, dominit_module.data, dominit_module.size);
+
+     char *dominit_argv[] = { "dominit" };
+     if (load_and_start_domain(&dominit_process,
+                               dominit_module.data,
+                               dominit_module.size,
+                               seL4_MaxPrio,
+                               1,
+                               dominit_argv) != 0)
+         kpanic("Unable to start dominit!");
 
      klog(LOG_INFO,"seL4 platform ready\n");
 }
