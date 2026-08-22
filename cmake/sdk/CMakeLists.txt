@@ -226,6 +226,7 @@ target_link_libraries(facet-platform-sel4 PRIVATE
 
 file(GLOB FACET_DOMINIT_SRCS CONFIGURE_DEPENDS
     "${FACETOS_ROOT}/src/dominit/*.c"
+    "${FACETOS_ROOT}/src/dominit/platform/sel4/*.c"
 )
 
 add_executable(dominit
