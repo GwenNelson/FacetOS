@@ -7,6 +7,9 @@
 #define FACET_IDL_MAX_PARAMS 32
 #define FACET_IDL_MAX_METHODS 128
 #define FACET_IDL_MAX_REQUIRED 64
+#define FACET_IDL_MAX_TYPES 128
+#define FACET_IDL_MAX_FIELDS 64
+#define FACET_IDL_MAX_ENUM_VALUES 128
 
 typedef enum FacetIdlDirection {
     FACET_IDL_IN,
@@ -36,6 +39,31 @@ typedef struct FacetIdlProperty {
     int writable;
 } FacetIdlProperty;
 
+typedef enum FacetIdlTypeKind {
+    FACET_IDL_TYPE_ENUM,
+    FACET_IDL_TYPE_STRUCT,
+} FacetIdlTypeKind;
+
+typedef struct FacetIdlField {
+    char type[FACET_IDL_MAX_NAME];
+    char name[FACET_IDL_MAX_NAME];
+} FacetIdlField;
+
+typedef struct FacetIdlEnumValue {
+    char name[FACET_IDL_MAX_NAME];
+    int64_t value;
+} FacetIdlEnumValue;
+
+typedef struct FacetIdlTypeDecl {
+    FacetIdlTypeKind kind;
+    char name[FACET_IDL_MAX_NAME];
+    char underlying_type[FACET_IDL_MAX_NAME];
+    size_t field_count;
+    FacetIdlField fields[FACET_IDL_MAX_FIELDS];
+    size_t enum_value_count;
+    FacetIdlEnumValue enum_values[FACET_IDL_MAX_ENUM_VALUES];
+} FacetIdlTypeDecl;
+
 typedef struct FacetIdlInterface {
     char name[FACET_IDL_MAX_NAME];
     char uuid[64];
@@ -46,6 +74,8 @@ typedef struct FacetIdlInterface {
     FacetIdlMethod methods[FACET_IDL_MAX_METHODS];
     size_t property_count;
     FacetIdlProperty properties[FACET_IDL_MAX_METHODS];
+    size_t type_count;
+    FacetIdlTypeDecl types[FACET_IDL_MAX_TYPES];
 } FacetIdlInterface;
 
 typedef struct FacetIdlContext {
@@ -75,4 +105,20 @@ int facet_idl_add_property(
     const char *name,
     int readable,
     int writable
+);
+FacetIdlTypeDecl *facet_idl_add_type(
+    FacetIdlContext *context,
+    FacetIdlTypeKind kind,
+    const char *name,
+    const char *underlying_type
+);
+int facet_idl_add_field(
+    FacetIdlTypeDecl *type,
+    const char *field_type,
+    const char *name
+);
+int facet_idl_add_enum_value(
+    FacetIdlTypeDecl *type,
+    const char *name,
+    int64_t value
 );

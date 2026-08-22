@@ -1,0 +1,19 @@
+// Configuration used when creating or launching a domain.
+//
+// The UUID is intentionally generated for this provisional interface. Assign
+// an explicit UUID before persisting this interface as an ABI.
+interface IDomainConfig {
+    uuid auto;
+    requires IGenericObject;
+    requires ILoggingConfig;
+    requires IDomainConsoleConfig;
+
+    property u64 domain_id read write;
+    property string domain_name read write;
+    property u32 personality read write;
+    // Object-valued properties are capability attachments on the wire.
+    property handle logger_config read write;
+    property handle console_config read write;
+    property bool spawn_console_server read write;
+    property u32 domain_manager read write;
+}

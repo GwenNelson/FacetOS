@@ -40,6 +40,11 @@ and reads `IGenericObject.facet` automatically. Set
   declaration order.
 - `property <Type> <name> read;`, `write;`, or `read write;` declares a
   property. Generated accessors participate in declaration ordering.
+- `enum Name : <integer-type> { Value = number; ... };` declares an enum.
+- `struct Name { <Type> field; ... };` declares a packed-wire struct. C
+  alignment is local only; fields are encoded in declaration order.
+- `array<Type>` declares a dynamically sized array. Its generated C form is
+  `FacetArray_<Type>` with `data` and `count` fields.
 
 ## Methods
 
@@ -62,8 +67,17 @@ and reads `IGenericObject.facet` automatically. Set
   - `uuid`
   - `handle`
   - `string`
-  - `local_ptr`
+- `local_ptr`
 - Any other type name is treated as a raw generated C type name.
+
+Strings, arrays, and structs use the common canonical codec. Handles are
+transferred as capability attachments rather than encoded into the payload.
+The current seL4 transport has a three-cap IPC limit and uses temporary frame
+attachments for larger payloads.
+
+The seL4 control words carry the method/result in MR0, protocol version in
+MR1, flags in MR2, and payload size in MR3. Scalar arguments or results and
+inline payload data follow those control words.
 
 Object-returning methods use an ordinary `FacetResult` return value and an
 `out handle` parameter. For example:
@@ -86,3 +100,14 @@ method FacetResult getChild(out handle child);
 - Generated metadata includes the interface UUID, required-interface UUIDs,
   method IDs, parameter directions and parameter types.
 - Comments are line comments only; `/* ... */` is not supported.
+
+## Outstanding transport work
+
+- A future platform abstraction should represent an arbitrary shared memory
+  region with one transferable object/capability (or a pre-established shared
+  region), rather than consuming one frame capability per page.
+- The current seL4 implementation therefore rejects calls that require more
+  than three transferred capabilities, including payload pages plus object
+  handles.
+- Metadata registration is required before a generic proxy can be converted
+  into a typed proxy for an arbitrary IID.

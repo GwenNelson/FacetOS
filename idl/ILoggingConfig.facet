@@ -1,0 +1,23 @@
+// Logging sink configuration for a domain.
+//
+interface ILoggingConfig {
+    uuid auto;
+    requires IGenericObject;
+
+    enum LogLevel : i32 {
+        None = 0;
+        Fatal = 10;
+        Error = 20;
+        Warning = 30;
+        Info = 40;
+        Debug = 50;
+        Trace = 60;
+    };
+
+    struct Sink {
+        string name;
+        LogLevel level;
+    };
+
+    property array<Sink> sinks read write;
+}

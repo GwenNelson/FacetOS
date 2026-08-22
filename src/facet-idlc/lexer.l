@@ -21,6 +21,9 @@ NUMBERVAL  [0-9]+
 "requires"       return REQUIRES;
 "method"         return METHOD;
 "property"       return PROPERTY;
+"enum"           return ENUM;
+"struct"         return STRUCT;
+"array"          return ARRAY;
 "read"           return READ;
 "write"          return WRITE;
 "inout"          return INOUT;

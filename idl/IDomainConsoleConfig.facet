@@ -1,0 +1,13 @@
+// Console assignment configuration for a domain.
+//
+interface IDomainConsoleConfig {
+    uuid auto;
+    requires IGenericObject;
+
+    struct Assignment {
+        string seat;
+        string terminal;
+    };
+
+    property array<Assignment> assignments read write;
+}

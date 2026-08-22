@@ -1,0 +1,13 @@
+// Interface for allocating and freeing pages.
+interface IPageAllocator {
+    uuid auto;
+    requires IGenericObject;
+
+    method FacetResult get_page_size(out u64 page_size);
+    method FacetResult alloc(in u64 count, out local_ptr pages);
+
+    // The legacy base pointer is a local pointer input. The current IDL
+    // reserves local_ptr for out parameters, so it is carried as an address
+    // word until explicit borrowed-pointer input semantics are added.
+    method FacetResult free(in u64 count, in u64 base);
+}

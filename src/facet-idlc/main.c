@@ -12,6 +12,7 @@ extern void yylex_destroy(void);
 
 FacetIdlContext *facet_idl_parser_context;
 FacetIdlMethod *facet_idl_current_method;
+FacetIdlTypeDecl *facet_idl_current_type;
 
 static int validate(FacetIdlContext *context)
 {
@@ -78,6 +79,7 @@ static int parse_file(const char *path, FacetIdlContext *context)
     facet_idl_context_init(context);
     facet_idl_parser_context = context;
     facet_idl_current_method = NULL;
+    facet_idl_current_type = NULL;
     yyin = input;
     int result = yyparse();
     fclose(input);
@@ -158,7 +160,8 @@ int main(int argc, char **argv)
     }
     int parse_result = parse_file(argv[3], context);
     if (parse_result != 0) {
-        perror(argv[3]);
+        if (context->error[0] != '\0') fprintf(stderr, "facet-idlc: %s\n", context->error);
+        else perror(argv[3]);
         free(context);
         return 1;
     }

@@ -104,3 +104,46 @@ int facet_idl_add_property(
     }
     return 0;
 }
+
+FacetIdlTypeDecl *facet_idl_add_type(
+    FacetIdlContext *context,
+    FacetIdlTypeKind kind,
+    const char *name,
+    const char *underlying_type)
+{
+    if (context->interface.type_count >= FACET_IDL_MAX_TYPES) return NULL;
+    FacetIdlTypeDecl *type = &context->interface.types[
+        context->interface.type_count++];
+    memset(type, 0, sizeof(*type));
+    type->kind = kind;
+    copy_name(type->name, sizeof(type->name), name);
+    copy_name(type->underlying_type, sizeof(type->underlying_type),
+              underlying_type == NULL ? "i32" : underlying_type);
+    return type;
+}
+
+int facet_idl_add_field(
+    FacetIdlTypeDecl *type,
+    const char *field_type,
+    const char *name)
+{
+    if (type == NULL || type->field_count >= FACET_IDL_MAX_FIELDS) return -1;
+    FacetIdlField *field = &type->fields[type->field_count++];
+    copy_name(field->type, sizeof(field->type), field_type);
+    copy_name(field->name, sizeof(field->name), name);
+    return 0;
+}
+
+int facet_idl_add_enum_value(
+    FacetIdlTypeDecl *type,
+    const char *name,
+    int64_t value)
+{
+    if (type == NULL || type->enum_value_count >= FACET_IDL_MAX_ENUM_VALUES) {
+        return -1;
+    }
+    FacetIdlEnumValue *entry = &type->enum_values[type->enum_value_count++];
+    copy_name(entry->name, sizeof(entry->name), name);
+    entry->value = value;
+    return 0;
+}

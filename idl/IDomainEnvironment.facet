@@ -1,0 +1,21 @@
+// Environment object containing named interface entries for a domain.
+interface IDomainEnvironment {
+    uuid auto;
+    requires IGenericObject;
+
+    struct Entry {
+        string name;
+        uuid iid;
+        u64 handle;
+    };
+
+    property array<Entry> entries read write;
+
+    // The legacy handle typedef is a uint64_t value. It is represented as a
+    // scalar here until the interface uses FacetHandle explicitly.
+    method FacetResult assign(
+        in string name,
+        in uuid iid,
+        in u64 handle
+    );
+}
