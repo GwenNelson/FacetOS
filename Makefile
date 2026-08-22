@@ -207,7 +207,7 @@ patches:
 # Ordinary .c/.h edits are left to Ninja's own dependency graph.
 #
 
-configure: patches
+configure: patches facet-idlc
 	@mkdir -p $(SDK_BUILD)
 	@desired='FACETOS_DEBUG=$(FACETOS_CMAKE_DEBUG)'; \
 	need_configure=0; \
@@ -340,11 +340,11 @@ kernel: configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf
 
 
-dominit: configure
+dominit: facet-idlc libfacet-common configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) dominit
 
 
-dominit0: klibc configure
+dominit0: klibc facet-idlc libfacet-common configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) dominit0 dominit
 
 

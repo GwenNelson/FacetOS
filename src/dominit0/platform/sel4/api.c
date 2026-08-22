@@ -2,7 +2,9 @@
 #include <facetos/dominit0/klog.h>
 #include <facetos/dominit0/kmalloc.h>
 #include <facetos/dominit0/kpanic.h>
+#include <facetos/interfaces/IDebug.h>
 #include <facetos/interfaces/IPageAllocator.h>
+#include <facetos/libfacet/platform/sel4.h>
 
 #include <sel4/sel4.h>
 #include <sel4/bootinfo.h>
@@ -44,8 +46,7 @@ static sel4utils_alloc_data_t sel4_vspace_data;
 static IPageAllocator *page_allocator;
 static IPageAllocator page_alloc_instance;
 
-static vka_object_t debug_endpoint;
-static sel4utils_thread_t debug_server_thread;
+static FacetHandle debug_server_handle;
 static seL4_Word next_debug_badge = 1;
 static sel4utils_process_t dominit_process;
 
@@ -156,88 +157,60 @@ debug_putchar(char c)
     seL4_DebugPutChar(c);
 }
 
-static void
-debug_server(seL4_CPtr endpoint)
+static FacetResult
+debug_get_interface(void *self, uuid_t iid, FacetHandle *result)
 {
-    for (;;) {
-        seL4_Word badge = 0;
-        seL4_MessageInfo_t info = seL4_Recv(endpoint, &badge);
-
-        if (seL4_MessageInfo_get_length(info) >= 1) {
-            debug_putchar((char)seL4_GetMR(0));
-        }
+    (void)self;
+    if (memcmp(iid.bytes, IID_IDebug.bytes, sizeof(iid.bytes)) != 0 &&
+        memcmp(iid.bytes, IID_IGenericObject.bytes, sizeof(iid.bytes)) != 0) {
+        return FACET_NO_INTERFACE;
     }
+
+    /* IDebug is served by this endpoint already.  Returning the exported
+     * handle directly avoids allocating a second server-side cap for this
+     * same-object interface query.  The platform reply path treats this as a
+     * borrowed handle and does not release the export handle itself. */
+    *result = debug_server_handle;
+    return FACET_OK;
 }
 
-static void
-debug_server_entry(void *endpoint, void *unused, void *ipc_buffer)
+static FacetResult
+debug_putc(void *self, uint8_t c)
 {
-    (void)unused;
-    (void)ipc_buffer;
-    debug_server((seL4_CPtr)(uintptr_t)endpoint);
+    (void)self;
+    debug_putchar((char)c);
+    return FACET_OK;
 }
 
-static int
-setup_debug_server(void)
-{
-    int error = vka_alloc_endpoint(&sel4_vka, &debug_endpoint);
-    if (error != 0) {
-        return -1;
-    }
-
-    seL4_Word cspace_data = api_make_guard_skip_word(
-        seL4_WordBits - simple_get_cnode_size_bits(&sel4_simple));
-    sel4utils_thread_config_t config = thread_config_default(
-        &sel4_simple,
-        simple_get_cnode(&sel4_simple),
-        cspace_data,
-        seL4_CapNull,
-        seL4_MaxPrio);
-
-    error = sel4utils_configure_thread_config(&sel4_vka,
-                                              &sel4_vspace,
-                                              &sel4_vspace,
-                                              config,
-                                              &debug_server_thread);
-    if (error != 0) {
-        vka_free_object(&sel4_vka, &debug_endpoint);
-        return -1;
-    }
-
-    error = sel4utils_start_thread(&debug_server_thread,
-                                   debug_server_entry,
-                                   (void *)(uintptr_t)debug_endpoint.cptr,
-                                   NULL,
-                                   1);
-    if (error != 0) {
-        sel4utils_clean_up_thread(&sel4_vka, &sel4_vspace,
-                                  &debug_server_thread);
-        vka_free_object(&sel4_vka, &debug_endpoint);
-        return -1;
-    }
-
-    return 0;
-}
+static IDebug debug_object = {
+    .self = &debug_object,
+    .priv = NULL,
+    .getInterface = debug_get_interface,
+    .putc = debug_putc,
+};
 
 static seL4_CPtr
 mint_debug_endpoint(sel4utils_process_t *process)
 {
-    if (debug_endpoint.cptr == seL4_CapNull) {
+    seL4_CPtr debug_endpoint;
+    if (facet_sel4_handle_get_cap(debug_server_handle,
+                                  &debug_endpoint) != FACET_OK) {
         return seL4_CapNull;
     }
 
     cspacepath_t source;
-    vka_cspace_make_path(&sel4_vka, debug_endpoint.cptr, &source);
+    vka_cspace_make_path(&sel4_vka, debug_endpoint, &source);
 
     seL4_Word badge = next_debug_badge++;
     if (next_debug_badge == 0) {
         next_debug_badge = 1;
     }
 
-    /* The child may send, but cannot receive from the debug endpoint. */
-    seL4_CapRights_t send_only =
-        seL4_CapRights_new(false, false, false, true);
-    return sel4utils_mint_cap_to_process(process, source, send_only, badge);
+    /* The child may call and receive the corresponding reply, but cannot
+     * receive requests directly from the debug endpoint. */
+    seL4_CapRights_t call_only =
+        seL4_CapRights_new(true, true, false, true);
+    return sel4utils_mint_cap_to_process(process, source, call_only, badge);
 }
 
 static int
@@ -284,7 +257,7 @@ load_and_start_domain(sel4utils_process_t *process,
         }
     }
 
-    char *spawn_argv[argc + 1];
+    char *spawn_argv[argc + 4];
 
     if (sel4_allocman == NULL) {
         klog(LOG_ERROR,
@@ -336,20 +309,32 @@ load_and_start_domain(sel4utils_process_t *process,
         goto fail;
     }
 
-    char endpoint_string[1][WORD_STRING_SIZE];
-    char *endpoint_argv[1];
-    sel4utils_create_word_args(endpoint_string, endpoint_argv, 1,
-                               (seL4_Word)child_debug_endpoint);
+    char endpoint_string[4][WORD_STRING_SIZE];
+    char *endpoint_argv[4];
+    seL4_CPtr child_receive_slot = process->cspace_next_free;
+    seL4_Word child_words[4] = {
+        (seL4_Word)child_debug_endpoint,
+        (seL4_Word)SEL4UTILS_CNODE_SLOT,
+        (seL4_Word)child_receive_slot,
+        (seL4_Word)seL4_WordBits,
+    };
+    sel4utils_create_word_args(endpoint_string, endpoint_argv, 4,
+                               child_words[0], child_words[1],
+                               child_words[2], child_words[3]);
 
-    /* argv[1] is reserved for the child-visible debug endpoint CPtr. */
+    /* argv[1] is the debug endpoint. argv[2..4] describe the empty
+     * capability receive slot in the child's CSpace. */
     spawn_argv[0] = argv[0];
     spawn_argv[1] = endpoint_argv[0];
+    spawn_argv[2] = endpoint_argv[1];
+    spawn_argv[3] = endpoint_argv[2];
+    spawn_argv[4] = endpoint_argv[3];
     for (int i = 1; i < argc; i++) {
-        spawn_argv[i + 1] = argv[i];
+        spawn_argv[i + 4] = argv[i];
     }
 
     if (sel4utils_spawn_process_v(process, &sel4_vka, &sel4_vspace,
-                                  argc + 1, spawn_argv, 1) != 0) {
+                                  argc + 4, spawn_argv, 1) != 0) {
         klog(LOG_ERROR, "load_and_start_domain(): process start failed\n");
         goto fail;
     }
@@ -468,9 +453,18 @@ void platform_init(void) {
 
      kmalloc_init(page_allocator);
 
-     klog(LOG_DEBUG, "platform_init() - setting up debug endpoint\n");
-     if (setup_debug_server() != 0)
-         kpanic("Unable to set up debug endpoint server!");
+     klog(LOG_DEBUG, "platform_init() - setting up libfacet debug server\n");
+     FacetSel4PlatformConfig facet_config = {
+         .vka = &sel4_vka,
+         .vspace = &sel4_vspace,
+         .simple = &sel4_simple,
+     };
+     if (facet_sel4_platform_init(&facet_config) != FACET_OK)
+         kpanic("Unable to initialise libfacet seL4 platform!");
+
+     if (libfacet_export_interface(&debug_object, &IDebug_MetaData,
+                                   &debug_server_handle) != FACET_OK)
+         kpanic("Unable to export libfacet debug interface!");
 
      klog(LOG_DEBUG, "platform_init() - locating dominit module\n");
      boot_module_t dominit_module;

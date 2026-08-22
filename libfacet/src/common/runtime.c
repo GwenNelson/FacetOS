@@ -372,7 +372,9 @@ void libfacet_free_proxy_client(void *interface_object)
         return;
     }
 
+    FacetHandle handle = state->handle;
     state->magic = 0;
+    libfacet_handle_release(handle);
     free(state);
     free(interface_object);
 }

@@ -44,6 +44,18 @@ struct FacetSel4Export {
 static FacetSel4PlatformConfig platform_config;
 static int platform_ready;
 
+#ifdef DEBUG
+static void export_trace(const char *message)
+{
+    seL4_DebugPutString((char *)message);
+}
+#else
+static void export_trace(const char *message)
+{
+    (void)message;
+}
+#endif
+
 static size_t wire_word_count(size_t bytes)
 {
     if (bytes > SIZE_MAX - (sizeof(seL4_Word) - 1)) return SIZE_MAX;
@@ -68,6 +80,21 @@ static void bulk_cleanup(FacetSel4BulkState *bulk)
         vka_free_object(platform_config.vka, &bulk->frames[i]);
     }
     memset(bulk, 0, sizeof(*bulk));
+}
+
+static void release_reply_handles(FacetRpcMessage *reply)
+{
+    if (reply == NULL) return;
+    for (size_t i = 0; i < reply->attachment_count; i++) {
+        if (reply->attachments[i].kind == FACET_RPC_ATTACHMENT_HANDLE &&
+            reply->attachments[i].handle.platform != NULL) {
+            FacetSel4Handle *handle =
+                (FacetSel4Handle *)reply->attachments[i].handle.platform;
+            if (handle->owns_cap)
+                libfacet_platform_handle_release(reply->attachments[i].handle);
+            reply->attachments[i].handle.platform = NULL;
+        }
+    }
 }
 
 static FacetResult bulk_prepare(FacetRpcMessage *message,
@@ -164,7 +191,7 @@ static int alloc_receive_paths(cspacepath_t *paths, size_t count)
         if (allocated != 0 &&
             (paths[allocated].root != paths[0].root ||
              paths[allocated].capDepth != paths[0].capDepth ||
-             paths[allocated].capPtr != paths[0].capPtr + allocated)) {
+             paths[allocated].capPtr + allocated != paths[0].capPtr)) {
             vka_cspace_free_path(platform_config.vka, paths[allocated]);
             break;
         }
@@ -389,6 +416,7 @@ static void facet_sel4_server_entry(
         bulk_cleanup(&reply_bulk);
         free(request.payload);
         free(reply.payload);
+        release_reply_handles(&reply);
         for (size_t i = 0; i < request.attachment_count; i++) {
             free(request.attachments[i].handle.platform);
             cspacepath_t received_path = export_state->receive_paths[i];
@@ -649,8 +677,10 @@ FacetResult libfacet_platform_export(
     FacetPlatformDispatch dispatch,
     FacetHandle *out_handle)
 {
+    export_trace("\nlibfacet export: enter\n");
     if (!platform_ready || context == NULL || dispatch == NULL ||
         out_handle == NULL) {
+        export_trace("libfacet export: invalid arguments\n");
         return FACET_INVALID_ARGUMENT;
     }
 
@@ -665,21 +695,26 @@ FacetResult libfacet_platform_export(
     int error = vka_alloc_endpoint(platform_config.vka,
                                    &export_state->endpoint);
     if (error != 0) {
+        export_trace("libfacet export: endpoint allocation failed\n");
         free(export_state);
         free(handle);
         return FACET_ERROR;
     }
+    export_trace("libfacet export: endpoint allocated\n");
 
     if (alloc_receive_paths(export_state->receive_paths,
                             FACET_SEL4_MAX_ATTACHMENTS) != 0) {
+            export_trace("libfacet export: receive paths failed\n");
             vka_free_object(platform_config.vka, &export_state->endpoint);
             free(export_state);
             free(handle);
             return FACET_OUT_OF_MEMORY;
     }
     export_state->receive_path_count = FACET_SEL4_MAX_ATTACHMENTS;
+    export_trace("libfacet export: receive paths allocated\n");
 
-    seL4_Word cspace_data = 0;
+    seL4_Word cspace_data = api_make_guard_skip_word(
+        seL4_WordBits - simple_get_cnode_size_bits(platform_config.simple));
     sel4utils_thread_config_t thread_config = thread_config_default(
         platform_config.simple,
         simple_get_cnode(platform_config.simple),
@@ -690,6 +725,7 @@ FacetResult libfacet_platform_export(
         platform_config.vka, platform_config.vspace, platform_config.vspace,
         thread_config, &export_state->thread);
     if (error != 0) {
+        export_trace("libfacet export: thread configuration failed\n");
         free_receive_paths(export_state->receive_paths,
                            export_state->receive_path_count);
         vka_free_object(platform_config.vka, &export_state->endpoint);
@@ -697,6 +733,7 @@ FacetResult libfacet_platform_export(
         free(handle);
         return FACET_ERROR;
     }
+    export_trace("libfacet export: thread configured\n");
 
     export_state->context = context;
     export_state->dispatch = dispatch;
@@ -705,6 +742,7 @@ FacetResult libfacet_platform_export(
         facet_sel4_server_entry,
         export_state, NULL, 1);
     if (error != 0) {
+        export_trace("libfacet export: thread start failed\n");
         sel4utils_clean_up_thread(platform_config.vka,
                                   platform_config.vspace,
                                   &export_state->thread);
@@ -715,6 +753,7 @@ FacetResult libfacet_platform_export(
         free(handle);
         return FACET_ERROR;
     }
+    export_trace("libfacet export: thread started\n");
 
     handle->endpoint = export_state->endpoint.cptr;
     handle->export_state = export_state;

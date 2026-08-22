@@ -12,6 +12,7 @@
 void *kmalloc(size_t size);
 void  kfree(void* p);
 void *krealloc(void* p, size_t size);
+int   kmalloc_is_in_progress(void);
 
 // this function is called at startup before anything else
 void kmalloc_init_early();

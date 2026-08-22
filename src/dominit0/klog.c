@@ -20,6 +20,7 @@ static size_t klog_prod_buf_size = 0;
 
 static size_t klog_early_buf_used = 0;
 static bool klog_early_truncated = false;
+static unsigned char klog_in_progress = 0;
 
 static klog_store_fn klog_cur_store_fn;
 
@@ -91,6 +92,11 @@ static void klog_kpanic(char* msg) {
 static void klog_prod_store_fn(const char* data, size_t len) {
        size_t available = klog_prod_buf_size - klog_prod_buf_used;
        if (len > available) {
+	  /* The allocator emits debug logs while its lock is held.  Growing the
+	   * log buffer here would recursively enter kmalloc and deadlock.  The
+	   * platform sink still receives this message below. */
+	  if (kmalloc_is_in_progress())
+	     return;
 	  void* new_buf = krealloc(klog_prod_buf,klog_prod_buf_size + len + 1);
 	  if(new_buf==NULL) klog_kpanic("Could not expand klog buffer!"); // TODO - at some point make it use a ringbuffer instead
           klog_prod_buf = new_buf;
@@ -553,6 +559,11 @@ klog(enum log_level level, const char *fmt, ...)
 	if (fmt == NULL)
 		return;
 
+	/* Allocator activity can emit debug logs while a log is being formatted
+	 * or stored.  Drop nested messages instead of reacquiring this lock. */
+	if (__atomic_exchange_n(&klog_in_progress, 1, __ATOMIC_ACQUIRE))
+		return;
+
 	klog_lock_internal();
 
 	va_start(ap, fmt);
@@ -562,4 +573,5 @@ klog(enum log_level level, const char *fmt, ...)
 	klog_emit_flush(&ctx);
 
 	klog_unlock_internal();
+	__atomic_store_n(&klog_in_progress, 0, __ATOMIC_RELEASE);
 }

@@ -141,6 +141,42 @@ set_target_properties(facet_common PROPERTIES
         "${FACETOS_ROOT}/include"
 )
 
+set(FACET_GENERATED_INCLUDE
+    "${FACETOS_ROOT}/build/facetos/generated/include"
+)
+set(FACET_IDLC
+    "${FACETOS_ROOT}/build/facet-idlc/facet-idlc"
+)
+set(FACET_GENERATED_IGENERIC
+    "${FACET_GENERATED_INCLUDE}/facetos/interfaces/IGenericObject.h"
+)
+set(FACET_GENERATED_IDEBUG
+    "${FACET_GENERATED_INCLUDE}/facetos/interfaces/IDebug.h"
+)
+
+add_custom_command(
+    OUTPUT
+        "${FACET_GENERATED_IGENERIC}"
+        "${FACET_GENERATED_IDEBUG}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "${FACET_GENERATED_INCLUDE}/facetos/interfaces"
+    COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_IGENERIC}"
+        "${FACETOS_ROOT}/idl/IGenericObject.facet"
+    COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_IDEBUG}"
+        "${FACETOS_ROOT}/idl/IDebug.facet"
+    DEPENDS
+        "${FACET_IDLC}"
+        "${FACETOS_ROOT}/idl/IGenericObject.facet"
+        "${FACETOS_ROOT}/idl/IDebug.facet"
+    VERBATIM
+)
+
+add_custom_target(facet-idl-debug-generated
+    DEPENDS
+        "${FACET_GENERATED_IGENERIC}"
+        "${FACET_GENERATED_IDEBUG}"
+)
+
 
 #
 # FacetOS libfacet seL4 platform backend.
@@ -149,9 +185,24 @@ set_target_properties(facet_common PROPERTIES
 file(GLOB FACET_PLATFORM_SEL4_SRCS CONFIGURE_DEPENDS
     "${FACETOS_ROOT}/libfacet/src/platform/sel4/*.c"
 )
+list(REMOVE_ITEM FACET_PLATFORM_SEL4_SRCS
+    "${FACETOS_ROOT}/libfacet/src/platform/sel4/client.c"
+)
 
 add_library(facet-platform-sel4 STATIC
     ${FACET_PLATFORM_SEL4_SRCS}
+)
+
+add_library(facet-platform-sel4-client STATIC
+    "${FACETOS_ROOT}/libfacet/src/platform/sel4/client.c"
+)
+
+facetos_configure_target(facet-platform-sel4-client)
+
+target_link_libraries(facet-platform-sel4-client PRIVATE
+    sel4runtime
+    sel4
+    muslc
 )
 
 facetos_configure_target(facet-platform-sel4)
@@ -182,12 +233,20 @@ add_executable(dominit
 )
 
 facetos_configure_target(dominit)
+target_include_directories(dominit BEFORE PRIVATE
+    "${FACET_GENERATED_INCLUDE}"
+)
+add_dependencies(dominit facet-idl-debug-generated)
 
 # `sel4` is CMake's libsel4 target. sel4runtime supplies process startup,
-# TLS, and the IPC-buffer pointer; dominit deliberately has no libc.
+# TLS, and the IPC-buffer pointer; dominit supplies its own bump allocator,
+# while muslc contributes the freestanding standard headers/runtime support.
 target_link_libraries(dominit PRIVATE
+    facet_common
+    facet-platform-sel4-client
     sel4runtime
     sel4
+    muslc
 )
 
 
@@ -211,6 +270,10 @@ add_executable(dominit0
 )
 
 facetos_configure_target(dominit0)
+target_include_directories(dominit0 BEFORE PRIVATE
+    "${FACET_GENERATED_INCLUDE}"
+)
+add_dependencies(dominit0 facet-idl-debug-generated)
 
 target_compile_definitions(dominit0 PRIVATE
     FACET_PLATFORM_SEL4=1
@@ -224,6 +287,8 @@ target_compile_definitions(dominit0 PRIVATE
 
 target_link_libraries(dominit0 PRIVATE
     facet_klibc
+    facet-platform-sel4
+    facet_common
 
     sel4runtime
     sel4

@@ -1,0 +1,12 @@
+// Minimal debug-output interface used by dominit during bootstrap.
+//
+// The UUID is generated once into the shared build header.  Both sides must
+// use that same generated header; it is not regenerated independently per
+// process.
+interface IDebug {
+    uuid auto;
+    requires IGenericObject;
+
+    // Write one character to the platform debug console.
+    method FacetResult putc(in u8 c);
+}

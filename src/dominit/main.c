@@ -1,14 +1,16 @@
-#include <sel4/sel4.h>
+#include <facetos/interfaces/IDebug.h>
+#include <facetos/interfaces/IGenericObject.h>
+#include <facetos/libfacet/platform/sel4/client.h>
 
-static seL4_CPtr debug_ep;
+#include <stdint.h>
 
 static int
-parse_word(const char *text, seL4_Word *result)
+parse_word(const char *text, uint64_t *result)
 {
     if (text == 0 || result == 0 || *text == '\0')
         return -1;
 
-    seL4_Word base = 10;
+    uint64_t base = 10;
     if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
         base = 16;
         text += 2;
@@ -16,7 +18,7 @@ parse_word(const char *text, seL4_Word *result)
             return -1;
     }
 
-    seL4_Word value = 0;
+    uint64_t value = 0;
     while (*text != '\0') {
         unsigned int digit;
         if (*text >= '0' && *text <= '9') {
@@ -29,11 +31,8 @@ parse_word(const char *text, seL4_Word *result)
             return -1;
         }
 
-        if (digit >= base ||
-            value > (~(seL4_Word)0 - digit) / base) {
+        if (digit >= base || value > (UINT64_MAX - digit) / base)
             return -1;
-        }
-
         value = value * base + digit;
         text++;
     }
@@ -42,35 +41,56 @@ parse_word(const char *text, seL4_Word *result)
     return 0;
 }
 
-static void debug_putc(char c)
+static void debug_putc(IDebug *debug, char c)
 {
-    seL4_SetMR(0, (seL4_Word)(unsigned char)c);
-
-    seL4_MessageInfo_t info =
-        seL4_MessageInfo_new(0, 0, 0, 1);
-
-    seL4_Send(debug_ep, info);
+    (void)debug->putc(debug->self, (uint8_t)(unsigned char)c);
 }
 
-static void debug_puts(const char *s)
+static void debug_puts(IDebug *debug, const char *s)
 {
     while (*s)
-        debug_putc(*s++);
+        debug_putc(debug, *s++);
 }
 
 int main(int argc, char **argv)
 {
-    if (argc < 2)
+    if (argc < 5)
         return 1;
 
-    seL4_Word endpoint;
-    if (parse_word(argv[1], &endpoint) != 0 || endpoint == seL4_CapNull)
+    uint64_t endpoint;
+    uint64_t receive_cnode;
+    uint64_t receive_slot;
+    uint64_t receive_depth;
+    if (parse_word(argv[1], &endpoint) != 0 || endpoint == 0 ||
+        parse_word(argv[2], &receive_cnode) != 0 || receive_cnode == 0 ||
+        parse_word(argv[3], &receive_slot) != 0 || receive_slot == 0 ||
+        parse_word(argv[4], &receive_depth) != 0 || receive_depth == 0)
         return 1;
 
-    debug_ep = (seL4_CPtr)endpoint;
+    if (facet_sel4_client_init(receive_cnode, receive_slot,
+                               receive_depth) != FACET_OK)
+        return 1;
 
-    debug_puts("OH FUCK I AM A SEPARATE PROCESS\n");
+    if (libfacet_register_generic_metadata(&IGenericObject_MetaData) != FACET_OK ||
+        libfacet_register_interface_metadata(&IDebug_MetaData) != FACET_OK)
+        return 1;
+
+    IGenericObject *root = libfacet_proxy_from(endpoint);
+    if (root == NULL)
+        return 1;
+
+    IDebug *debug = (IDebug *)libfacet_proxy_client_get_interface(
+        root, IID_IDebug);
+    if (debug == NULL) {
+        libfacet_free_proxy_client(root);
+        return 1;
+    }
+
+    debug_puts(debug, "OH FUCK I AM A SEPARATE PROCESS\n");
+
+    libfacet_free_proxy_client(debug);
+    libfacet_free_proxy_client(root);
 
     for (;;)
-        seL4_Yield();
+        (void)facet_sel4_client_yield();
 }

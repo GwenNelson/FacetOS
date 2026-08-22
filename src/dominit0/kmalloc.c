@@ -14,6 +14,7 @@ static unsigned char bootstrap_heap[KMALLOC_BOOTSTRAP_HEAP_SIZE]
 	__attribute__((aligned(KMALLOC_ALIGNMENT)));
 static klock_t kmalloc_lock          = KLOCK_INITIALIZER;
 static klock_t kmalloc_liballoc_lock = KLOCK_INITIALIZER;
+static unsigned char kmalloc_in_progress;
 
 static size_t bootstrap_heap_used;
 
@@ -124,6 +125,7 @@ static void kmalloc_reclaim(void) {
 
 void kmalloc_init(IPageAllocator *allocator) {
      klock_lock(&kmalloc_lock);
+     __atomic_store_n(&kmalloc_in_progress, 1, __ATOMIC_RELEASE);
      klog(LOG_DEBUG,"Early bootstrap heap switching to IPageAllocator with %zukb free!\n", ((KMALLOC_BOOTSTRAP_HEAP_SIZE-bootstrap_heap_used)/1024));
      kmalloc_reclaim();
      kmalloc_allocator = allocator;
@@ -131,12 +133,15 @@ void kmalloc_init(IPageAllocator *allocator) {
      kfree_impl        = &liballoc_free_impl;
      krealloc_impl     = &liballoc_realloc_impl;
      klock_init(&kmalloc_liballoc_lock);
+     __atomic_store_n(&kmalloc_in_progress, 0, __ATOMIC_RELEASE);
      klock_unlock(&kmalloc_lock);
 }
 
 void *kmalloc(size_t size) {
       klock_lock(&kmalloc_lock);
+      __atomic_store_n(&kmalloc_in_progress, 1, __ATOMIC_RELEASE);
       void* retval = kmalloc_impl(size);
+      __atomic_store_n(&kmalloc_in_progress, 0, __ATOMIC_RELEASE);
       klock_unlock(&kmalloc_lock);
       if(retval==NULL) {
 	 kpanic("RAN OUT OF KERNEL MEMORY!\n");
@@ -146,15 +151,23 @@ void *kmalloc(size_t size) {
 
 void kfree(void* ptr) {
      klock_lock(&kmalloc_lock);
+     __atomic_store_n(&kmalloc_in_progress, 1, __ATOMIC_RELEASE);
      kfree_impl(ptr);
+     __atomic_store_n(&kmalloc_in_progress, 0, __ATOMIC_RELEASE);
      klock_unlock(&kmalloc_lock);
 }
 
 void* krealloc(void* p, size_t size) {
       klock_lock(&kmalloc_lock);
+      __atomic_store_n(&kmalloc_in_progress, 1, __ATOMIC_RELEASE);
       void* retval=krealloc_impl(p,size);
+      __atomic_store_n(&kmalloc_in_progress, 0, __ATOMIC_RELEASE);
       klock_unlock(&kmalloc_lock);
       return retval;
+}
+
+int kmalloc_is_in_progress(void) {
+      return __atomic_load_n(&kmalloc_in_progress, __ATOMIC_ACQUIRE) != 0;
 }
 
 /*
