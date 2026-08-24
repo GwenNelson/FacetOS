@@ -57,6 +57,7 @@ FACET_GENERATED_INCLUDE := $(ROOT)/build/facetos/generated/include
 FACET_GENERATED_INTERFACE_DIR := $(FACET_GENERATED_INCLUDE)/facetos/interfaces
 FACET_GENERATED_IGENERIC := $(FACET_GENERATED_INTERFACE_DIR)/IGenericObject.h
 FACET_GENERATED_ILOGGING := $(FACET_GENERATED_INTERFACE_DIR)/ILoggingConfig.h
+FACET_GENERATED_ILOGGING_SINK := $(FACET_GENERATED_INTERFACE_DIR)/ILoggingSink.h
 FACET_GENERATED_ICONSOLE := $(FACET_GENERATED_INTERFACE_DIR)/IDomainConsoleConfig.h
 FACET_GENERATED_IDOMAIN_CONFIG := $(FACET_GENERATED_INTERFACE_DIR)/IDomainConfig.h
 
@@ -160,7 +161,9 @@ endif
 	libfacet \
 	facet-config \
 	test \
-	test-config
+	test-config \
+	test-klog \
+	test-logging-setup
 
 
 all: facetos
@@ -320,6 +323,8 @@ facet-config: $(FACET_CONFIG)
 
 FACET_CONFIG_TEST := $(FACET_CONFIG_BUILD)/config-test
 FACET_CONFIG_OBJECTS_TEST := $(FACET_CONFIG_BUILD)/config-objects-test
+FACET_KLOG_TEST := $(FACET_CONFIG_BUILD)/klog-test
+FACET_LOGGING_SETUP_TEST := $(FACET_CONFIG_BUILD)/logging-setup-test
 
 $(FACET_GENERATED_IGENERIC): $(FACET_IDLC) $(ROOT)/idl/IGenericObject.facet
 	@mkdir -p $(FACET_GENERATED_INTERFACE_DIR)
@@ -328,6 +333,10 @@ $(FACET_GENERATED_IGENERIC): $(FACET_IDLC) $(ROOT)/idl/IGenericObject.facet
 $(FACET_GENERATED_ILOGGING): $(FACET_IDLC) $(ROOT)/idl/ILoggingConfig.facet \
 		$(FACET_GENERATED_IGENERIC)
 	$(FACET_IDLC) -o $@ $(ROOT)/idl/ILoggingConfig.facet
+
+$(FACET_GENERATED_ILOGGING_SINK): $(FACET_IDLC) \
+		$(ROOT)/idl/ILoggingSink.facet $(FACET_GENERATED_IGENERIC)
+	$(FACET_IDLC) -o $@ $(ROOT)/idl/ILoggingSink.facet
 
 $(FACET_GENERATED_ICONSOLE): $(FACET_IDLC) \
 		$(ROOT)/idl/IDomainConsoleConfig.facet $(FACET_GENERATED_IGENERIC)
@@ -360,7 +369,38 @@ test-config: $(FACET_CONFIG_TEST) $(FACET_CONFIG_OBJECTS_TEST)
 	$(FACET_CONFIG_TEST)
 	$(FACET_CONFIG_OBJECTS_TEST)
 
-test: test-config
+$(FACET_KLOG_TEST): $(ROOT)/tests/klog_test.c \
+		$(ROOT)/src/dominit0/klog.c $(ROOT)/src/dominit0/klock.c \
+		$(ROOT)/include/facetos/dominit0/klog.h \
+		$(FACET_GENERATED_ILOGGING) $(FACET_GENERATED_ILOGGING_SINK)
+	@mkdir -p $(dir $@)
+	$(CC) -std=gnu11 -O2 -ffunction-sections -fdata-sections \
+		-Wall -Wextra -Werror \
+		-I$(FACET_GENERATED_INCLUDE) -I$(ROOT)/include \
+		$(ROOT)/src/dominit0/klog.c $(ROOT)/src/dominit0/klock.c \
+		$(ROOT)/tests/klog_test.c -Wl,--gc-sections -o $@
+
+test-klog: $(FACET_KLOG_TEST)
+	$(FACET_KLOG_TEST)
+
+$(FACET_LOGGING_SETUP_TEST): $(ROOT)/tests/logging_setup_test.c \
+		$(ROOT)/src/dominit0/logging.c $(ROOT)/src/dominit0/klog.c \
+		$(ROOT)/src/dominit0/klock.c \
+		$(ROOT)/include/facetos/dominit0/logging.h \
+		$(FACET_GENERATED_IDOMAIN_CONFIG) $(FACET_GENERATED_ILOGGING_SINK)
+	@mkdir -p $(dir $@)
+	$(CC) -std=gnu11 -O2 -ffunction-sections -fdata-sections \
+		-Wall -Wextra -Werror \
+		-I$(FACET_GENERATED_INCLUDE) -I$(ROOT)/include \
+		$(ROOT)/src/dominit0/logging.c $(ROOT)/src/dominit0/klog.c \
+		$(ROOT)/src/dominit0/klock.c $(ROOT)/tests/logging_setup_test.c \
+		-Wl,--gc-sections -o $@
+
+test-logging-setup: $(FACET_LOGGING_SETUP_TEST)
+	$(FACET_LOGGING_SETUP_TEST) optional
+	$(FACET_LOGGING_SETUP_TEST) required
+
+test: test-config test-klog test-logging-setup
 
 
 #

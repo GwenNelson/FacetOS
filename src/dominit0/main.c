@@ -1,6 +1,7 @@
 #include <facetos/config.h>
 #include <facetos/dominit0/config.h>
 #include <facetos/dominit0/klog.h>
+#include <facetos/dominit0/logging.h>
 #include <facetos/dominit0/kmalloc.h>
 #include <facetos/dominit0/kpanic.h>
 #include <facetos/dominit0/platform/api.h>
@@ -60,7 +61,7 @@ static void log_prepared_configuration(const Dominit0SystemConfig *system,
 
 void main(int argc, char **argv, char **envp) {
      platform_init_early();
-     klog_init_early();
+     klog_init_early(platform_get_early_logging_sink());
      klog(LOG_INFO,"Starting FacetOS...\n");
 
      #ifdef DEBUG
@@ -72,7 +73,6 @@ void main(int argc, char **argv, char **envp) {
         test_kmalloc();
      #endif
      platform_init();
-     klog_init_postboot();
 
      PlatformConfigSource source;
      PlatformConfigSourceStatus source_status =
@@ -83,9 +83,6 @@ void main(int argc, char **argv, char **envp) {
           kpanic("Invalid multiboot configuration module information!");
 
      bool fallback = source_status == PLATFORM_CONFIG_SOURCE_ABSENT;
-     if (fallback)
-          klog(LOG_WARN,
-               "No facet.toml module found; using built-in development defaults\n");
 
      FacetConfigDiagnostic diagnostic;
      if (dominit0_config_initialize(source.data, source.size,
@@ -93,6 +90,13 @@ void main(int argc, char **argv, char **envp) {
           log_config_diagnostic(&diagnostic);
           kpanic("Unable to prepare FacetOS configuration!");
      }
+
+     if (dominit0_logging_initialize(dominit0_config_get_system()) != 0)
+          kpanic("Unable to initialise configured logging!");
+
+     if (fallback)
+          klog(LOG_WARN,
+               "No facet.toml module found; using built-in development defaults\n");
 
      log_prepared_configuration(dominit0_config_get_system(), fallback);
 

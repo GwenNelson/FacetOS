@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+typedef struct ILoggingSink ILoggingSink;
+
 #ifdef FACET_PLATFORM_SEL4
 #include <sel4utils/process.h>
 #endif
@@ -11,6 +13,11 @@
 void platform_init_early(void); // anything the platform needs IMMEDIATELY, usually a NOP
 
 void platform_init(void);       // sets up everything for the platform before other subsystems
+
+/* The emergency sink is available before platform_init() and must not
+ * allocate or use RPC. Configured sink lookup is available after it. */
+ILoggingSink *platform_get_early_logging_sink(void);
+int platform_get_logging_sink(const char *type, ILoggingSink **result);
 
 typedef struct PlatformConfigSource {
     const uint8_t *data;

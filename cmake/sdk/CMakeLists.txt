@@ -169,6 +169,9 @@ set(FACET_GENERATED_IDEBUG
 set(FACET_GENERATED_ILOGGING_CONFIG
     "${FACET_GENERATED_INCLUDE}/facetos/interfaces/ILoggingConfig.h"
 )
+set(FACET_GENERATED_ILOGGING_SINK
+    "${FACET_GENERATED_INCLUDE}/facetos/interfaces/ILoggingSink.h"
+)
 set(FACET_GENERATED_IDOMAIN_CONSOLE_CONFIG
     "${FACET_GENERATED_INCLUDE}/facetos/interfaces/IDomainConsoleConfig.h"
 )
@@ -181,6 +184,7 @@ add_custom_command(
         "${FACET_GENERATED_IGENERIC}"
         "${FACET_GENERATED_IDEBUG}"
         "${FACET_GENERATED_ILOGGING_CONFIG}"
+        "${FACET_GENERATED_ILOGGING_SINK}"
         "${FACET_GENERATED_IDOMAIN_CONSOLE_CONFIG}"
         "${FACET_GENERATED_IDOMAIN_CONFIG}"
     COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -191,6 +195,8 @@ add_custom_command(
         "${FACETOS_ROOT}/idl/IDebug.facet"
     COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_ILOGGING_CONFIG}"
         "${FACETOS_ROOT}/idl/ILoggingConfig.facet"
+    COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_ILOGGING_SINK}"
+        "${FACETOS_ROOT}/idl/ILoggingSink.facet"
     COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_IDOMAIN_CONSOLE_CONFIG}"
         "${FACETOS_ROOT}/idl/IDomainConsoleConfig.facet"
     COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_IDOMAIN_CONFIG}"
@@ -200,6 +206,7 @@ add_custom_command(
         "${FACETOS_ROOT}/idl/IGenericObject.facet"
         "${FACETOS_ROOT}/idl/IDebug.facet"
         "${FACETOS_ROOT}/idl/ILoggingConfig.facet"
+        "${FACETOS_ROOT}/idl/ILoggingSink.facet"
         "${FACETOS_ROOT}/idl/IDomainConsoleConfig.facet"
         "${FACETOS_ROOT}/idl/IDomainConfig.facet"
     VERBATIM
@@ -214,6 +221,7 @@ add_custom_target(facet-idl-debug-generated
 add_custom_target(facet-idl-config-generated
     DEPENDS
         "${FACET_GENERATED_ILOGGING_CONFIG}"
+        "${FACET_GENERATED_ILOGGING_SINK}"
         "${FACET_GENERATED_IDOMAIN_CONSOLE_CONFIG}"
         "${FACET_GENERATED_IDOMAIN_CONFIG}"
 )

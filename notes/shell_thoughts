@@ -6,4 +6,61 @@ How IAuth works internally isn't nailed down yet - for now it'll allow any usern
 
 The user "root", password "facet" is obviously the typical root user - at least for now by default
 
-IAuth can also provide an optional IAuthUsernamePassword, and will by default
+IAuthService objects provide something like:
+	authenticate(username, credential_type, credential_subtype, credential_blob, IPrincipal principal, IHumanUser user)
+		principal is an out field identifying the principal via an IPrincipal object
+		user is an out field for the IHumanUser
+
+ISecurityManager is created by dominit, it's passed only to the login process
+	It has a method
+		CreateSession(IPrincipal p)
+
+	That returns an ISession which is read-only, and gets passed to the shell
+	ISession objects contain a read-only reference to the IPrincipal and have a method for spawning a new process
+
+For a standard password login, credential_blob is just a string containing the password or password hash
+
+credential_type is just an enum for now - and for now it contains only "Password"
+
+credential_subtype is also an enum, but the intention is to have one enum for each type of credential blob
+
+for now, just one for passwords, with different hash/PBKDF functions
+
+IPrincipal has only getID() and getName() - it's intended for identifying ANY process, entity or agent that interacts with the system
+
+System resources with permissions or ACLs etc name principals by ID
+
+IPronouns
+	Just a simple metadata object with get/set accessors for these fields, each field can be singular or plural
+	Subject
+	Object
+	PossessiveDeterminer
+	PossessivePronoun
+	Reflexive
+	ShortForm - this one does NOT take the agreement param
+
+	enum IPronouns_GrammaticalNumber {
+		PRONOUN_AGREEMENT_SINGULAR=1,
+		PRONOUN_AGREEMENT_PLURAL=2,
+	}
+
+	example:
+		IPronouns* gwen = ...
+		gwen->SetSubject(PRONOUN_AGREEMENT_SINGULAR,"her");
+		gwen->SetShortForm("she/her/hers");
+
+
+IHumanUser has just metadata about an actual person as a user on the system
+Some metadata is part of the actual interface definition, some is an arbitrary key/value store to allow extension without rewriting the ABI
+Metadata part of the interface can be queried or updated via get/set accessors
+	FullName     - make this a string of sane length
+	Pronouns     - FacetOS is woke, oh no - make this an IPronouns
+	HomePath     - make this a string for now
+	DefaultShell - again, make this a string for now
+	
+
+
+
+NOTE FOR CODEX:
+	Please create appropriate IDL files for IAuth, IPrincipal, IHumanUser, IPronouns etc
+	Look at other IDL files first for examples, follow the same conventions

@@ -1,7 +1,9 @@
 #pragma once
 
-#include <stdbool.h>
 #include <stddef.h>
+
+#include <facetos/interfaces/ILoggingConfig.h>
+#include <facetos/interfaces/ILoggingSink.h>
 
 #define KLOG_MAX_SINKS 8
 // we only want a small buffer, 2KB is plenty before the dynamic heap is online and we can use that
@@ -14,22 +16,23 @@ enum log_level {
 	LOG_ERROR
 };
 
-typedef void (*klog_sink_fn)(const char *data, size_t len);
+typedef struct KlogSinkBinding {
+    FacetString name;
+    ILoggingSink *sink;
+} KlogSinkBinding;
 
-typedef void (*klog_store_fn)(const char *data, size_t len);
+/* The emergency sink must be static, allocation-free, and directly callable. */
+void klog_init_early(ILoggingSink *emergency_sink);
 
-struct klog_sink {
-    klog_sink_fn write;
-    bool enabled;
-};
-
-void klog_init_early(void);    // setup the early boot stuff
-void klog_init_postboot(void); // setup the "system ready" stuff - after boot, so we don't spam everything all over the console etc
+/* Consumes immutable domain policy, copies the early retained bytes into the
+ * dynamic buffer, and atomically switches normal routing to configured sinks. */
+int klog_init_postboot(ILoggingConfig *config,
+                       const KlogSinkBinding *bindings,
+                       size_t binding_count);
 
 // public locking functions
 void klog_lock(void);
 void klog_unlock(void);
 
-int klog_add_sink(klog_sink_fn write); // tries to add a new sink, returns 0 on success, -1 on failure
 void klog(enum log_level level, const char* fmt, ...); // main klog() function, called by other code to log stuff
 void klog_dump_debug(void); // dump debug data

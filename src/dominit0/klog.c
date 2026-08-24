@@ -11,7 +11,16 @@
 static klock_t klog_public_lock   = KLOCK_INITIALIZER;
 static klock_t klog_internal_lock = KLOCK_INITIALIZER;
 
-static struct klog_sink klog_sinks[KLOG_MAX_SINKS];
+typedef void (*klog_store_fn)(const char *data, size_t len);
+
+typedef struct KlogRoute {
+	ILoggingSink *sink;
+	LogLevel maximum_level;
+	bool enabled;
+} KlogRoute;
+
+static KlogRoute klog_routes[KLOG_MAX_SINKS];
+static ILoggingSink *klog_emergency_sink;
 static char klog_early_buf[KLOG_EARLY_BUFSIZE];
 
 static char  *klog_prod_buf = NULL;
@@ -25,13 +34,12 @@ static unsigned char klog_in_progress = 0;
 static klog_store_fn klog_cur_store_fn;
 
 static void klog_early_store_fn(const char *data, size_t len);
-static void klog_dummy_sink(const char *data, size_t len);
-static void klog_sink_platform_debug(const char *data, size_t len);
 
 
 struct klog_emit_ctx {
 	char buf[128];
 	size_t used;
+	LogLevel level;
 };
 
 
@@ -51,38 +59,53 @@ static inline void klog_lock_internal(void);
 static inline void klog_unlock_internal(void);
 
 
-void klog_init_early(void)
+static FacetResult
+klog_emit_to_sink(ILoggingSink *sink, const char *data, size_t len)
+{
+	if (sink == NULL || sink->emit == NULL)
+		return FACET_INVALID_ARGUMENT;
+	FacetString message = { .data = data, .length = len };
+	return sink->emit(sink->self, &message);
+}
+
+
+static void
+klog_emergency_write(const char *data, size_t len)
+{
+	if (klog_emergency_sink != NULL)
+		(void)klog_emit_to_sink(klog_emergency_sink, data, len);
+}
+
+
+void klog_init_early(ILoggingSink *emergency_sink)
 {
 	/* Set up our locks. */
 	klock_init(&klog_public_lock);
 	klock_init(&klog_internal_lock);
 
-	/* Set up our sinks. */
-	for (size_t i = 0; i < KLOG_MAX_SINKS; i++) {
-		klog_sinks[i].write   = &klog_dummy_sink;
-		klog_sinks[i].enabled = false;
+	memset(klog_routes, 0, sizeof(klog_routes));
+	klog_emergency_sink = emergency_sink;
+	if (emergency_sink != NULL && emergency_sink->emit != NULL) {
+		klog_routes[0].sink = emergency_sink;
+		klog_routes[0].maximum_level = LogLevel_Trace;
+		klog_routes[0].enabled = true;
 	}
 
-	/* Add the first sink. */
-	klog_add_sink(&klog_sink_platform_debug);
-
 	/* Configure the initial log store. */
+	klog_early_buf_used = 0;
+	klog_early_truncated = false;
+	klog_prod_buf = NULL;
+	klog_prod_buf_used = 0;
+	klog_prod_buf_size = 0;
+	klog_in_progress = 0;
 	klog_cur_store_fn = &klog_early_store_fn;
 }
 
-static void klog_kpanic_msg(char* msg) {
-	// this is a stupid hack to make kpanic() work deep inside the guts of klog
-	for (size_t i = 0; i < KLOG_MAX_SINKS; i++) {
-		if (klog_sinks[i].enabled) {
-			for (size_t c_i = 0; msg[c_i] != '\0'; i++) {
-			    char c = msg[c_i];
-			    klog_sinks[i].write(&c,1);
-			}
-		}
-	}
+static void klog_kpanic_msg(const char *msg) {
+	klog_emergency_write(msg, strlen(msg));
 }
 
-static void klog_kpanic(char* msg) {
+static void klog_kpanic(const char *msg) {
 	klog_kpanic_msg("\n\n\nKERNEL PANIC: ");
 	klog_kpanic_msg(msg);
 	klog_kpanic_msg("\n\n\n");
@@ -94,39 +117,103 @@ static void klog_prod_store_fn(const char* data, size_t len) {
        if (len > available) {
 	  /* The allocator emits debug logs while its lock is held.  Growing the
 	   * log buffer here would recursively enter kmalloc and deadlock.  The
-	   * platform sink still receives this message below. */
+	   * configured sinks still receive this message below. */
 	  if (kmalloc_is_in_progress())
 	     return;
-	  void* new_buf = krealloc(klog_prod_buf,klog_prod_buf_size + len + 1);
+	  if (len > SIZE_MAX - klog_prod_buf_used - 1)
+	     klog_kpanic("klog buffer size overflow!");
+	  size_t new_size = klog_prod_buf_used + len + 1;
+	  void* new_buf = krealloc(klog_prod_buf, new_size);
 	  if(new_buf==NULL) klog_kpanic("Could not expand klog buffer!"); // TODO - at some point make it use a ringbuffer instead
           klog_prod_buf = new_buf;
+	  klog_prod_buf_size = new_size;
        }
-       klog_prod_buf_size = klog_prod_buf_size + len + 1;
 
 	for (size_t i = 0; i < len; i++)
 		klog_prod_buf[klog_prod_buf_used + i] = data[i];
 
 	klog_prod_buf_used += len;
+	klog_prod_buf[klog_prod_buf_used] = '\0';
 }
 
 
+static bool
+klog_string_equal(FacetString left, FacetString right)
+{
+	if ((left.length != 0 && left.data == NULL) ||
+	    (right.length != 0 && right.data == NULL))
+		return false;
+	return left.length == right.length &&
+	       (left.length == 0 || memcmp(left.data, right.data, left.length) == 0);
+}
 
-void klog_init_postboot(void) {
-	
-	klog_prod_buf = (char*)kmalloc(klog_early_buf_used+1); // we want a tiny bit of space already available, and avoid weird off by one errors crashing it
-	if(klog_prod_buf == NULL) kpanic("Could not allocate klog_prod_buf!");
-	klog_prod_buf_used = klog_early_buf_used;
-	klog_prod_buf_size = klog_early_buf_used + 1;
+
+static bool
+klog_valid_maximum_level(LogLevel level)
+{
+	return level == LogLevel_None || level == LogLevel_Fatal ||
+	       level == LogLevel_Error || level == LogLevel_Warning ||
+	       level == LogLevel_Info || level == LogLevel_Debug ||
+	       level == LogLevel_Trace;
+}
+
+
+int klog_init_postboot(ILoggingConfig *config,
+			const KlogSinkBinding *bindings,
+			size_t binding_count)
+{
+	if (config == NULL || config->getsinks == NULL ||
+	    (bindings == NULL && binding_count != 0))
+		return -1;
+
+	FacetArray_Sink configured = {0};
+	if (config->getsinks(config->self, &configured) != FACET_OK ||
+	    configured.count > KLOG_MAX_SINKS ||
+	    (configured.data == NULL && configured.count != 0))
+		return -1;
+
+	KlogRoute routes[KLOG_MAX_SINKS] = {0};
+	for (size_t i = 0; i < configured.count; i++) {
+		if (!klog_valid_maximum_level(configured.data[i].level))
+			return -1;
+		size_t match = binding_count;
+		for (size_t j = 0; j < binding_count; j++) {
+			if (!klog_string_equal(configured.data[i].name,
+			                       bindings[j].name))
+				continue;
+			if (match != binding_count)
+				return -1;
+			match = j;
+		}
+		if (match == binding_count)
+			return -1;
+		if (bindings[match].sink == NULL ||
+		    configured.data[i].level == LogLevel_None)
+			continue;
+		routes[i].sink = bindings[match].sink;
+		routes[i].maximum_level = configured.data[i].level;
+		routes[i].enabled = true;
+	}
+
+	char *new_buffer = (char*)kmalloc(klog_early_buf_used + 1);
+	if (new_buffer == NULL)
+		return -1;
 
 	klog_lock();
-	klock_lock(&klog_internal_lock);	
-	memcpy(klog_prod_buf,klog_early_buf,klog_early_buf_used);
+	klock_lock(&klog_internal_lock);
+	memcpy(new_buffer, klog_early_buf, klog_early_buf_used);
+	new_buffer[klog_early_buf_used] = '\0';
+	klog_prod_buf = new_buffer;
+	klog_prod_buf_used = klog_early_buf_used;
+	klog_prod_buf_size = klog_early_buf_used + 1;
+	memcpy(klog_routes, routes, sizeof(klog_routes));
 	klog_cur_store_fn = klog_prod_store_fn;
 
 	klock_unlock(&klog_internal_lock);
 	if(klog_early_truncated) klog(LOG_INFO,"...\n(early logbuf truncated)\n");
 	klog(LOG_INFO,"Switched to dynamic log buffer!\n");
 	klog_unlock();
+	return 0;
 }
 
 static void
@@ -145,14 +232,6 @@ klog_early_store_fn(const char *data, size_t len)
 	klog_early_buf_used += len;
 }
 
-static void
-klog_dummy_sink(const char *data, size_t len)
-{
-	(void)data;
-	(void)len;
-}
-
-
 static inline void
 klog_lock_internal(void)
 {
@@ -164,31 +243,6 @@ static inline void
 klog_unlock_internal(void)
 {
 	klock_unlock(&klog_internal_lock);
-}
-
-
-int
-klog_add_sink(klog_sink_fn write)
-{
-	if (write == NULL)
-		return -1;
-
-	klog_lock_internal();
-
-	for (size_t i = 0; i < KLOG_MAX_SINKS; i++) {
-		if (!klog_sinks[i].enabled &&
-		    klog_sinks[i].write == &klog_dummy_sink) {
-
-			klog_sinks[i].write = write;
-			klog_sinks[i].enabled = true;
-
-			klog_unlock_internal();
-			return 0;
-		}
-	}
-
-	klog_unlock_internal();
-	return -1;
 }
 
 
@@ -207,30 +261,6 @@ klog_unlock(void)
 
 
 static void
-klog_sink_platform_debug(const char *data, size_t len)
-{
-	char tmp[128];
-
-	while (len) {
-		size_t n = len;
-
-		if (n >= sizeof(tmp))
-			n = sizeof(tmp) - 1;
-
-		for (size_t i = 0; i < n; i++)
-			tmp[i] = data[i];
-
-		tmp[n] = '\0';
-
-		platform_debug_print(tmp);
-
-		data += n;
-		len  -= n;
-	}
-}
-
-
-static void
 klog_emit_flush(struct klog_emit_ctx *ctx)
 {
 	if (ctx->used == 0)
@@ -240,8 +270,17 @@ klog_emit_flush(struct klog_emit_ctx *ctx)
 		klog_cur_store_fn(ctx->buf, ctx->used);
 
 	for (size_t i = 0; i < KLOG_MAX_SINKS; i++) {
-		if (klog_sinks[i].enabled)
-			klog_sinks[i].write(ctx->buf, ctx->used);
+		KlogRoute *route = &klog_routes[i];
+		if (!route->enabled || ctx->level > route->maximum_level)
+			continue;
+		if (klog_emit_to_sink(route->sink, ctx->buf, ctx->used) != FACET_OK) {
+			route->enabled = false;
+			static const char failure[] =
+				"klog: configured sink failed; disabling route\n";
+			klog_emergency_write(failure, sizeof(failure) - 1);
+			if (route->sink != klog_emergency_sink)
+				klog_emergency_write(ctx->buf, ctx->used);
+		}
 	}
 
 	ctx->used = 0;
@@ -551,10 +590,19 @@ klog_dump_debug(void)
 void
 klog(enum log_level level, const char *fmt, ...)
 {
-	struct klog_emit_ctx ctx = { .used = 0 };
+	LogLevel configured_level;
+	switch (level) {
+	case LOG_DEBUG: configured_level = LogLevel_Debug; break;
+	case LOG_INFO: configured_level = LogLevel_Info; break;
+	case LOG_WARN: configured_level = LogLevel_Warning; break;
+	case LOG_ERROR: configured_level = LogLevel_Error; break;
+	default: return;
+	}
+	struct klog_emit_ctx ctx = {
+		.used = 0,
+		.level = configured_level,
+	};
 	va_list ap;
-
-	(void)level;
 
 	if (fmt == NULL)
 		return;

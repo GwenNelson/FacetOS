@@ -1,0 +1,10 @@
+// An operational logging destination.
+//
+// This interface deliberately contains no routing or level configuration.
+// ILoggingConfig selects named sink objects and applies policy before emit().
+interface ILoggingSink {
+    uuid auto;
+    requires IGenericObject;
+
+    method FacetResult emit(in string data);
+}

@@ -306,13 +306,13 @@ Logging uses three distinct interfaces:
 
 - `ILoggingConfig` describes immutable effective logging policy;
 - `ILogger` is the normal interface applications use to emit records;
-- `ILoggerSink` is the privileged destination interface used by a logger.
+- `ILoggingSink` is the operational destination interface used by a logger.
 
 Applications MUST NOT write through `ILoggingConfig`. A normal domain or
 process normally receives an `ILogger`, not its sinks. Possession of a sink
 would permit bypassing logger filtering, routing, and attribution policy.
 
-`ILogger` and `ILoggerSink` are transport-independent interfaces. The first
+`ILogger` and `ILoggingSink` are transport-independent interfaces. The first
 sink implementation is an seL4-platform sink that calls the kernel debug
 output operation. Only that implementation and the platform bootstrap include
 seL4 headers.
@@ -355,17 +355,19 @@ flush()                         -> FacetResult
 The server supplies trustworthy domain/process attribution from the exported
 logger object; a client cannot forge it by embedding IDs in its message.
 
-The initial `ILoggerSink` contract is conceptually:
+The bootstrap `ILoggingSink` contract is deliberately raw:
 
 ```text
-emit(record) -> FacetResult
-flush()      -> FacetResult
+emit(bytes) -> FacetResult
 ```
 
-Shared logging types should be placed in one generated type definition and
-imported by logging interfaces. Before implementing these IDLs, facet-idlc
-must gain a type-only import mechanism; `requires` must not be abused as an
-import because it promises runtime `getInterface()` support.
+`ILoggingConfig` selects named sink objects and gives each route its maximum
+level; the sink object itself contains no configuration. During bootstrap,
+klog applies the level policy before passing formatted bytes to the selected
+objects. A later structured-record revision should place shared logging types
+in one generated type definition. Before that revision, facet-idlc must gain a
+type-only import mechanism; `requires` must not be abused as an import because
+it promises runtime `getInterface()` support.
 
 ### 5.3 Logger policy
 
@@ -390,18 +392,21 @@ sink. The logger needs a recursion guard and a minimal emergency-output path.
 ### 5.4 Early logging and klog migration
 
 Logging needed to debug memory initialization must not allocate memory or use
-RPC. Early boot therefore uses a fixed static record buffer and direct
-platform debug output.
+RPC. Early boot therefore uses a fixed static record buffer and a static,
+directly called seL4-debug `ILoggingSink` object.
 
 The transition sequence is:
 
-1. initialize emergency character output;
-2. initialize the static early-record buffer;
-3. initialize memory and parse/validate configuration;
-4. construct configured sinks and the root logger;
-5. import early records into the retained log without re-emitting records
-   already written to the same emergency sink;
-6. atomically switch the common logging facade to the full logger.
+1. initialize the static seL4-debug emergency sink and early-record buffer;
+2. initialize memory and the platform;
+3. parse and validate configuration;
+4. construct actual sink objects for global sink definitions;
+5. read domain 0's `ILoggingConfig` and resolve its named routes;
+6. copy early bytes into the dynamic retained buffer without re-emitting them;
+7. atomically switch klog storage and routing to the configured sinks.
+
+The emergency object remains available for configuration, allocation, and
+sink-failure diagnostics, but is not an implicit normal route after the switch.
 
 `klog` should become the bootstrap-compatible front end to this common
 logging facade. Formatting, levels, and record routing must not be separately
@@ -1066,7 +1071,7 @@ Revocation must not depend on configuration names remaining present.
 The implementation will require new or revised IDLs for at least:
 
 - `ILogger`;
-- `ILoggerSink`;
+- `ILoggingSink`;
 - `ILoggingConfig`;
 - `IDomainEnvironment`;
 - `IProcessEnvironment`;
@@ -1186,8 +1191,8 @@ halts with a precise emergency diagnostic for every invalid required input.
 ### Milestone 2: Unified logging
 
 - Add type-only IDL imports needed by shared logging types.
-- Define and generate `ILogger`, `ILoggerSink`, and revised
-  `ILoggingConfig` interfaces.
+- Define `ILogger` and extend the bootstrap `ILoggingSink` contract to typed
+  records once shared IDL type imports exist.
 - Implement the generic logger/router and seL4 debug sink.
 - Import the early klog buffer and switch to configured logging.
 - Preserve a recursion-safe emergency path.
