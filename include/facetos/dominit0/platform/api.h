@@ -12,6 +12,23 @@ void platform_init_early(void); // anything the platform needs IMMEDIATELY, usua
 
 void platform_init(void);       // sets up everything for the platform before other subsystems
 
+typedef struct PlatformConfigSource {
+    const uint8_t *data;
+    size_t size;
+} PlatformConfigSource;
+
+typedef enum PlatformConfigSourceStatus {
+    PLATFORM_CONFIG_SOURCE_FOUND = 0,
+    PLATFORM_CONFIG_SOURCE_ABSENT = 1,
+    PLATFORM_CONFIG_SOURCE_INVALID = -1,
+    PLATFORM_CONFIG_SOURCE_DUPLICATE = -2,
+} PlatformConfigSourceStatus;
+
+PlatformConfigSourceStatus platform_get_config_source(
+    PlatformConfigSource *source);
+
+void platform_start_initial_domain(void);
+
 void platform_yield(void);	// yields to the microkernel or other tasks
 
 void platform_debug_print(char* str); // prints a debug string

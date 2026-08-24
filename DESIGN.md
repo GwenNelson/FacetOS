@@ -138,15 +138,15 @@ personality.
 
 ### 4.1 Source and selection
 
-The root configuration MUST be a distinct multiboot module. The module's
+When supplied, the root configuration is a distinct multiboot module whose
 basename is `facet.toml`. Module command-line text following the first token
-does not form part of the basename.
+does not form part of the basename. Exactly one matching module is accepted:
+a duplicate match or malformed module metadata is fatal after the emergency
+logger is available.
 
-There MUST be exactly one `facet.toml` module in a normal configured boot.
-Missing or duplicate configuration modules are fatal after the emergency
-logger is available. A temporary compile-time development option MAY permit
-built-in defaults when the module is absent, but that option must be disabled
-for a normal configured system.
+If no matching module is present, dominit0 uses the built-in fallback described
+in section 4.6. Syntax, schema, and reference errors in a present file are
+fatal; an invalid file never causes a fallback.
 
 The configuration module is immutable boot input. It must be preserved until
 parsing and validation have completed. No code may retain pointers into it
@@ -155,18 +155,18 @@ transferred.
 
 ### 4.2 Syntax
 
-Version 1 uses a deliberately limited TOML subset:
+The implemented version 1 parser uses a deliberately limited TOML subset:
 
 - UTF-8 text without a byte-order mark;
 - bare and quoted keys;
 - strings, booleans, and signed 64-bit integers;
-- arrays of supported scalar values;
+- arrays of supported values and inline tables;
 - tables and arrays of tables;
 - `#` line comments.
 
 Version 1 does not require floats, date/time literals, dotted assignment keys,
-inline tables, or multiline strings. A parser may support them later only as a
-schema-version-compatible extension.
+multiline strings, or dotted table headers. A parser may support them later
+only as a schema-version-compatible extension.
 
 The parser MUST reject malformed UTF-8, integer overflow, duplicate keys in a
 table, incompatible redefinitions, unterminated strings, excessive nesting,
@@ -201,80 +201,55 @@ extension namespace.
 Parsing and semantic validation occur before creating configured services or
 processes. Validation includes:
 
-- unique domain IDs and names within the hierarchy;
-- unique module aliases;
-- valid references to modules, domains, seats, terminals, log sinks, and
-  service providers;
+- unique domain IDs and names;
+- unique logging-sink and seat names;
+- unique terminal names within each seat;
+- valid domain references to logging sinks and `seat.terminal` names;
+- exclusive assignment of each terminal to at most one domain;
 - valid personality names;
 - valid log levels;
-- no dependency cycles among required services;
-- no duplicate process-environment names;
-- valid executable source syntax;
-- resource quantities within platform and parent policy limits;
-- exactly one root domain description;
+- exactly one domain with ID 0;
 - all required declarations resolvable before launch.
 
 Validation proves only that a request is coherent. Authority checks happen
 again when concrete handles and resources are delegated.
 
-### 4.4 Precedence
+### 4.4 Selection and authority
 
-Root-domain effective configuration is constructed in this order:
+The two configuration sources are mutually exclusive. A present `facet.toml`
+is the complete configuration; it is not merged with defaults. The fallback is
+used only when that module is absent. There are no command-line configuration
+overrides in version 1.
 
-1. compiled safe defaults;
-2. `facet.toml`;
-3. explicit boot command-line overrides intended for diagnostics.
+Configuration describes policy but grants no authority. In particular, naming
+a logging sink, seat, or terminal does not create or delegate its capability.
+dominit0 validates the description and prepares immutable configuration
+objects; later bootstrap code must bind their handles only after it has created
+the corresponding objects under its existing authority.
 
-Later sources replace earlier scalar values. Arrays are replaced, not
-implicitly concatenated, unless a field's schema explicitly says otherwise.
-Command-line overrides must use a small documented set; they are not a second
-general configuration language.
+### 4.5 Prepared interfaces and handoff boundary
 
-Children do not receive the root file. A parent selects the relevant domain
-description, resolves it into an effective configuration, and creates the
-child's environment and delegated capabilities directly.
+For every `[[domains]]` entry, dominit0 prepares one `IDomainConfig` object and
+its associated `ILoggingConfig` and `IDomainConsoleConfig` views. These objects
+are sized from the parsed input and expose read-only properties. Before their
+three handles are explicitly bound, object-valued properties and
+`getInterface()` return an invalid-handle result.
 
-### 4.5 Modules and executable references
-
-Boot modules receive stable logical aliases in configuration:
-
-```toml
-[[modules]]
-name = "dominit"
-boot_module = "dominit"
-format = "elf"
-```
-
-`boot_module` is matched against the basename of the multiboot module's first
-command-line token. Duplicate basenames are an error when referenced by name.
-
-Executable references use one of these forms:
-
-- `module:<alias>` for a configured boot module;
-- an absolute POSIX path such as `/sbin/init`;
-- a native executable path under `/FacetOS`, such as
-  `/FacetOS/FacetLogin`;
-- future schemes explicitly introduced by a later schema version.
-
-An executable name is not authority to read or execute it. The launcher must
-hold the module, filesystem, object-store, or VM resource capability needed to
-resolve it.
+dominit0 does not export these objects or pass them to dominit yet. The current
+dominit launch path remains unchanged until an `IDomainEnvironment` is built
+separately. Console-server lifecycle is likewise a dominit0 responsibility and
+is not represented by a `spawn_console_server` configuration field.
 
 ### 4.6 Initial configuration shape
 
-The initial schema has the following top-level tables:
+The implemented bootstrap schema has the following top-level tables:
 
 - `[facet]`: schema identity and version;
-- `[[modules]]`: aliases for multiboot modules;
-- `[logging]` and `[[logging.sinks]]`: root logging policy;
-- `[root]`: root-domain description;
-- `[[root.services]]`: services visible to the root bootstrap process;
-- `[[root.terminals]]`: processes launched on terminals in the root domain;
-- `[[domains]]`: child-domain descriptions;
-- `[[domains.services]]`: child service requests and bindings;
-- `[[domains.terminals]]`: child terminal launch entries;
-- `[[seats]]` and `[[seats.terminals]]`: seat topology;
-- `[[drivers]]`: configured driver factories or modules.
+- `[[logging_sinks]]`: globally defined sink names, implementation types, and
+  whether each implementation is required;
+- `[[seats]]`: globally defined seat names, types, and terminal names;
+- `[[domains]]`: domain identity and personality plus that domain's selected
+  sinks, per-sink levels, and exclusive terminal assignments.
 
 Example:
 
@@ -282,78 +257,46 @@ Example:
 [facet]
 version = 1
 
-[[modules]]
-name = "dominit"
-boot_module = "dominit"
-format = "elf"
-
-[logging]
-default_level = "info"
-
-[[logging.sinks]]
+[[logging_sinks]]
 name = "debug"
 type = "platform.sel4.debug"
-level = "debug"
 required = true
-
-[root]
-id = 0
-name = "system"
-personality = "native"
-bootstrap = "module:dominit"
-domain_manager = true
-
-[[root.services]]
-name = "logger"
-interface = "ILogger"
-source = "logging.system"
-required = true
-
-[[root.services]]
-name = "memory.pages"
-interface = "IPageAllocator"
-source = "memory.bootstrap-process"
-required = true
-
-[[root.terminals]]
-terminal = "seat1.tty1"
-executable = "/FacetOS/FacetLogin"
-personality = "native"
-required = false
-
-[[root.terminals]]
-terminal = "seat1.tty2"
-executable = "/bin/login"
-personality = "posix"
-required = false
-
-[root.terminals.environment]
-PATH = "/bin:/usr/bin"
-HOME = "/"
-TERM = "facet"
 
 [[seats]]
 name = "seat0"
 type = "serial"
-
-[[seats.terminals]]
-name = "ttys0"
-active = true
+terminals = ["ttyS0"]
 
 [[seats]]
 name = "seat1"
 type = "local"
+terminals = ["tty1", "tty2"]
 
-[[seats.terminals]]
-name = "tty1"
-active = true
+[[domains]]
+id = 0
+name = "system"
+personality = "native"
+domain_manager = "local"
+logging_sinks = [{ name = "debug", level = "debug" }]
+terminals = ["seat0.ttyS0", "seat1.tty1"]
 
-[[seats.terminals]]
-name = "tty2"
+[[domains]]
+id = 1
+name = "example-child"
+personality = "native"
+domain_manager = "none"
+logging_sinks = [{ name = "debug", level = "info" }]
+terminals = ["seat1.tty2"]
 ```
 
-The parser should preserve source locations for values so semantic errors can
-identify the table, key, line, and column that caused the problem.
+Thus the fallback connects domain 0 to the serial terminal and the first local
+terminal, while domain 1 owns the second local terminal. Both domains use the
+same globally defined debug sink with independent filtering levels.
+
+Parser diagnostics report a category, context, line, column, and message.
+Syntax and per-assignment schema errors have exact source positions;
+cross-declaration validation errors may identify the offending declaration by
+context without an exact source position.
 
 ## 5. Logging
 
@@ -1230,8 +1173,11 @@ type detection, deterministic include generation, and no runtime
 
 - Implement the bounded TOML subset and source-located diagnostics.
 - Locate and preserve `facet.toml` as a multiboot module.
-- Parse and validate `[facet]`, `[[modules]]`, `[logging]`, and `[root]`.
-- Keep all existing fallback behavior behind an explicit development option.
+- Parse and validate `[facet]`, `[[logging_sinks]]`, `[[seats]]`, and
+  `[[domains]]`.
+- Use the compiled fallback only when `facet.toml` is absent.
+- Prepare typed, read-only per-domain configuration objects without exporting
+  or handing them to dominit.
 - Add parser, schema, malformed-input, and module-selection tests.
 
 Completion criterion: dominit0 boots from a minimal valid configuration and

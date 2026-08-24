@@ -1,0 +1,37 @@
+[facet]
+version = 1
+
+[[logging_sinks]]
+name = "debug"
+type = "platform.sel4.debug"
+required = true
+
+[[seats]]
+name = "seat0"
+type = "serial"
+terminals = ["ttyS0"]
+
+[[seats]]
+name = "seat1"
+type = "local"
+terminals = ["tty1", "tty2"]
+
+[[domains]]
+id = 0
+name = "system"
+personality = "native"
+domain_manager = "local"
+logging_sinks = [
+    { name = "debug", level = "debug" },
+]
+terminals = ["seat0.ttyS0", "seat1.tty1"]
+
+[[domains]]
+id = 1
+name = "example-child"
+personality = "native"
+domain_manager = "none"
+logging_sinks = [
+    { name = "debug", level = "info" },
+]
+terminals = ["seat1.tty2"]

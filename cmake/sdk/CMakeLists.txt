@@ -141,6 +141,19 @@ set_target_properties(facet_common PROPERTIES
         "${FACETOS_ROOT}/include"
 )
 
+set(FACET_CONFIG_ARCHIVE
+    "${FACETOS_ROOT}/build/facetos/config/libfacet-config.a"
+)
+
+add_library(facet_config STATIC IMPORTED GLOBAL)
+
+set_target_properties(facet_config PROPERTIES
+    IMPORTED_LOCATION
+        "${FACET_CONFIG_ARCHIVE}"
+    INTERFACE_INCLUDE_DIRECTORIES
+        "${FACETOS_ROOT}/include"
+)
+
 set(FACET_GENERATED_INCLUDE
     "${FACETOS_ROOT}/build/facetos/generated/include"
 )
@@ -153,21 +166,42 @@ set(FACET_GENERATED_IGENERIC
 set(FACET_GENERATED_IDEBUG
     "${FACET_GENERATED_INCLUDE}/facetos/interfaces/IDebug.h"
 )
+set(FACET_GENERATED_ILOGGING_CONFIG
+    "${FACET_GENERATED_INCLUDE}/facetos/interfaces/ILoggingConfig.h"
+)
+set(FACET_GENERATED_IDOMAIN_CONSOLE_CONFIG
+    "${FACET_GENERATED_INCLUDE}/facetos/interfaces/IDomainConsoleConfig.h"
+)
+set(FACET_GENERATED_IDOMAIN_CONFIG
+    "${FACET_GENERATED_INCLUDE}/facetos/interfaces/IDomainConfig.h"
+)
 
 add_custom_command(
     OUTPUT
         "${FACET_GENERATED_IGENERIC}"
         "${FACET_GENERATED_IDEBUG}"
+        "${FACET_GENERATED_ILOGGING_CONFIG}"
+        "${FACET_GENERATED_IDOMAIN_CONSOLE_CONFIG}"
+        "${FACET_GENERATED_IDOMAIN_CONFIG}"
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "${FACET_GENERATED_INCLUDE}/facetos/interfaces"
     COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_IGENERIC}"
         "${FACETOS_ROOT}/idl/IGenericObject.facet"
     COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_IDEBUG}"
         "${FACETOS_ROOT}/idl/IDebug.facet"
+    COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_ILOGGING_CONFIG}"
+        "${FACETOS_ROOT}/idl/ILoggingConfig.facet"
+    COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_IDOMAIN_CONSOLE_CONFIG}"
+        "${FACETOS_ROOT}/idl/IDomainConsoleConfig.facet"
+    COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_IDOMAIN_CONFIG}"
+        "${FACETOS_ROOT}/idl/IDomainConfig.facet"
     DEPENDS
         "${FACET_IDLC}"
         "${FACETOS_ROOT}/idl/IGenericObject.facet"
         "${FACETOS_ROOT}/idl/IDebug.facet"
+        "${FACETOS_ROOT}/idl/ILoggingConfig.facet"
+        "${FACETOS_ROOT}/idl/IDomainConsoleConfig.facet"
+        "${FACETOS_ROOT}/idl/IDomainConfig.facet"
     VERBATIM
 )
 
@@ -175,6 +209,13 @@ add_custom_target(facet-idl-debug-generated
     DEPENDS
         "${FACET_GENERATED_IGENERIC}"
         "${FACET_GENERATED_IDEBUG}"
+)
+
+add_custom_target(facet-idl-config-generated
+    DEPENDS
+        "${FACET_GENERATED_ILOGGING_CONFIG}"
+        "${FACET_GENERATED_IDOMAIN_CONSOLE_CONFIG}"
+        "${FACET_GENERATED_IDOMAIN_CONFIG}"
 )
 
 
@@ -275,6 +316,7 @@ target_include_directories(dominit0 BEFORE PRIVATE
     "${FACET_GENERATED_INCLUDE}"
 )
 add_dependencies(dominit0 facet-idl-debug-generated)
+add_dependencies(dominit0 facet-idl-config-generated)
 
 target_compile_definitions(dominit0 PRIVATE
     FACET_PLATFORM_SEL4=1
@@ -290,6 +332,7 @@ target_link_libraries(dominit0 PRIVATE
     facet_klibc
     facet-platform-sel4
     facet_common
+    facet_config
 
     sel4runtime
     sel4

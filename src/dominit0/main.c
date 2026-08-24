@@ -1,3 +1,5 @@
+#include <facetos/config.h>
+#include <facetos/dominit0/config.h>
 #include <facetos/dominit0/klog.h>
 #include <facetos/dominit0/kmalloc.h>
 #include <facetos/dominit0/kpanic.h>
@@ -20,6 +22,42 @@ void test_kmalloc(void) {
      kmalloc_dump();
 }
 #endif
+
+static void log_config_diagnostic(const FacetConfigDiagnostic *diagnostic)
+{
+     klog(LOG_ERROR,
+          "Configuration %s error at %zu:%zu (%s): %s\n",
+          facet_config_diagnostic_category_name(diagnostic->category),
+          diagnostic->line,
+          diagnostic->column,
+          diagnostic->context,
+          diagnostic->message);
+}
+
+static void log_prepared_configuration(const Dominit0SystemConfig *system,
+                                       bool fallback)
+{
+     klog(LOG_INFO,
+          "Prepared %zu domain configuration object%s%s\n",
+          system->domain_count,
+          system->domain_count == 1 ? "" : "s",
+          fallback ? " from built-in fallback defaults" : " from facet.toml");
+     for (size_t i = 0; i < system->domain_count; i++) {
+          const FacetConfigDomain *domain = &system->parsed.domains[i];
+          klog(LOG_INFO,
+               "Domain %llu (%s): %zu logging sink%s, %zu terminal%s\n",
+               (unsigned long long)domain->id,
+               domain->name,
+               domain->logging_sink_count,
+               domain->logging_sink_count == 1 ? "" : "s",
+               domain->terminal_count,
+               domain->terminal_count == 1 ? "" : "s");
+          for (size_t j = 0; j < domain->terminal_count; j++)
+               klog(LOG_INFO, "  terminal: %s\n",
+                    domain->terminals[j].reference);
+     }
+}
+
 void main(int argc, char **argv, char **envp) {
      platform_init_early();
      klog_init_early();
@@ -35,6 +73,33 @@ void main(int argc, char **argv, char **envp) {
      #endif
      platform_init();
      klog_init_postboot();
+
+     PlatformConfigSource source;
+     PlatformConfigSourceStatus source_status =
+          platform_get_config_source(&source);
+     if (source_status == PLATFORM_CONFIG_SOURCE_DUPLICATE)
+          kpanic("More than one facet.toml boot module was supplied!");
+     if (source_status == PLATFORM_CONFIG_SOURCE_INVALID)
+          kpanic("Invalid multiboot configuration module information!");
+
+     bool fallback = source_status == PLATFORM_CONFIG_SOURCE_ABSENT;
+     if (fallback)
+          klog(LOG_WARN,
+               "No facet.toml module found; using built-in development defaults\n");
+
+     FacetConfigDiagnostic diagnostic;
+     if (dominit0_config_initialize(source.data, source.size,
+                                    !fallback, &diagnostic) != 0) {
+          log_config_diagnostic(&diagnostic);
+          kpanic("Unable to prepare FacetOS configuration!");
+     }
+
+     log_prepared_configuration(dominit0_config_get_system(), fallback);
+
+     /* Configuration objects are intentionally not exported here. The
+      * current child launch remains unchanged until IDomainEnvironment is
+      * implemented by hand. */
+     platform_start_initial_domain();
 
      #ifdef DEBUG
         test_kmalloc();

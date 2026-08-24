@@ -486,7 +486,8 @@ static void emit_server_method(FILE *file,
             "    FacetRpcMessage *reply)\n{\n",
             interface, method->name);
     size_t input_words = 0;
-    int uses_payload = 0;
+    int request_uses_payload = 0;
+    int reply_uses_payload = 0;
     for (size_t i = 0; i < method->parameter_count; i++) {
         const FacetIdlParam *parameter = &method->parameters[i];
         if (!server_supported_param(parameter)) {
@@ -494,7 +495,12 @@ static void emit_server_method(FILE *file,
                     "    return FACET_NOT_SUPPORTED;\n}\n\n");
             return;
         }
-        if (payload_type_for(definition, parameter->type)) uses_payload = 1;
+        if (payload_type_for(definition, parameter->type)) {
+            if (parameter->direction != FACET_IDL_OUT)
+                request_uses_payload = 1;
+            if (parameter->direction != FACET_IDL_IN)
+                reply_uses_payload = 1;
+        }
         if (parameter->direction != FACET_IDL_OUT) {
             if (strcmp(parameter->type, "handle") != 0 &&
                 strcmp(parameter->type, "uuid") != 0 &&
@@ -507,7 +513,7 @@ static void emit_server_method(FILE *file,
     }
     fprintf(file, "    if (request->word_count != %zu) return FACET_PROTOCOL_ERROR;\n",
             input_words);
-    if (uses_payload) {
+    if (request_uses_payload) {
         fprintf(file, "    FacetRpcCodec request_codec = { .data = request->payload, "
                 ".size = request->payload_size, .capacity = request->payload_size };\n");
     }
@@ -559,7 +565,7 @@ static void emit_server_method(FILE *file,
     }
     fprintf(file, ");\n    reply->word_count = 0;\n"
             "    reply->words[reply->word_count++] = (uint64_t)(int64_t)call_result;\n");
-    if (uses_payload) {
+    if (reply_uses_payload) {
         fprintf(file, "    FacetRpcCodec reply_codec = {0};\n");
     }
     for (size_t i = 0; i < method->parameter_count; i++) {

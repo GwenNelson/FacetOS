@@ -9,5 +9,5 @@ interface IDomainConsoleConfig {
         string terminal;
     };
 
-    property array<Assignment> assignments read write;
+    property array<Assignment> assignments read;
 }

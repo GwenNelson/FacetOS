@@ -8,12 +8,23 @@ interface IDomainConfig {
     requires ILoggingConfig;
     requires IDomainConsoleConfig;
 
-    property u64 domain_id read write;
-    property string domain_name read write;
-    property u32 personality read write;
+    enum Personality : u32 {
+        Native = 0;
+        Posix = 1;
+        Vm = 2;
+    };
+
+    enum DomainManagerMode : u32 {
+        None = 0;
+        Local = 1;
+        Parent = 2;
+    };
+
+    property u64 domain_id read;
+    property string domain_name read;
+    property Personality personality read;
     // Object-valued properties are capability attachments on the wire.
-    property handle logger_config read write;
-    property handle console_config read write;
-    property bool spawn_console_server read write;
-    property u32 domain_manager read write;
+    property handle logger_config read;
+    property handle console_config read;
+    property DomainManagerMode domain_manager read;
 }

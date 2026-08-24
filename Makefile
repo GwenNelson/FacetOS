@@ -28,6 +28,7 @@ SEL4_ENV := PATH="$(VENV)/bin:$(PATH)"
 SDK_KERNEL     := $(SDK_BUILD)/kernel/kernel.elf
 FACET_DOMINIT0 := $(SDK_BUILD)/dominit0
 FACET_DOMINIT  := $(SDK_BUILD)/dominit
+FACET_CONFIG_FILE := $(ROOT)/config/facet.toml
 
 #
 # FacetOS klibc.
@@ -46,8 +47,18 @@ FACET_KLIBC       := $(FACET_KLIBC_BUILD)/klibc.a
 FACET_COMMON_BUILD := $(ROOT)/build/facetos/libfacet/common
 FACET_COMMON       := $(FACET_COMMON_BUILD)/libfacet-common.a
 
+FACET_CONFIG_BUILD := $(ROOT)/build/facetos/config
+FACET_CONFIG       := $(FACET_CONFIG_BUILD)/libfacet-config.a
+
 FACET_IDLC_BUILD := $(ROOT)/build/facet-idlc
 FACET_IDLC       := $(FACET_IDLC_BUILD)/facet-idlc
+
+FACET_GENERATED_INCLUDE := $(ROOT)/build/facetos/generated/include
+FACET_GENERATED_INTERFACE_DIR := $(FACET_GENERATED_INCLUDE)/facetos/interfaces
+FACET_GENERATED_IGENERIC := $(FACET_GENERATED_INTERFACE_DIR)/IGenericObject.h
+FACET_GENERATED_ILOGGING := $(FACET_GENERATED_INTERFACE_DIR)/ILoggingConfig.h
+FACET_GENERATED_ICONSOLE := $(FACET_GENERATED_INTERFACE_DIR)/IDomainConsoleConfig.h
+FACET_GENERATED_IDOMAIN_CONFIG := $(FACET_GENERATED_INTERFACE_DIR)/IDomainConfig.h
 
 FACET_KLIBC_SRCS := $(wildcard $(ROOT)/src/klibc/*.c)
 FACET_KLIBC_OBJS := \
@@ -146,7 +157,10 @@ endif
 	facet-idlc \
 	libfacet-common \
 	libfacet-platform-sel4 \
-	libfacet
+	libfacet \
+	facet-config \
+	test \
+	test-config
 
 
 all: facetos
@@ -280,6 +294,76 @@ libfacet-common: $(FACET_COMMON)
 
 
 #
+# Portable typed configuration parser.
+#
+
+FACET_CONFIG_OBJS := $(FACET_CONFIG_BUILD)/config.o
+FACET_CONFIG_DEPS := $(FACET_CONFIG_OBJS:.o=.d)
+
+$(FACET_CONFIG_BUILD)/config.o: $(ROOT)/src/config.c \
+		$(ROOT)/include/facetos/config.h
+	@mkdir -p $(dir $@)
+	$(CC) $(FACET_COMMON_CFLAGS) -c $< -o $@
+
+$(FACET_CONFIG): $(FACET_CONFIG_OBJS)
+	@mkdir -p $(dir $@)
+	$(AR) rcs $@ $^
+
+facet-config: $(FACET_CONFIG)
+
+-include $(FACET_CONFIG_DEPS)
+
+
+#
+# Host-side configuration tests.
+#
+
+FACET_CONFIG_TEST := $(FACET_CONFIG_BUILD)/config-test
+FACET_CONFIG_OBJECTS_TEST := $(FACET_CONFIG_BUILD)/config-objects-test
+
+$(FACET_GENERATED_IGENERIC): $(FACET_IDLC) $(ROOT)/idl/IGenericObject.facet
+	@mkdir -p $(FACET_GENERATED_INTERFACE_DIR)
+	$(FACET_IDLC) -o $@ $(ROOT)/idl/IGenericObject.facet
+
+$(FACET_GENERATED_ILOGGING): $(FACET_IDLC) $(ROOT)/idl/ILoggingConfig.facet \
+		$(FACET_GENERATED_IGENERIC)
+	$(FACET_IDLC) -o $@ $(ROOT)/idl/ILoggingConfig.facet
+
+$(FACET_GENERATED_ICONSOLE): $(FACET_IDLC) \
+		$(ROOT)/idl/IDomainConsoleConfig.facet $(FACET_GENERATED_IGENERIC)
+	$(FACET_IDLC) -o $@ $(ROOT)/idl/IDomainConsoleConfig.facet
+
+$(FACET_GENERATED_IDOMAIN_CONFIG): $(FACET_IDLC) \
+		$(ROOT)/idl/IDomainConfig.facet $(FACET_GENERATED_IGENERIC) \
+		$(FACET_GENERATED_ILOGGING) $(FACET_GENERATED_ICONSOLE)
+	$(FACET_IDLC) -o $@ $(ROOT)/idl/IDomainConfig.facet
+
+$(FACET_CONFIG_TEST): $(ROOT)/tests/config_test.c $(ROOT)/src/config.c \
+		$(ROOT)/include/facetos/config.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=gnu11 -Wall -Wextra -Werror -I$(ROOT)/include \
+		$(ROOT)/src/config.c $(ROOT)/tests/config_test.c -o $@
+
+$(FACET_CONFIG_OBJECTS_TEST): $(ROOT)/tests/config_objects_test.c \
+		$(ROOT)/src/config.c $(ROOT)/src/dominit0/config.c \
+		$(ROOT)/include/facetos/config.h \
+		$(ROOT)/include/facetos/dominit0/config.h \
+		$(FACET_GENERATED_IDOMAIN_CONFIG)
+	@mkdir -p $(dir $@)
+	$(CC) -std=gnu11 -O2 -ffunction-sections -fdata-sections \
+		-Wall -Wextra -Werror \
+		-I$(FACET_GENERATED_INCLUDE) -I$(ROOT)/include \
+		$(ROOT)/src/config.c $(ROOT)/src/dominit0/config.c \
+		$(ROOT)/tests/config_objects_test.c -Wl,--gc-sections -o $@
+
+test-config: $(FACET_CONFIG_TEST) $(FACET_CONFIG_OBJECTS_TEST)
+	$(FACET_CONFIG_TEST)
+	$(FACET_CONFIG_OBJECTS_TEST)
+
+test: test-config
+
+
+#
 # Host-side Flex/Bison IDL compiler.
 #
 
@@ -344,7 +428,7 @@ dominit: facet-idlc libfacet-common configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) dominit
 
 
-dominit0: klibc facet-idlc libfacet-common configure
+dominit0: klibc facet-idlc libfacet-common facet-config configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) dominit0 dominit
 
 
@@ -359,7 +443,7 @@ libfacet: facet-idlc libfacet-common libfacet-platform-sel4
 
 
 # Build everything needed to boot FacetOS.
-build: klibc configure libfacet
+build: klibc facet-config configure libfacet
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf dominit0 dominit
 
 
@@ -406,6 +490,7 @@ image: build
 	cp $(SDK_KERNEL) $(ISO_ROOT)/boot/kernel.elf
 	cp $(FACET_DOMINIT0) $(ISO_ROOT)/boot/dominit0
 	cp $(FACET_DOMINIT) $(ISO_ROOT)/boot/dominit
+	cp $(FACET_CONFIG_FILE) $(ISO_ROOT)/boot/facet.toml
 	cp $(ROOT)/boot/grub.cfg $(ISO_ROOT)/boot/grub/grub.cfg
 	grub-mkrescue \
 		-o $(FACETOS_ISO) \
@@ -430,7 +515,7 @@ endif
 
 QEMU_DIRECT_FLAGS := \
 	-kernel $(BOOTSTUB32) \
-	-initrd $(SDK_KERNEL),$(FACET_DOMINIT0),$(FACET_DOMINIT)
+	-initrd $(SDK_KERNEL),$(FACET_DOMINIT0),$(FACET_DOMINIT),$(FACET_CONFIG_FILE)
 
 QEMU_ISO_FLAGS := \
 	-cdrom $(FACETOS_ISO)

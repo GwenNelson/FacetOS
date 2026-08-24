@@ -86,6 +86,9 @@ find_boot_module(const seL4_BootInfo *bi, const char *wanted,
         (const uint8_t *)bi + seL4_BootInfoFrameSize;
     const uint8_t *end = cur + bi->extraLen;
 
+    bool saw_modules_chunk = false;
+    bool found = false;
+
     while ((size_t)(end - cur) >= sizeof(seL4_BootInfoHeader)) {
         seL4_BootInfoHeader header;
         memcpy(&header, cur, sizeof(header));
@@ -96,6 +99,10 @@ find_boot_module(const seL4_BootInfo *bi, const char *wanted,
         }
 
         if (header.id == SEL4_BOOTINFO_HEADER_X86_MODULES) {
+            if (saw_modules_chunk) {
+                return -2;
+            }
+            saw_modules_chunk = true;
             seL4_X86_BootInfo_modules_t modules;
             size_t descriptor_offset = sizeof(modules);
 
@@ -134,21 +141,25 @@ find_boot_module(const seL4_BootInfo *bi, const char *wanted,
                 }
 
                 if (module_name_matches(name, wanted)) {
+                    if (found) {
+                        return -2;
+                    }
                     result->data =
                         (const void *)(uintptr_t)descriptor.start;
                     result->size = (size_t)descriptor.size;
                     result->name = name;
-                    return 0;
+                    found = true;
                 }
             }
-
-            return -1;
         }
 
         cur += header.len;
     }
 
-    return -1;
+    if (cur != end) {
+        return -1;
+    }
+    return found ? 0 : 1;
 }
 
 static void
@@ -466,11 +477,36 @@ void platform_init(void) {
                                    &debug_server_handle) != FACET_OK)
          kpanic("Unable to export libfacet debug interface!");
 
-     klog(LOG_DEBUG, "platform_init() - locating dominit module\n");
+     klog(LOG_INFO,"seL4 platform ready\n");
+}
+
+PlatformConfigSourceStatus
+platform_get_config_source(PlatformConfigSource *source)
+{
+    if (source == NULL || platform_sel4_bi == NULL)
+        return PLATFORM_CONFIG_SOURCE_INVALID;
+    source->data = NULL;
+    source->size = 0;
+    boot_module_t module;
+    int result = find_boot_module(platform_sel4_bi, "facet.toml", &module);
+    if (result == 1)
+        return PLATFORM_CONFIG_SOURCE_ABSENT;
+    if (result == -2)
+        return PLATFORM_CONFIG_SOURCE_DUPLICATE;
+    if (result != 0)
+        return PLATFORM_CONFIG_SOURCE_INVALID;
+    source->data = module.data;
+    source->size = module.size;
+    return PLATFORM_CONFIG_SOURCE_FOUND;
+}
+
+void platform_start_initial_domain(void)
+{
+     klog(LOG_DEBUG, "platform_start_initial_domain() - locating dominit module\n");
      boot_module_t dominit_module;
      if (find_boot_module(platform_sel4_bi, "dominit",
                           &dominit_module) != 0)
-         kpanic("Unable to find dominit boot module!");
+         kpanic("Unable to find unique dominit boot module!");
 
      klog(LOG_INFO,
           "Starting dominit from %s at %p (%zu bytes)\n",
@@ -484,8 +520,6 @@ void platform_init(void) {
                                1,
                                dominit_argv) != 0)
          kpanic("Unable to start dominit!");
-
-     klog(LOG_INFO,"seL4 platform ready\n");
 }
 
 void platform_yield(void) {

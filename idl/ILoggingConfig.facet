@@ -19,5 +19,5 @@ interface ILoggingConfig {
         LogLevel level;
     };
 
-    property array<Sink> sinks read write;
+    property array<Sink> sinks read;
 }

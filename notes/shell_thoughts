@@ -1,0 +1,9 @@
+For a native domain, we need a login shell, that'd be provided by something called FacetLogin in /FacetOS/FacetLogin
+
+This requires grabbing an IAuth object passed to the domain (which then passes it to the login process).
+
+How IAuth works internally isn't nailed down yet - for now it'll allow any username other than root.
+
+The user "root", password "facet" is obviously the typical root user - at least for now by default
+
+IAuth can also provide an optional IAuthUsernamePassword, and will by default
