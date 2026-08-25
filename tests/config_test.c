@@ -126,6 +126,26 @@ static void test_utf8_and_quoted_keys(void)
     facet_config_destroy(&config);
 }
 
+static void test_posix_terminal_mapping(void)
+{
+    static const char text[] =
+        "[facet]\nversion=1\n"
+        "[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
+        "[[seats]]\nname='seat1'\ntype='local'\nterminals=['tty5']\n"
+        "[[domains]]\nid=0\nname='posix'\npersonality='posix'\n"
+        "domain_manager='none'\npid1='/sbin/init'\n"
+        "logging_sinks=[{name='d',level='info'}]\n"
+        "terminals=[{device='ttyS0',terminal='seat1.tty5'}]\n";
+    FacetSystemConfig config;
+    FacetConfigDiagnostic diagnostic;
+    assert(parse_text(text, &config, &diagnostic) == 0);
+    assert(strcmp(config.domains[0].pid1, "/sbin/init") == 0);
+    assert(strcmp(config.domains[0].terminals[0].device_name, "ttyS0") == 0);
+    assert(config.domains[0].terminals[0].seat_index == 0);
+    assert(config.domains[0].terminals[0].terminal_index == 0);
+    facet_config_destroy(&config);
+}
+
 static void expect_failure(const char *text,
                            FacetConfigDiagnosticCategory category)
 {
@@ -192,6 +212,7 @@ int main(void)
     test_fallback();
     test_packaged_config();
     test_utf8_and_quoted_keys();
+    test_posix_terminal_mapping();
     test_failures();
     puts("config tests passed");
     return 0;
