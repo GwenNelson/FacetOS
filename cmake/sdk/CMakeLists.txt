@@ -402,6 +402,8 @@ target_link_libraries(FacetLogin PRIVATE
 function(add_facet_dummy target message)
     add_executable(${target}
         "${FACETOS_ROOT}/src/apps/facet_dummy.c"
+        "${FACETOS_ROOT}/src/dominit/platform/allocator.c"
+        "${FACETOS_ROOT}/src/dominit/platform/liballoc.c"
         "${FACETOS_ROOT}/src/dominit/platform/sel4/api.c"
     )
     facetos_configure_target(${target})
@@ -409,6 +411,7 @@ function(add_facet_dummy target message)
         "${FACET_GENERATED_INCLUDE}"
     )
     add_dependencies(${target} facet-idl-environment-generated)
+    add_dependencies(${target} facet-idl-page-allocator-generated)
     add_dependencies(${target} facet-idl-shell-contracts-generated)
     target_compile_definitions(${target} PRIVATE
         FACET_DUMMY_MESSAGE="${message}")

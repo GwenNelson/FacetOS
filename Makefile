@@ -617,6 +617,10 @@ QEMU_FLAGS := \
 	-debugcon file:$(BOCHS_DEBUG_LOG) \
 	-global isa-debugcon.iobase=0xe9
 
+# Optional diagnostics such as a monitor socket can be supplied without
+# changing the normal bounded `make run` command.
+QEMU_EXTRA_FLAGS ?=
+
 ifeq ($(QEMU_GDB),1)
 	QEMU_FLAGS += -S -s
 endif
@@ -636,12 +640,14 @@ run: build bootstub32
 	rm -f $(BOCHS_DEBUG_LOG)
 	timeout 30s $(QEMU) \
 		$(QEMU_FLAGS) \
+		$(QEMU_EXTRA_FLAGS) \
 		$(QEMU_DIRECT_FLAGS)
 
 
 run-iso: image
 	timeout 30s $(QEMU) \
 		$(QEMU_FLAGS) \
+		$(QEMU_EXTRA_FLAGS) \
 		$(QEMU_ISO_FLAGS)
 
 

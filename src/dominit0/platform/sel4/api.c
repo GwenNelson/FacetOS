@@ -15,6 +15,7 @@
 #include <allocman/bootstrap.h>
 #include <allocman/vka.h>
 #include <vka/vka.h>
+#include <vka/capops.h>
 #include <vspace/vspace.h>
 #include <elf/elf.h>
 #include <sel4utils/api.h>
@@ -22,6 +23,7 @@
 #include <sel4utils/process.h>
 #include <sel4utils/thread.h>
 #include <sel4utils/vspace.h>
+#include <sel4platsupport/device.h>
 
 #include <stddef.h>
 #include <stdbool.h>
@@ -41,6 +43,13 @@ static simple_t sel4_simple;
 static allocman_t *sel4_allocman;
 static vka_t sel4_vka;
 static seL4_CPtr serial_ioport_cap = seL4_CapNull;
+static seL4_CPtr keyboard_ioport_cap = seL4_CapNull;
+static vka_object_t vga_frame;
+static volatile uint16_t *vga_text_memory;
+static bool keyboard_left_shift;
+static bool keyboard_right_shift;
+static bool keyboard_alt;
+static bool keyboard_extended;
 
 static vspace_t sel4_loader_vspace;
 static vspace_t sel4_vspace;
@@ -785,6 +794,106 @@ int platform_serial_write(const uint8_t *data, size_t size)
         if (seL4_X86_IOPort_Out8(serial_ioport_cap, 0x3f8, data[i]) != seL4_NoError)
             return -1;
     }
+    return 0;
+}
+
+int platform_local_console_initialize(void)
+{
+    if (vga_text_memory != NULL && keyboard_ioport_cap != seL4_CapNull)
+        return 0;
+    if (vga_text_memory == NULL) {
+        vga_text_memory = sel4platsupport_map_frame_at(
+            &sel4_vka, &sel4_vspace, 0xb8000, seL4_PageBits, &vga_frame);
+        if (vga_text_memory == NULL) {
+            klog(LOG_ERROR, "Unable to map VGA text frame\n");
+            return -1;
+        }
+    }
+    if (keyboard_ioport_cap == seL4_CapNull) {
+        cspacepath_t path;
+        if (vka_cspace_alloc_path(&sel4_vka, &path) != 0)
+            return -1;
+        if (simple_get_IOPort_cap(&sel4_simple, 0x60, 0x64, path.root,
+                                  path.capPtr,
+                                  path.capDepth) != seL4_NoError) {
+            klog(LOG_ERROR, "Unable to obtain PS/2 I/O-port capability\n");
+            vka_cspace_free_path(&sel4_vka, path);
+            return -1;
+        }
+        keyboard_ioport_cap = path.capPtr;
+    }
+    return 0;
+}
+
+int platform_local_console_present(const uint16_t *cells, size_t count)
+{
+    if (cells == NULL || count > 80u * 25u || vga_text_memory == NULL)
+        return -1;
+    for (size_t i = 0; i < count; i++) vga_text_memory[i] = cells[i];
+    return 0;
+}
+
+static uint8_t translate_key(uint8_t scan_code, bool shift)
+{
+    static const uint8_t plain[58] = {
+        [2]='1',[3]='2',[4]='3',[5]='4',[6]='5',[7]='6',[8]='7',[9]='8',
+        [10]='9',[11]='0',[12]='-',[13]='=',[14]='\b',[15]='\t',
+        [16]='q',[17]='w',[18]='e',[19]='r',[20]='t',[21]='y',[22]='u',
+        [23]='i',[24]='o',[25]='p',[26]='[',[27]=']',[28]='\r',
+        [30]='a',[31]='s',[32]='d',[33]='f',[34]='g',[35]='h',[36]='j',
+        [37]='k',[38]='l',[39]=';',[40]='\'',[41]='`',[43]='\\',
+        [44]='z',[45]='x',[46]='c',[47]='v',[48]='b',[49]='n',[50]='m',
+        [51]=',',[52]='.',[53]='/',[57]=' ',
+    };
+    static const uint8_t shifted[58] = {
+        [2]='!',[3]='@',[4]='#',[5]='$',[6]='%',[7]='^',[8]='&',[9]='*',
+        [10]='(',[11]=')',[12]='_',[13]='+',[14]='\b',[15]='\t',
+        [16]='Q',[17]='W',[18]='E',[19]='R',[20]='T',[21]='Y',[22]='U',
+        [23]='I',[24]='O',[25]='P',[26]='{',[27]='}',[28]='\r',
+        [30]='A',[31]='S',[32]='D',[33]='F',[34]='G',[35]='H',[36]='J',
+        [37]='K',[38]='L',[39]=':',[40]='"',[41]='~',[43]='|',
+        [44]='Z',[45]='X',[46]='C',[47]='V',[48]='B',[49]='N',[50]='M',
+        [51]='<',[52]='>',[53]='?',[57]=' ',
+    };
+    return scan_code < sizeof(plain) ?
+        (shift ? shifted[scan_code] : plain[scan_code]) : 0;
+}
+
+int platform_local_console_poll_key(PlatformConsoleKey *key)
+{
+    if (key == NULL || keyboard_ioport_cap == seL4_CapNull) return -1;
+    *key = (PlatformConsoleKey){.kind = PLATFORM_CONSOLE_KEY_NONE};
+    seL4_X86_IOPort_In8_t status =
+        seL4_X86_IOPort_In8(keyboard_ioport_cap, 0x64);
+    if (status.error != seL4_NoError) return -1;
+    if ((status.result & 1u) == 0) return 1;
+    seL4_X86_IOPort_In8_t input =
+        seL4_X86_IOPort_In8(keyboard_ioport_cap, 0x60);
+    if (input.error != seL4_NoError) return -1;
+    uint8_t code = input.result;
+    if (code == 0xe0) {
+        keyboard_extended = true;
+        return 1;
+    }
+    bool released = (code & 0x80u) != 0;
+    code &= 0x7fu;
+    if (code == 42) keyboard_left_shift = !released;
+    else if (code == 54) keyboard_right_shift = !released;
+    else if (code == 56) keyboard_alt = !released;
+    if (released || keyboard_extended) {
+        keyboard_extended = false;
+        return 1;
+    }
+    if (keyboard_alt && code >= 59 && code <= 63) {
+        key->kind = PLATFORM_CONSOLE_KEY_SWITCH_TERMINAL;
+        key->terminal_index = (uint8_t)(code - 59);
+        return 0;
+    }
+    uint8_t byte = translate_key(code,
+                                 keyboard_left_shift || keyboard_right_shift);
+    if (byte == 0) return 1;
+    key->kind = PLATFORM_CONSOLE_KEY_BYTE;
+    key->byte = byte;
     return 0;
 }
 

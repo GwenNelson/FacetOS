@@ -27,6 +27,39 @@ typedef struct Dominit0SerialTerminal {
 
 static Dominit0SerialTerminal serial_terminal;
 
+#define VGA_TERMINAL_COUNT 5u
+#define VGA_COLUMN_COUNT 80u
+#define VGA_ROW_COUNT 25u
+#define VGA_CELL_COUNT (VGA_COLUMN_COUNT * VGA_ROW_COUNT)
+#define VGA_INPUT_CAPACITY 256u
+
+typedef struct Dominit0VgaTerminal {
+    IByteReader input;
+    IByteWriter output;
+    ITerminal terminal;
+    ITerminalControl control;
+    FacetHandle input_handle;
+    FacetHandle output_handle;
+    FacetHandle terminal_handle;
+    FacetHandle control_handle;
+    uint16_t cells[VGA_CELL_COUNT];
+    size_t cursor;
+    uint8_t input_bytes[VGA_INPUT_CAPACITY];
+    size_t input_head;
+    size_t input_count;
+    size_t index;
+} Dominit0VgaTerminal;
+
+typedef struct Dominit0VgaSeat {
+    ISeat seat;
+    FacetHandle seat_handle;
+    Dominit0VgaTerminal terminals[VGA_TERMINAL_COUNT];
+    size_t active;
+    unsigned int lock;
+} Dominit0VgaSeat;
+
+static Dominit0VgaSeat vga_seat;
+
 typedef struct TerminalAssignmentBinding {
     CurrentDomain *domain;
     size_t assignment_index;
@@ -229,7 +262,9 @@ static int serial_terminal_export(void)
     return 0;
 }
 
-static int add_serial_assignment(CurrentDomain *domain, size_t assignment_index)
+static int add_assignment(CurrentDomain *domain, size_t assignment_index,
+                          FacetHandle input, FacetHandle output,
+                          FacetHandle control, FacetHandle terminal)
 {
     TerminalAssignmentBinding *expanded = realloc(
         assignment_bindings,
@@ -241,11 +276,274 @@ static int add_serial_assignment(CurrentDomain *domain, size_t assignment_index)
     *binding = (TerminalAssignmentBinding){
         .domain = domain,
         .assignment_index = assignment_index,
-        .input = serial_terminal.input_handle,
-        .output = serial_terminal.output_handle,
-        .control = serial_terminal.control_handle,
-        .terminal = serial_terminal.terminal_handle,
+        .input = input,
+        .output = output,
+        .control = control,
+        .terminal = terminal,
     };
+    return 0;
+}
+
+static int add_serial_assignment(CurrentDomain *domain, size_t assignment_index)
+{
+    return add_assignment(domain, assignment_index,
+                          serial_terminal.input_handle,
+                          serial_terminal.output_handle,
+                          serial_terminal.control_handle,
+                          serial_terminal.terminal_handle);
+}
+
+static void vga_lock(void)
+{
+    while (__atomic_test_and_set(&vga_seat.lock, __ATOMIC_ACQUIRE)) { }
+}
+
+static void vga_unlock(void)
+{
+    __atomic_clear(&vga_seat.lock, __ATOMIC_RELEASE);
+}
+
+static void vga_present_active(void)
+{
+    (void)platform_local_console_present(
+        vga_seat.terminals[vga_seat.active].cells, VGA_CELL_COUNT);
+}
+
+static void vga_queue_byte(Dominit0VgaTerminal *terminal, uint8_t byte)
+{
+    if (terminal->input_count == VGA_INPUT_CAPACITY) return;
+    size_t tail = (terminal->input_head + terminal->input_count) %
+        VGA_INPUT_CAPACITY;
+    terminal->input_bytes[tail] = byte;
+    terminal->input_count++;
+}
+
+static void vga_pump_keyboard(void)
+{
+    PlatformConsoleKey key;
+    while (platform_local_console_poll_key(&key) == 0) {
+        if (key.kind == PLATFORM_CONSOLE_KEY_SWITCH_TERMINAL &&
+            key.terminal_index < VGA_TERMINAL_COUNT) {
+            vga_seat.active = key.terminal_index;
+            vga_present_active();
+            klog(LOG_DEBUG, "VGA active terminal is tty%zu\n",
+                 vga_seat.active + 1);
+        } else if (key.kind == PLATFORM_CONSOLE_KEY_BYTE) {
+            vga_queue_byte(&vga_seat.terminals[vga_seat.active], key.byte);
+        }
+    }
+}
+
+static FacetResult vga_input_get_interface(void *self, uuid_t iid,
+                                           FacetHandle *out)
+{
+    Dominit0VgaTerminal *terminal = self;
+    if (iid_equal(iid, IID_IGenericObject) || iid_equal(iid, IID_IByteReader))
+        return return_handle(terminal->input_handle, out);
+    if (out != NULL) *out = (FacetHandle){0};
+    return FACET_NO_INTERFACE;
+}
+
+static FacetResult vga_input_read(void *self, uint32_t maximum,
+                                  FacetArray_u8 *payload)
+{
+    Dominit0VgaTerminal *terminal = self;
+    static uint8_t returned[VGA_TERMINAL_COUNT];
+    if (payload == NULL) return FACET_INVALID_ARGUMENT;
+    payload->data = NULL;
+    payload->count = 0;
+    if (maximum == 0) return FACET_OK;
+    vga_lock();
+    vga_pump_keyboard();
+    if (terminal->input_count != 0) {
+        returned[terminal->index] = terminal->input_bytes[terminal->input_head];
+        terminal->input_head = (terminal->input_head + 1) % VGA_INPUT_CAPACITY;
+        terminal->input_count--;
+        payload->data = &returned[terminal->index];
+        payload->count = 1;
+    }
+    vga_unlock();
+    return FACET_OK;
+}
+
+static FacetResult vga_output_get_interface(void *self, uuid_t iid,
+                                            FacetHandle *out)
+{
+    Dominit0VgaTerminal *terminal = self;
+    if (iid_equal(iid, IID_IGenericObject) || iid_equal(iid, IID_IByteWriter))
+        return return_handle(terminal->output_handle, out);
+    if (out != NULL) *out = (FacetHandle){0};
+    return FACET_NO_INTERFACE;
+}
+
+static void vga_scroll(Dominit0VgaTerminal *terminal)
+{
+    for (size_t i = 0; i < VGA_CELL_COUNT - VGA_COLUMN_COUNT; i++)
+        terminal->cells[i] = terminal->cells[i + VGA_COLUMN_COUNT];
+    for (size_t i = VGA_CELL_COUNT - VGA_COLUMN_COUNT;
+         i < VGA_CELL_COUNT; i++)
+        terminal->cells[i] = UINT16_C(0x0720);
+    terminal->cursor = VGA_CELL_COUNT - VGA_COLUMN_COUNT;
+}
+
+static void vga_put_byte(Dominit0VgaTerminal *terminal, uint8_t byte)
+{
+    if (byte == '\r') {
+        terminal->cursor -= terminal->cursor % VGA_COLUMN_COUNT;
+    } else if (byte == '\n') {
+        terminal->cursor += VGA_COLUMN_COUNT -
+            terminal->cursor % VGA_COLUMN_COUNT;
+    } else if (byte == '\b') {
+        if (terminal->cursor != 0) terminal->cursor--;
+        terminal->cells[terminal->cursor] = UINT16_C(0x0720);
+    } else if (byte == '\t') {
+        size_t spaces = 8 - (terminal->cursor % 8);
+        while (spaces-- != 0) vga_put_byte(terminal, ' ');
+    } else if (byte >= 32 && byte < 127) {
+        if (terminal->cursor >= VGA_CELL_COUNT) vga_scroll(terminal);
+        terminal->cells[terminal->cursor++] =
+            (uint16_t)(UINT16_C(0x0700) | byte);
+    }
+    if (terminal->cursor >= VGA_CELL_COUNT) vga_scroll(terminal);
+}
+
+static FacetResult vga_output_write(void *self, const FacetArray_u8 *payload,
+                                    uint32_t *written)
+{
+    Dominit0VgaTerminal *terminal = self;
+    if (payload == NULL || written == NULL ||
+        (payload->count != 0 && payload->data == NULL) ||
+        payload->count > UINT32_MAX)
+        return FACET_INVALID_ARGUMENT;
+    vga_lock();
+    for (size_t i = 0; i < payload->count; i++)
+        vga_put_byte(terminal, payload->data[i]);
+    if (terminal->index == vga_seat.active) vga_present_active();
+    vga_unlock();
+    *written = (uint32_t)payload->count;
+    return FACET_OK;
+}
+
+static FacetResult vga_terminal_get_interface(void *self, uuid_t iid,
+                                              FacetHandle *out)
+{
+    Dominit0VgaTerminal *terminal = self;
+    if (iid_equal(iid, IID_IGenericObject) || iid_equal(iid, IID_ITerminal))
+        return return_handle(terminal->terminal_handle, out);
+    if (out != NULL) *out = (FacetHandle){0};
+    return FACET_NO_INTERFACE;
+}
+
+static FacetResult vga_terminal_input(void *self, FacetHandle *out)
+{
+    return return_handle(((Dominit0VgaTerminal *)self)->input_handle, out);
+}
+
+static FacetResult vga_terminal_output(void *self, FacetHandle *out)
+{
+    return return_handle(((Dominit0VgaTerminal *)self)->output_handle, out);
+}
+
+static FacetResult vga_terminal_control(void *self, FacetHandle *out)
+{
+    return return_handle(((Dominit0VgaTerminal *)self)->control_handle, out);
+}
+
+static FacetResult vga_control_get_interface(void *self, uuid_t iid,
+                                             FacetHandle *out)
+{
+    Dominit0VgaTerminal *terminal = self;
+    if (iid_equal(iid, IID_IGenericObject) ||
+        iid_equal(iid, IID_ITerminalControl))
+        return return_handle(terminal->control_handle, out);
+    if (out != NULL) *out = (FacetHandle){0};
+    return FACET_NO_INTERFACE;
+}
+
+static FacetResult vga_seat_get_interface(void *self, uuid_t iid,
+                                          FacetHandle *out)
+{
+    (void)self;
+    if (iid_equal(iid, IID_IGenericObject) || iid_equal(iid, IID_ISeat))
+        return return_handle(vga_seat.seat_handle, out);
+    if (out != NULL) *out = (FacetHandle){0};
+    return FACET_NO_INTERFACE;
+}
+
+static FacetResult vga_seat_get_terminal(void *self, const FacetString *name,
+                                         FacetHandle *out)
+{
+    (void)self;
+    if (name == NULL || name->data == NULL || name->length != 4 ||
+        memcmp(name->data, "tty", 3) != 0 || name->data[3] < '1' ||
+        name->data[3] > '5')
+        return FACET_NOT_FOUND;
+    return return_handle(vga_seat.terminals[name->data[3] - '1'].terminal_handle,
+                         out);
+}
+
+static FacetResult vga_seat_active(void *self, FacetHandle *out)
+{
+    (void)self;
+    return return_handle(vga_seat.terminals[vga_seat.active].terminal_handle,
+                         out);
+}
+
+static FacetResult vga_seat_set_active(void *self, FacetHandle terminal)
+{
+    (void)self;
+    (void)terminal;
+    return FACET_NOT_SUPPORTED;
+}
+
+static int vga_terminal_export(void)
+{
+    if (vga_seat.seat_handle.platform != NULL) return 0;
+    if (platform_local_console_initialize() != 0) return -1;
+    for (size_t i = 0; i < VGA_TERMINAL_COUNT; i++) {
+        Dominit0VgaTerminal *terminal = &vga_seat.terminals[i];
+        terminal->index = i;
+        terminal->cursor = 0;
+        for (size_t cell = 0; cell < VGA_CELL_COUNT; cell++)
+            terminal->cells[cell] = UINT16_C(0x0720);
+        terminal->input.self = terminal;
+        terminal->input.priv = terminal;
+        terminal->input.getInterface = vga_input_get_interface;
+        terminal->input.read_bytes = vga_input_read;
+        terminal->output.self = terminal;
+        terminal->output.priv = terminal;
+        terminal->output.getInterface = vga_output_get_interface;
+        terminal->output.write_bytes = vga_output_write;
+        terminal->terminal.self = terminal;
+        terminal->terminal.priv = terminal;
+        terminal->terminal.getInterface = vga_terminal_get_interface;
+        terminal->terminal.get_input = vga_terminal_input;
+        terminal->terminal.get_output = vga_terminal_output;
+        terminal->terminal.get_control = vga_terminal_control;
+        terminal->control.self = terminal;
+        terminal->control.priv = terminal;
+        terminal->control.getInterface = vga_control_get_interface;
+        if (libfacet_export_interface(&terminal->input, &IByteReader_MetaData,
+                                      &terminal->input_handle) != FACET_OK ||
+            libfacet_export_interface(&terminal->output, &IByteWriter_MetaData,
+                                      &terminal->output_handle) != FACET_OK ||
+            libfacet_export_interface(&terminal->control,
+                                      &ITerminalControl_MetaData,
+                                      &terminal->control_handle) != FACET_OK ||
+            libfacet_export_interface(&terminal->terminal, &ITerminal_MetaData,
+                                      &terminal->terminal_handle) != FACET_OK)
+            return -1;
+    }
+    vga_seat.seat.self = &vga_seat;
+    vga_seat.seat.priv = &vga_seat;
+    vga_seat.seat.getInterface = vga_seat_get_interface;
+    vga_seat.seat.get_terminal = vga_seat_get_terminal;
+    vga_seat.seat.get_active_terminal = vga_seat_active;
+    vga_seat.seat.set_active_terminal = vga_seat_set_active;
+    if (libfacet_export_interface(&vga_seat.seat, &ISeat_MetaData,
+                                  &vga_seat.seat_handle) != FACET_OK)
+        return -1;
+    vga_present_active();
     return 0;
 }
 
@@ -254,22 +552,41 @@ int dominit0_terminal_initialize(Dominit0SystemConfig *system)
     if (system == NULL || system->current_domains == NULL)
         return -1;
     bool serial_is_assigned = false;
+    bool vga_is_assigned = false;
     for (size_t domain_index = 0; domain_index < system->domain_count; domain_index++) {
         const FacetConfigDomain *domain = &system->parsed.domains[domain_index];
         for (size_t terminal_index = 0; terminal_index < domain->terminal_count; terminal_index++) {
             const FacetConfigTerminalAssignment *assignment =
                 &domain->terminals[terminal_index];
-            if (system->parsed.seats[assignment->seat_index].type !=
-                FACET_CONFIG_SEAT_SERIAL)
-                continue;
-            if (!serial_is_assigned && serial_terminal_export() != 0)
-                return -1;
-            serial_is_assigned = true;
-            if (add_serial_assignment(system->current_domains[domain_index],
-                                      terminal_index) != 0)
-                return -1;
-            klog(LOG_INFO, "Delegated serial terminal %s to domain %llu\n",
-                 assignment->reference, (unsigned long long)domain->id);
+            FacetConfigSeatType type =
+                system->parsed.seats[assignment->seat_index].type;
+            if (type == FACET_CONFIG_SEAT_SERIAL) {
+                if (!serial_is_assigned && serial_terminal_export() != 0)
+                    return -1;
+                serial_is_assigned = true;
+                if (add_serial_assignment(system->current_domains[domain_index],
+                                          terminal_index) != 0)
+                    return -1;
+                klog(LOG_INFO, "Prepared serial terminal %s for domain %llu\n",
+                     assignment->reference, (unsigned long long)domain->id);
+            } else if (type == FACET_CONFIG_SEAT_LOCAL) {
+                if (!vga_is_assigned && vga_terminal_export() != 0)
+                    return -1;
+                vga_is_assigned = true;
+                size_t local_index = assignment->terminal_index;
+                if (local_index >= VGA_TERMINAL_COUNT)
+                    return -1;
+                Dominit0VgaTerminal *terminal =
+                    &vga_seat.terminals[local_index];
+                if (add_assignment(system->current_domains[domain_index],
+                                   terminal_index, terminal->input_handle,
+                                   terminal->output_handle,
+                                   terminal->control_handle,
+                                   terminal->terminal_handle) != 0)
+                    return -1;
+                klog(LOG_INFO, "Prepared VGA terminal %s for domain %llu\n",
+                     assignment->reference, (unsigned long long)domain->id);
+            }
         }
     }
     return 0;
@@ -312,6 +629,20 @@ void dominit0_terminal_destroy(void)
     free(assignment_bindings);
     assignment_bindings = NULL;
     assignment_binding_count = 0;
+    if (vga_seat.seat_handle.platform != NULL)
+        (void)libfacet_unexport_interface(vga_seat.seat_handle);
+    for (size_t i = 0; i < VGA_TERMINAL_COUNT; i++) {
+        Dominit0VgaTerminal *terminal = &vga_seat.terminals[i];
+        if (terminal->terminal_handle.platform != NULL)
+            (void)libfacet_unexport_interface(terminal->terminal_handle);
+        if (terminal->control_handle.platform != NULL)
+            (void)libfacet_unexport_interface(terminal->control_handle);
+        if (terminal->output_handle.platform != NULL)
+            (void)libfacet_unexport_interface(terminal->output_handle);
+        if (terminal->input_handle.platform != NULL)
+            (void)libfacet_unexport_interface(terminal->input_handle);
+    }
+    memset(&vga_seat, 0, sizeof(vga_seat));
     if (serial_terminal.terminal_handle.platform != NULL)
         (void)libfacet_unexport_interface(serial_terminal.terminal_handle);
     if (serial_terminal.seat_handle.platform != NULL)

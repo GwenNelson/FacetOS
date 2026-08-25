@@ -40,6 +40,22 @@ int platform_serial_initialize(void);
 int platform_serial_read_byte(uint8_t *byte);
 int platform_serial_write(const uint8_t *data, size_t size);
 
+typedef enum PlatformConsoleKeyKind {
+    PLATFORM_CONSOLE_KEY_NONE = 0,
+    PLATFORM_CONSOLE_KEY_BYTE,
+    PLATFORM_CONSOLE_KEY_SWITCH_TERMINAL,
+} PlatformConsoleKeyKind;
+
+typedef struct PlatformConsoleKey {
+    PlatformConsoleKeyKind kind;
+    uint8_t byte;
+    uint8_t terminal_index;
+} PlatformConsoleKey;
+
+int platform_local_console_initialize(void);
+int platform_local_console_present(const uint16_t *cells, size_t count);
+int platform_local_console_poll_key(PlatformConsoleKey *key);
+
 /* Starts one configured domain and returns platform-owned runtime state.
  * A NULL result means the domain could not be started. */
 void *platform_start_domain(CurrentDomain *current);
