@@ -165,6 +165,7 @@ endif
 	facet-config \
 	test \
 	test-config \
+	test-sha256 \
 	test-klog \
 	test-logging-setup
 
@@ -328,6 +329,7 @@ FACET_CONFIG_TEST := $(FACET_CONFIG_BUILD)/config-test
 FACET_CONFIG_OBJECTS_TEST := $(FACET_CONFIG_BUILD)/config-objects-test
 FACET_KLOG_TEST := $(FACET_CONFIG_BUILD)/klog-test
 FACET_LOGGING_SETUP_TEST := $(FACET_CONFIG_BUILD)/logging-setup-test
+FACET_SHA256_TEST := $(FACET_CONFIG_BUILD)/sha256-test
 
 $(FACET_GENERATED_IGENERIC): $(FACET_IDLC) $(ROOT)/idl/IGenericObject.facet
 	@mkdir -p $(FACET_GENERATED_INTERFACE_DIR)
@@ -376,6 +378,17 @@ test-config: $(FACET_CONFIG_TEST) $(FACET_CONFIG_OBJECTS_TEST)
 	$(FACET_CONFIG_TEST)
 	$(FACET_CONFIG_OBJECTS_TEST)
 
+$(FACET_SHA256_TEST): $(ROOT)/tests/sha256_test.c \
+		$(ROOT)/libfacet/src/common/sha256.c \
+		$(ROOT)/include/facetos/sha256.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=gnu11 -O2 -Wall -Wextra -Werror -I$(ROOT)/include \
+		$(ROOT)/libfacet/src/common/sha256.c \
+		$(ROOT)/tests/sha256_test.c -o $@
+
+test-sha256: $(FACET_SHA256_TEST)
+	$(FACET_SHA256_TEST)
+
 $(FACET_KLOG_TEST): $(ROOT)/tests/klog_test.c \
 		$(ROOT)/src/dominit0/klog.c $(ROOT)/src/dominit0/klock.c \
 		$(ROOT)/include/facetos/dominit0/klog.h \
@@ -407,7 +420,7 @@ test-logging-setup: $(FACET_LOGGING_SETUP_TEST)
 	$(FACET_LOGGING_SETUP_TEST) optional
 	$(FACET_LOGGING_SETUP_TEST) required
 
-test: test-config test-klog test-logging-setup
+test: test-config test-sha256 test-klog test-logging-setup
 
 
 #
