@@ -292,6 +292,7 @@ int dominit0_config_objects_init(Dominit0SystemConfig *system,
             return -1;
         }
         current->config = &system->domains[i].domain;
+        current->parsed = &system->parsed.domains[i];
         system->current_domains[i] = current;
     }
     return 0;

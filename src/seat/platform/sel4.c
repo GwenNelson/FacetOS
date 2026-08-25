@@ -1,4 +1,5 @@
 #include "api.h"
+#include "../pc_cursor.h"
 
 #include <sel4/sel4.h>
 
@@ -15,21 +16,33 @@ static bool right_shift;
 static bool alt;
 static bool extended;
 
-static int crtc_write(uint8_t index, uint8_t value)
+static int cursor_port_read(void *context, uint16_t port, uint8_t *value)
 {
-    if (seL4_X86_IOPort_Out8(device1_cap, 0x3d4, index) != seL4_NoError)
-        return -1;
-    return seL4_X86_IOPort_Out8(device1_cap, 0x3d5, value) == seL4_NoError
+    (void)context;
+    if (value == NULL) return -1;
+    seL4_X86_IOPort_In8_t input = seL4_X86_IOPort_In8(device1_cap, port);
+    if (input.error != seL4_NoError) return -1;
+    *value = input.result;
+    return 0;
+}
+
+static int cursor_port_write(void *context, uint16_t port, uint8_t value)
+{
+    (void)context;
+    return seL4_X86_IOPort_Out8(device1_cap, port, value) == seL4_NoError
         ? 0 : -1;
 }
 
+static const SeatPCCursorIO cursor_io = {
+    .read = cursor_port_read,
+    .write = cursor_port_write,
+};
+
 static int update_cursor(size_t cursor)
 {
-    if (cursor > UINT16_MAX) return -1;
-    if (crtc_write(0x0f, (uint8_t)cursor) != 0 ||
-        crtc_write(0x0e, (uint8_t)(cursor >> 8)) != 0)
+    if (cursor > UINT16_MAX)
         return -1;
-    return 0;
+    return seat_pc_cursor_set(&cursor_io, (uint16_t)cursor);
 }
 
 static uint8_t translate_key(uint8_t code, bool shift)
@@ -78,8 +91,8 @@ int seat_platform_initialize(uint64_t device0, uint64_t device1,
 #else
     if (device1_cap == seL4_CapNull || vga_address == 0) return -1;
     vga_memory = (volatile uint16_t *)(uintptr_t)vga_address;
-    /* Standard colour-text cursor shape, explicitly enabled. */
-    if (crtc_write(0x0a, 0x0d) != 0 || crtc_write(0x0b, 0x0f) != 0)
+    /* Enable the hardware cursor without replacing its firmware-set shape. */
+    if (seat_pc_cursor_enable(&cursor_io) != 0)
         return -1;
     return update_cursor(0);
 #endif

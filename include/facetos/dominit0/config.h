@@ -23,6 +23,7 @@ typedef struct Dominit0DomainConfigObject {
  * and interprets platform_state after platform_start_domain() succeeds. */
 typedef struct CurrentDomain {
     IDomainConfig *config;
+    const FacetConfigDomain *parsed;
     Dominit0DomainEnvironment *environment;
     FacetInitrd *initrd;
     void *platform_state;

@@ -91,6 +91,8 @@ typedef struct Sel4SeatState {
     FacetHandle bootstrap_handle;
     cspacepath_t ready_receive_path;
     bool ready_receive_allocated;
+    cspacepath_t fault_endpoint_path;
+    bool fault_endpoint_allocated;
     char argument_text[9][WORD_STRING_SIZE];
     char *arguments[10];
     CurrentSeat *seat;
@@ -363,7 +365,7 @@ static int seat_prepare(sel4utils_process_t *process, void *context,
         out_bootstrap_handle == NULL)
         return -1;
     if (vka_alloc_endpoint(&sel4_vka, &state->service_endpoint) != 0 ||
-        vka_alloc_endpoint(&sel4_vka, &state->ready_endpoint) != 0)
+        state->ready_endpoint.cptr == seL4_CapNull)
         return -1;
     seL4_CPtr child_service = sel4utils_copy_cap_to_process(
         process, &sel4_vka, state->service_endpoint.cptr);
@@ -418,18 +420,32 @@ static void seat_cleanup(void *context)
 {
     Sel4SeatState *state = context;
     if (state == NULL) return;
-    if (state->bootstrap_handle.platform != NULL)
+    if (state->bootstrap_handle.platform != NULL) {
         (void)libfacet_handle_release(state->bootstrap_handle);
+        state->bootstrap_handle = (FacetHandle){0};
+    }
     if (state->ready_receive_allocated) {
         vka_cnode_delete(&state->ready_receive_path);
         vka_cspace_free_path(&sel4_vka, state->ready_receive_path);
+        state->ready_receive_allocated = false;
     }
-    if (state->service_endpoint.cptr != seL4_CapNull)
+    if (state->fault_endpoint_allocated) {
+        vka_cnode_delete(&state->fault_endpoint_path);
+        vka_cspace_free_path(&sel4_vka, state->fault_endpoint_path);
+        state->fault_endpoint_allocated = false;
+    }
+    if (state->service_endpoint.cptr != seL4_CapNull) {
         vka_free_object(&sel4_vka, &state->service_endpoint);
-    if (state->ready_endpoint.cptr != seL4_CapNull)
+        state->service_endpoint.cptr = seL4_CapNull;
+    }
+    if (state->ready_endpoint.cptr != seL4_CapNull) {
         vka_free_object(&sel4_vka, &state->ready_endpoint);
-    if (state->vga_frame.cptr != seL4_CapNull)
+        state->ready_endpoint.cptr = seL4_CapNull;
+    }
+    if (state->vga_frame.cptr != seL4_CapNull) {
         vka_free_object(&sel4_vka, &state->vga_frame);
+        state->vga_frame.cptr = seL4_CapNull;
+    }
 }
 
 typedef struct boot_module {
@@ -604,7 +620,8 @@ load_and_start_domain(sel4utils_process_t *process,
                       char *argv[],
                       DomainPreSpawnHook pre_spawn,
                       DomainFailureCleanup failure_cleanup,
-                      void *hook_context)
+                      void *hook_context,
+                      seL4_CPtr fault_endpoint)
 {
     if (process == NULL || elf_buffer == NULL || elf_size == 0 ||
         argc < 1 || argv == NULL) {
@@ -647,6 +664,8 @@ load_and_start_domain(sel4utils_process_t *process,
     config = process_config_noelf(config,
                                   (void *)elf_getEntryPoint(&elf),
                                   sysinfo);
+    if (fault_endpoint != seL4_CapNull)
+        config = process_config_fault_cptr(config, fault_endpoint);
 
     if (sel4utils_configure_process_custom(process, &sel4_vka,
                                            &sel4_vspace, config) != 0) {
@@ -959,7 +978,7 @@ void *platform_start_domain(CurrentDomain *current)
                                dominit_argv,
                                child_page_allocator_prepare,
                                child_page_allocator_cleanup,
-                               state) != 0) {
+                               state, seL4_CapNull) != 0) {
          klog(LOG_ERROR,
               "platform_start_domain(): unable to start dominit for domain %llu (%s)\n",
               (unsigned long long)domain_id, domain_name.data);
@@ -984,20 +1003,50 @@ void *platform_start_seat(CurrentSeat *seat, const void *elf_data,
     Sel4SeatState *state = calloc(1, sizeof(*state));
     if (state == NULL) return NULL;
     state->seat = seat;
+    cspacepath_t ready_source;
+    if (vka_alloc_endpoint(&sel4_vka, &state->ready_endpoint) != 0 ||
+        vka_cspace_alloc_path(&sel4_vka, &state->fault_endpoint_path) != 0) {
+        seat_cleanup(state);
+        free(state);
+        return NULL;
+    }
+    state->fault_endpoint_allocated = true;
+    vka_cspace_make_path(&sel4_vka, state->ready_endpoint.cptr,
+                         &ready_source);
+    if (vka_cnode_mint(&state->fault_endpoint_path, &ready_source,
+                       seL4_AllRights, 2) != seL4_NoError) {
+        seat_cleanup(state);
+        free(state);
+        return NULL;
+    }
     /* seat_prepare fills the strings before load_and_start_domain copies the
      * argument vector onto the new process stack. */
     state->arguments[0] = (char *)seat->config->server;
     for (size_t i = 0; i < 9; i++) state->arguments[i + 1] = "0";
     if (load_and_start_domain(&state->process, elf_data, elf_size,
                               seL4_MaxPrio, 10, state->arguments,
-                              seat_prepare, seat_cleanup, state) != 0) {
+                              seat_prepare, seat_cleanup, state,
+                              state->fault_endpoint_path.capPtr) != 0) {
+        seat_cleanup(state);
         free(state);
         return NULL;
     }
+    vka_cnode_delete(&state->fault_endpoint_path);
+    vka_cspace_free_path(&sel4_vka, state->fault_endpoint_path);
+    state->fault_endpoint_allocated = false;
 
     vka_set_cap_receive_path(&state->ready_receive_path);
     seL4_Word badge = 0;
     seL4_MessageInfo_t ready = seL4_Recv(state->ready_endpoint.cptr, &badge);
+    if (badge == 2) {
+        klog(LOG_ERROR, "Seat server %s faulted during startup (label %llu)\n",
+             seat->config->server,
+             (unsigned long long)seL4_MessageInfo_get_label(ready));
+        sel4utils_destroy_process(&state->process, &sel4_vka);
+        seat_cleanup(state);
+        free(state);
+        return NULL;
+    }
     if (badge != 1 || seL4_MessageInfo_get_extraCaps(ready) != 1 ||
         facet_sel4_handle_from_cap(state->ready_receive_path.capPtr,
                                    out_seat) != FACET_OK) {
@@ -1030,7 +1079,8 @@ void *platform_start_process(CurrentDomain *domain, const void *elf_data,
     if (load_and_start_domain(&state->process, elf_data, elf_size,
                               seL4_MaxPrio, argc, argv,
                               program_page_allocator_prepare,
-                              program_page_allocator_cleanup, state) != 0) {
+                              program_page_allocator_cleanup, state,
+                              seL4_CapNull) != 0) {
         free(state);
         return NULL;
     }

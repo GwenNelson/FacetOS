@@ -1,0 +1,9 @@
+// Provisional public POSIX syscall view.  This first slice intentionally
+// contains only write(2); transport status and POSIX status are separate.
+interface IPOSIXView {
+    uuid auto;
+    requires IGenericObject;
+
+    method FacetResult write_fd(in i32 fd, in array<u8> data,
+                                out i64 result, out i32 error);
+}

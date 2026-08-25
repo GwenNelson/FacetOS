@@ -22,7 +22,7 @@ static size_t bootstrap_used;
 static size_t bootstrap_handoff;
 static IPageAllocator *page_allocator;
 static unsigned int liballoc_locked;
-static int page_allocator_active;
+static int allocator_active;
 
 static void *bootstrap_malloc(size_t size);
 
@@ -67,13 +67,13 @@ static void *bootstrap_malloc(size_t size)
 
 void *malloc(size_t size)
 {
-    return page_allocator_active ? liballoc_malloc_impl(size) :
+    return allocator_active ? liballoc_malloc_impl(size) :
                                    bootstrap_malloc(size);
 }
 
 void free(void *pointer)
 {
-    if (pointer == NULL || !page_allocator_active || is_early_pointer(pointer))
+    if (pointer == NULL || !allocator_active || is_early_pointer(pointer))
         return;
     liballoc_free_impl(pointer);
 }
@@ -95,7 +95,7 @@ void *realloc(void *pointer, size_t size)
         free(pointer);
         return NULL;
     }
-    if (!page_allocator_active) return bootstrap_realloc(pointer, size);
+    if (!allocator_active) return bootstrap_realloc(pointer, size);
     if (!is_early_pointer(pointer)) return liballoc_realloc_impl(pointer, size);
 
     AppBootstrapBlock *old = ((AppBootstrapBlock *)pointer) - 1;
@@ -137,15 +137,11 @@ int liballoc_free(void *pointer, int pages)
                                 (uint64_t)(uintptr_t)pointer) == FACET_OK ? 0 : -1;
 }
 
-int facet_app_allocator_use_pages(IPageAllocator *allocator)
+static int activate_allocator(IPageAllocator *allocator)
 {
-    if (page_allocator_active || allocator == NULL) return -1;
-    uint64_t page_size = 0;
-    if (allocator->get_page_size(allocator->self, &page_size) != FACET_OK ||
-        page_size != APP_LIBALLOC_PAGE_SIZE)
-        return -1;
+    if (allocator_active) return -1;
     size_t handoff = align_up(bootstrap_used);
-    if (handoff == 0 || handoff >= APP_BOOTSTRAP_HEAP_SIZE) return -1;
+    if (handoff >= APP_BOOTSTRAP_HEAP_SIZE) return -1;
     page_allocator = allocator;
     bootstrap_handoff = handoff;
     if (liballoc_add_region(bootstrap_heap.bytes + handoff,
@@ -154,6 +150,21 @@ int facet_app_allocator_use_pages(IPageAllocator *allocator)
         bootstrap_handoff = 0;
         return -1;
     }
-    page_allocator_active = 1;
+    allocator_active = 1;
     return 0;
+}
+
+int facet_app_allocator_use_pages(IPageAllocator *allocator)
+{
+    if (allocator == NULL) return -1;
+    uint64_t page_size = 0;
+    if (allocator->get_page_size(allocator->self, &page_size) != FACET_OK ||
+        page_size != APP_LIBALLOC_PAGE_SIZE)
+        return -1;
+    return activate_allocator(allocator);
+}
+
+int facet_app_allocator_use_static(void)
+{
+    return activate_allocator(NULL);
 }

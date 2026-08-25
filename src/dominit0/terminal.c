@@ -166,15 +166,9 @@ int dominit0_terminal_bind_process_environment(
         if (binding->domain != domain ||
             binding->assignment_index != assignment_index)
             continue;
-        return dominit0_process_environment_bind_named(
-                   environment, "terminal.control", IID_ITerminalControl,
-                   binding->control) ||
-               dominit0_process_environment_bind_named(
-                   environment, "stdin", IID_IByteReader, binding->input) ||
-               dominit0_process_environment_bind_named(
-                   environment, "stdout", IID_IByteWriter, binding->output) ||
-               dominit0_process_environment_bind_named(
-                   environment, "stderr", IID_IByteWriter, binding->output);
+        return dominit0_process_environment_bind_terminal(
+            environment, binding->input, binding->output, binding->control,
+            binding->terminal);
     }
     return -1;
 }

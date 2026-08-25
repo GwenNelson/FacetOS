@@ -32,6 +32,7 @@ FACET_SHELL    := $(SDK_BUILD)/FacetShell
 FACET_LOGIN    := $(SDK_BUILD)/FacetLogin
 FACET_DUMMY    := $(SDK_BUILD)/FacetDummy
 FACET_DUMMYSH  := $(SDK_BUILD)/dummysh
+FACET_POSIX_LOGIN := $(SDK_BUILD)/facet-posix/PosixLogin
 FACET_SEAT_SERIAL := $(SDK_BUILD)/seat-server-serial
 FACET_SEAT_PC := $(SDK_BUILD)/seat-server-pc-console
 FACET_CONFIG_FILE := $(ROOT)/config/facet.toml
@@ -175,7 +176,8 @@ endif
 	test-sha256 \
 	test-initrd \
 	test-klog \
-	test-logging-setup
+	test-logging-setup \
+	test-seat-pc-console
 
 
 all: facetos
@@ -341,6 +343,7 @@ FACET_SHA256_TEST := $(FACET_CONFIG_BUILD)/sha256-test
 FACET_INITRD_TEST := $(FACET_CONFIG_BUILD)/initrd-test
 FACET_AUTH_RPC_TEST := $(FACET_CONFIG_BUILD)/auth-rpc-test
 FACET_TERMINAL_RPC_TEST := $(FACET_CONFIG_BUILD)/terminal-rpc-test
+FACET_SEAT_PC_CONSOLE_TEST := $(FACET_CONFIG_BUILD)/seat-pc-console-test
 
 $(FACET_GENERATED_IGENERIC): $(FACET_IDLC) $(ROOT)/idl/IGenericObject.facet
 	@mkdir -p $(FACET_GENERATED_INTERFACE_DIR)
@@ -437,6 +440,7 @@ $(FACET_TERMINAL_RPC_TEST): $(ROOT)/tests/terminal_rpc_test.c \
 		$(ROOT)/src/config.c $(ROOT)/src/dominit0/config.c \
 		$(ROOT)/src/dominit0/environment.c \
 		$(ROOT)/src/dominit0/process_environment.c \
+		$(ROOT)/src/dominit0/posix.c \
 		$(ROOT)/src/dominit0/terminal.c $(ROOT)/src/dominit0/initrd.c \
 		$(ROOT)/libfacet/src/common/runtime.c \
 		$(FACET_IDLC)
@@ -448,12 +452,25 @@ $(FACET_TERMINAL_RPC_TEST): $(ROOT)/tests/terminal_rpc_test.c \
 		$(ROOT)/libfacet/src/common/runtime.c $(ROOT)/src/config.c \
 		$(ROOT)/src/dominit0/config.c $(ROOT)/src/dominit0/environment.c \
 		$(ROOT)/src/dominit0/process_environment.c \
+		$(ROOT)/src/dominit0/posix.c \
 		$(ROOT)/src/dominit0/terminal.c $(ROOT)/src/dominit0/initrd.c \
 		$(ROOT)/tests/terminal_rpc_test.c \
 		-Wl,--gc-sections -o $@
 
 test-terminal-rpc: $(FACET_TERMINAL_RPC_TEST)
 	$(FACET_TERMINAL_RPC_TEST)
+
+$(FACET_SEAT_PC_CONSOLE_TEST): $(ROOT)/tests/seat_pc_console_test.c \
+		$(ROOT)/src/seat/pc_console.c $(ROOT)/src/seat/pc_console.h \
+		$(ROOT)/src/seat/pc_cursor.c $(ROOT)/src/seat/pc_cursor.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=gnu11 -O2 -Wall -Wextra -Werror \
+		-I$(ROOT)/src/seat $(ROOT)/src/seat/pc_console.c \
+		$(ROOT)/src/seat/pc_cursor.c \
+		$(ROOT)/tests/seat_pc_console_test.c -o $@
+
+test-seat-pc-console: $(FACET_SEAT_PC_CONSOLE_TEST)
+	$(FACET_SEAT_PC_CONSOLE_TEST)
 
 $(FACET_KLOG_TEST): $(ROOT)/tests/klog_test.c \
 		$(ROOT)/src/dominit0/klog.c $(ROOT)/src/dominit0/klock.c \
@@ -487,7 +504,7 @@ test-logging-setup: $(FACET_LOGGING_SETUP_TEST)
 	$(FACET_LOGGING_SETUP_TEST) required
 
 test: test-config test-sha256 test-initrd test-auth-rpc test-terminal-rpc \
-	test-klog test-logging-setup
+	test-klog test-logging-setup test-seat-pc-console
 
 
 #
@@ -601,11 +618,15 @@ $(INITRD_SYSTEM): $(ROOT)/initrd/system/README $(FACET_LOGIN) $(FACET_SHELL) $(F
 	cp $(FACET_DUMMY) $(ROOT)/build/initrd/system-root/FacetOS/FacetDummy
 	cd $(ROOT)/build/initrd/system-root && find . -print | sort | cpio --quiet -o -H newc > $@
 
-$(INITRD_CHILD): $(ROOT)/initrd/child/README $(FACET_DUMMYSH)
+$(FACET_POSIX_LOGIN): facet-idlc libfacet-common configure
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) PosixLogin
+
+$(INITRD_CHILD): $(ROOT)/initrd/child/README $(FACET_DUMMYSH) $(FACET_POSIX_LOGIN)
 	mkdir -p $(dir $@)
 	mkdir -p $(ROOT)/build/initrd/child-root/bin
 	cp $(ROOT)/initrd/child/README $(ROOT)/build/initrd/child-root/README
 	cp $(FACET_DUMMYSH) $(ROOT)/build/initrd/child-root/bin/dummysh
+	cp $(FACET_POSIX_LOGIN) $(ROOT)/build/initrd/child-root/bin/login
 	cd $(ROOT)/build/initrd/child-root && find . -print | sort | cpio --quiet -o -H newc > $@
 
 

@@ -166,9 +166,15 @@ static FacetResult launch_process(ProcessManager *manager,
         result = FACET_OUT_OF_MEMORY;
         goto done;
     }
+    Dominit0ProcessProfile profile = DOMINIT0_PROCESS_NATIVE;
+    if (initial && manager->domain->parsed != NULL &&
+        terminal_index < manager->domain->parsed->terminal_count &&
+        manager->domain->parsed->terminals[terminal_index].view ==
+            FACET_CONFIG_TERMINAL_VIEW_POSIX)
+        profile = DOMINIT0_PROCESS_PURE_POSIX;
     process->environment = dominit0_process_environment_create(
         manager->domain->environment,
-        initial ? (FacetHandle){0} : session_handle, initial);
+        initial ? (FacetHandle){0} : session_handle, initial, profile);
     if (process->environment == NULL) {
         free(process);
         result = FACET_OUT_OF_MEMORY;
@@ -202,9 +208,10 @@ static FacetResult launch_process(ProcessManager *manager,
     if (libfacet_export_interface(&process->lifecycle,
                                   &IProcessLifecycle_MetaData,
                                   &process->lifecycle_handle) != FACET_OK ||
-        dominit0_process_environment_bind_named(
-            process->environment, "process.lifecycle", IID_IProcessLifecycle,
-            process->lifecycle_handle) != 0) {
+        (profile == DOMINIT0_PROCESS_NATIVE &&
+         dominit0_process_environment_bind_named(
+             process->environment, "process.lifecycle",
+             IID_IProcessLifecycle, process->lifecycle_handle) != 0)) {
         if (process->lifecycle_handle.platform != NULL)
             (void)libfacet_unexport_interface(process->lifecycle_handle);
         (void)libfacet_unexport_interface(process->handle);

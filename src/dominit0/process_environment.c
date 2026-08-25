@@ -3,7 +3,12 @@
 #include <facetos/interfaces/IGenericObject.h>
 #include <facetos/interfaces/IPageAllocator.h>
 #include <facetos/interfaces/IProcessEnvironment.h>
+#include <facetos/interfaces/IPOSIXView.h>
 #include <facetos/interfaces/ISession.h>
+#include <facetos/interfaces/IByteReader.h>
+#include <facetos/interfaces/IByteWriter.h>
+#include <facetos/interfaces/ITerminalControl.h>
+#include <facetos/dominit0/posix.h>
 #include <facetos/utf8.h>
 
 #include <stdlib.h>
@@ -24,6 +29,9 @@ struct Dominit0ProcessEnvironment {
     BindingInfo listed[PROCESS_BINDING_MAX];
     size_t binding_count;
     FacetHandle owned_session;
+    FacetHandle private_page_allocator;
+    Dominit0ProcessProfile profile;
+    Dominit0PosixView *posix_view;
 };
 
 static bool iid_equal(uuid_t left, uuid_t right)
@@ -76,8 +84,13 @@ static FacetResult get_interface(void *self, uuid_t iid, FacetHandle *out)
     if (out == NULL) return FACET_INVALID_ARGUMENT;
     *out = (FacetHandle){0};
     if (!iid_equal(iid, IID_IGenericObject) &&
-        !iid_equal(iid, IID_IProcessEnvironment))
+        !iid_equal(iid, IID_IProcessEnvironment)) {
+        if (iid_equal(iid, IID_IPOSIXView) && environment->posix_view != NULL) {
+            *out = dominit0_posix_view_handle(environment->posix_view);
+            return FACET_OK;
+        }
         return FACET_NO_INTERFACE;
+    }
     *out = environment->handle;
     return FACET_OK;
 }
@@ -152,13 +165,15 @@ static FacetResult list_bindings(void *self, FacetArray_BindingInfo *out)
 
 Dominit0ProcessEnvironment *dominit0_process_environment_create(
     Dominit0DomainEnvironment *parent, FacetHandle session,
-    bool bootstrap_authority)
+    bool bootstrap_authority, Dominit0ProcessProfile profile)
 {
     if (parent == NULL) return NULL;
     Dominit0ProcessEnvironment *environment = calloc(1, sizeof(*environment));
     if (environment == NULL) return NULL;
+    environment->profile = profile;
     static const char *delegated[] = {"logger", "files"};
-    for (size_t i = 0; i < sizeof(delegated) / sizeof(delegated[0]); i++) {
+    for (size_t i = 0; profile == DOMINIT0_PROCESS_NATIVE &&
+         i < sizeof(delegated) / sizeof(delegated[0]); i++) {
         uuid_t iid;
         FacetHandle handle = {0};
         FacetResult result = dominit0_environment_resolve_named(
@@ -169,7 +184,7 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
     static const char *bootstrap_delegated[] = {
         "auth", "security", "processes",
     };
-    if (bootstrap_authority) {
+    if (bootstrap_authority && profile == DOMINIT0_PROCESS_NATIVE) {
         for (size_t i = 0;
              i < sizeof(bootstrap_delegated) / sizeof(bootstrap_delegated[0]);
              i++) {
@@ -182,7 +197,7 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
                 goto fail;
         }
     }
-    if (session.platform != NULL) {
+    if (session.platform != NULL && profile == DOMINIT0_PROCESS_NATIVE) {
         if (libfacet_handle_clone(session, &environment->owned_session) != FACET_OK ||
             bind(environment, "session", IID_ISession,
                  environment->owned_session) != 0)
@@ -210,13 +225,40 @@ int dominit0_process_environment_bind_named(
     Dominit0ProcessEnvironment *environment, const char *name,
     uuid_t primary_iid, FacetHandle object)
 {
+    if (environment == NULL ||
+        environment->profile == DOMINIT0_PROCESS_PURE_POSIX)
+        return -1;
     return bind(environment, name, primary_iid, object);
 }
 
 int dominit0_process_environment_bind_page_allocator(
     Dominit0ProcessEnvironment *environment, FacetHandle allocator)
 {
+    if (environment != NULL &&
+        environment->profile == DOMINIT0_PROCESS_PURE_POSIX) {
+        environment->private_page_allocator = allocator;
+        return 0;
+    }
     return bind(environment, "memory.pages", IID_IPageAllocator, allocator);
+}
+
+int dominit0_process_environment_bind_terminal(
+    Dominit0ProcessEnvironment *environment, FacetHandle input,
+    FacetHandle output, FacetHandle control, FacetHandle terminal)
+{
+    (void)terminal;
+    if (environment == NULL) return -1;
+    if (environment->profile == DOMINIT0_PROCESS_PURE_POSIX) {
+        environment->posix_view = dominit0_posix_view_create(output);
+        if (environment->posix_view == NULL) return -1;
+        return bind(environment, "posix", IID_IPOSIXView,
+                    dominit0_posix_view_handle(environment->posix_view));
+    }
+    return bind(environment, "terminal.control", IID_ITerminalControl,
+                control) ||
+           bind(environment, "stdin", IID_IByteReader, input) ||
+           bind(environment, "stdout", IID_IByteWriter, output) ||
+           bind(environment, "stderr", IID_IByteWriter, output);
 }
 
 FacetHandle dominit0_process_environment_root_handle(
@@ -232,6 +274,7 @@ void dominit0_process_environment_destroy(Dominit0ProcessEnvironment *environmen
         (void)libfacet_unexport_interface(environment->handle);
     if (environment->owned_session.platform != NULL)
         (void)libfacet_handle_release(environment->owned_session);
+    dominit0_posix_view_destroy(environment->posix_view);
     for (size_t i = 0; i < environment->binding_count; i++)
         free(environment->bindings[i].name);
     free(environment);

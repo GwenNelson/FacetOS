@@ -8,6 +8,7 @@
 #include <facetos/interfaces/IByteReader.h>
 #include <facetos/interfaces/IByteWriter.h>
 #include <facetos/interfaces/IProcessEnvironment.h>
+#include <facetos/interfaces/IPOSIXView.h>
 #include <facetos/interfaces/ITerminal.h>
 #include <facetos/interfaces/ITerminalControl.h>
 #include <facetos/libfacet/platform.h>
@@ -273,7 +274,8 @@ static IProcessEnvironment *make_environment(Dominit0SystemConfig *system,
                                              Dominit0ProcessEnvironment **server_out)
 {
     Dominit0ProcessEnvironment *server = dominit0_process_environment_create(
-        system->current_domains[domain]->environment, (FacetHandle){0}, false);
+        system->current_domains[domain]->environment, (FacetHandle){0}, false,
+        DOMINIT0_PROCESS_NATIVE);
     assert(server != NULL);
     assert(dominit0_terminal_bind_process_environment(
                system->current_domains[domain], assignment, server) == 0);
@@ -374,6 +376,53 @@ int main(void)
     bytes = (FacetArray_u8){0};
     assert(tty2_input->read_bytes(tty2_input->self, 1, &bytes) == FACET_OK);
     assert(bytes.count == 0);
+
+    Dominit0ProcessEnvironment *posix_server =
+        dominit0_process_environment_create(
+            system.current_domains[1]->environment, (FacetHandle){0}, true,
+            DOMINIT0_PROCESS_PURE_POSIX);
+    assert(posix_server != NULL);
+    assert(dominit0_terminal_bind_process_environment(
+               system.current_domains[1], 0, posix_server) == 0);
+    FacetHandle posix_root_handle = {0};
+    assert(libfacet_handle_clone(
+               dominit0_process_environment_root_handle(posix_server),
+               &posix_root_handle) == FACET_OK);
+    IProcessEnvironment *posix_environment = libfacet_new_proxy_client(
+        &IProcessEnvironment_MetaData, posix_root_handle);
+    assert(posix_environment != NULL);
+    FacetArray_BindingInfo bindings = {0};
+    assert(posix_environment->list_bindings(posix_environment->self,
+                                            &bindings) == FACET_OK);
+    assert(bindings.count == 1 && bindings.data[0].name.length == 5 &&
+           memcmp(bindings.data[0].name.data, "posix", 5) == 0);
+    assert(dominit0_process_environment_bind_named(
+               posix_server, "process.lifecycle", IID_IGenericObject,
+               posix_root_handle) != 0);
+    FacetString stdout_name = {.data = "stdout", .length = 6};
+    FacetHandle hidden = {0};
+    assert(posix_environment->resolve(posix_environment->self, &stdout_name,
+                                      &hidden) == FACET_NOT_FOUND);
+    FacetHandle posix_handle = {0};
+    assert(posix_environment->getInterface(posix_environment->self,
+                                           IID_IPOSIXView,
+                                           &posix_handle) == FACET_OK);
+    IPOSIXView *posix = libfacet_new_proxy_client(&IPOSIXView_MetaData,
+                                                  posix_handle);
+    assert(posix != NULL);
+    FacetArray_u8 hello = {.data = (uint8_t *)"hello", .count = 5};
+    int64_t posix_result = -1;
+    int32_t posix_error = -1;
+    assert(posix->write_fd(posix->self, 1, &hello, &posix_result,
+                           &posix_error) == FACET_OK);
+    assert(posix_result == 5 && posix_error == 0);
+    assert(test_streams[2].written_count == 6);
+    assert(posix->write_fd(posix->self, 9, &hello, &posix_result,
+                           &posix_error) == FACET_OK);
+    assert(posix_result == -1 && posix_error != 0);
+    libfacet_free_proxy_client(posix);
+    libfacet_free_proxy_client(posix_environment);
+    dominit0_process_environment_destroy(posix_server);
 
     libfacet_free_proxy_client(tty2_output);
     libfacet_free_proxy_client(tty2_input);

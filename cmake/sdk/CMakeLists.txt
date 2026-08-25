@@ -263,6 +263,7 @@ set(FACET_SHELL_CONTRACT_IDLS
     ISecurityManager IAuthService IByteReader IByteWriter ITerminalControl
     ITerminal ISeat IProcessEnvironment IFileStore IFile IDirectory
     IProcessManager IProcess IProcessLifecycle
+    IPOSIXView
 )
 set(FACET_SHELL_CONTRACT_HEADERS)
 foreach(FACET_SHELL_CONTRACT ${FACET_SHELL_CONTRACT_IDLS})
@@ -411,6 +412,8 @@ target_link_libraries(FacetLogin PRIVATE
 function(add_facet_seat_server target definition)
     add_executable(${target}
         "${FACETOS_ROOT}/src/seat/main.c"
+        "${FACETOS_ROOT}/src/seat/pc_console.c"
+        "${FACETOS_ROOT}/src/seat/pc_cursor.c"
         "${FACETOS_ROOT}/src/seat/platform/sel4.c"
         "${FACETOS_ROOT}/src/apps/platform/allocator.c"
         "${FACETOS_ROOT}/src/apps/platform/liballoc.c"
@@ -419,6 +422,7 @@ function(add_facet_seat_server target definition)
     target_include_directories(${target} BEFORE PRIVATE
         "${FACET_GENERATED_INCLUDE}"
         "${FACETOS_ROOT}/src/seat"
+        "${FACETOS_ROOT}/src/apps"
     )
     target_compile_definitions(${target} PRIVATE ${definition}=1)
     add_dependencies(${target} facet-idl-page-allocator-generated)
@@ -452,6 +456,8 @@ endfunction()
 
 add_facet_dummy(FacetDummy "FacetDummy native override selected\\r\\n")
 add_facet_dummy(dummysh "dummysh POSIX override selected\\r\\n")
+
+add_subdirectory("${FACETOS_ROOT}/src/posix" facet-posix)
 
 
 #

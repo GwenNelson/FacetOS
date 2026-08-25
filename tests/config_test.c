@@ -262,6 +262,20 @@ static void test_failures(void)
     expect_failure("[facet]\nversion = 1\nseat_initrd='a'\n"
                    "seat_initrd='b'\n",
                    FACET_CONFIG_DIAGNOSTIC_DUPLICATE);
+    expect_failure("[facet]\nversion=1\nseat_initrd='dominit0.initrd'\n"
+                   "[[seats]]\nname='s'\ntype='serial'\nterminals=['t']\n",
+                   FACET_CONFIG_DIAGNOSTIC_SCHEMA);
+    expect_failure("[facet]\nversion=1\nseat_initrd='dominit0.initrd'\n"
+                   "[[seats]]\nname='s'\ntype='serial'\nserver=''\nterminals=['t']\n",
+                   FACET_CONFIG_DIAGNOSTIC_SCHEMA);
+    expect_failure("[facet]\nversion=1\nseat_initrd='dominit0.initrd'\n"
+                   "[[seats]]\nname='s'\ntype='serial'\nserver='/a'\n"
+                   "server='/b'\nterminals=['t']\n",
+                   FACET_CONFIG_DIAGNOSTIC_DUPLICATE);
+    expect_failure("[facet]\nversion=1\nseat_initrd='dominit0.initrd'\n"
+                   "[[seats]]\nname='s'\ntype='serial'\nserver='/a'\n"
+                   "terminals=['t']\nserver_args=[]\n",
+                   FACET_CONFIG_DIAGNOSTIC_SCHEMA);
     expect_failure("[facet]\nversion=1\n"
                    "[[users]]\nname='root'\npassword_sha256='ABCDEF'\nadmin=true\n",
                    FACET_CONFIG_DIAGNOSTIC_SCHEMA);

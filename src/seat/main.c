@@ -1,4 +1,7 @@
 #include "platform/api.h"
+#include "pc_console.h"
+
+#include <platform/allocator.h>
 
 #include <facetos/interfaces/IByteReader.h>
 #include <facetos/interfaces/IByteWriter.h>
@@ -16,10 +19,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define VGA_TERMINALS 5u
-#define VGA_COLUMNS 80u
-#define VGA_ROWS 25u
-#define VGA_CELLS (VGA_COLUMNS * VGA_ROWS)
 #define INPUT_CAPACITY 256u
 
 typedef struct SeatTerminal SeatTerminal;
@@ -30,6 +29,9 @@ typedef struct SeatState {
     SeatTerminal *terminals;
     size_t terminal_count;
     size_t active;
+#if defined(FACET_SEAT_PC)
+    SeatPCConsole console;
+#endif
 } SeatState;
 
 struct SeatTerminal {
@@ -44,15 +46,22 @@ struct SeatTerminal {
     SeatState *seat;
     const char *name;
     size_t index;
-    uint16_t cells[VGA_CELLS];
-    size_t cursor;
     uint8_t input_bytes[INPUT_CAPACITY];
     size_t input_head;
     size_t input_count;
 };
 
 static SeatState seat;
-static SeatTerminal terminals[VGA_TERMINALS];
+static SeatTerminal terminals[SEAT_PC_TERMINALS];
+
+#if defined(FACET_SEAT_PC)
+static int platform_present(void *context, const uint16_t *cells,
+                            size_t count, size_t cursor)
+{
+    (void)context;
+    return seat_platform_present(cells, count, cursor);
+}
+#endif
 
 static bool iid_equal(uuid_t left, uuid_t right)
 {
@@ -90,9 +99,7 @@ static void queue_byte(SeatTerminal *terminal, uint8_t byte)
 static void present_active(void)
 {
 #if defined(FACET_SEAT_PC)
-    SeatTerminal *terminal = &seat.terminals[seat.active];
-    (void)seat_platform_present(terminal->cells, VGA_CELLS,
-                                terminal->cursor);
+    (void)seat_pc_console_present(&seat.console);
 #endif
 }
 
@@ -104,7 +111,7 @@ static void pump_keyboard(void)
         if (key.kind == SEAT_KEY_SWITCH_TERMINAL &&
             key.terminal_index < seat.terminal_count) {
             seat.active = key.terminal_index;
-            present_active();
+            (void)seat_pc_console_select(&seat.console, seat.active);
         } else if (key.kind == SEAT_KEY_BYTE) {
             queue_byte(&seat.terminals[seat.active], key.byte);
         }
@@ -116,7 +123,7 @@ static FacetResult input_read(void *self, uint32_t maximum,
                               FacetArray_u8 *payload)
 {
     SeatTerminal *terminal = self;
-    static uint8_t returned[VGA_TERMINALS];
+    static uint8_t returned[SEAT_PC_TERMINALS];
     if (payload == NULL) return FACET_INVALID_ARGUMENT;
     payload->data = NULL;
     payload->count = 0;
@@ -151,35 +158,6 @@ static FacetResult output_get_interface(void *self, uuid_t iid,
     return FACET_NO_INTERFACE;
 }
 
-static void scroll_terminal(SeatTerminal *terminal)
-{
-    memmove(terminal->cells, terminal->cells + VGA_COLUMNS,
-            (VGA_CELLS - VGA_COLUMNS) * sizeof(*terminal->cells));
-    for (size_t i = VGA_CELLS - VGA_COLUMNS; i < VGA_CELLS; i++)
-        terminal->cells[i] = UINT16_C(0x0720);
-    terminal->cursor = VGA_CELLS - VGA_COLUMNS;
-}
-
-static void put_byte(SeatTerminal *terminal, uint8_t byte)
-{
-    if (byte == '\r') {
-        terminal->cursor -= terminal->cursor % VGA_COLUMNS;
-    } else if (byte == '\n') {
-        terminal->cursor += VGA_COLUMNS - terminal->cursor % VGA_COLUMNS;
-    } else if (byte == '\b') {
-        if (terminal->cursor != 0) terminal->cursor--;
-        terminal->cells[terminal->cursor] = UINT16_C(0x0720);
-    } else if (byte == '\t') {
-        size_t spaces = 8 - terminal->cursor % 8;
-        while (spaces-- != 0) put_byte(terminal, ' ');
-    } else if (byte >= 32 && byte < 127) {
-        if (terminal->cursor >= VGA_CELLS) scroll_terminal(terminal);
-        terminal->cells[terminal->cursor++] =
-            (uint16_t)(UINT16_C(0x0700) | byte);
-    }
-    if (terminal->cursor >= VGA_CELLS) scroll_terminal(terminal);
-}
-
 static FacetResult output_write(void *self, const FacetArray_u8 *payload,
                                 uint32_t *written)
 {
@@ -192,9 +170,9 @@ static FacetResult output_write(void *self, const FacetArray_u8 *payload,
     if (seat_platform_write(payload->data, payload->count) != 0)
         return FACET_ERROR;
 #else
-    for (size_t i = 0; i < payload->count; i++)
-        put_byte(terminal, payload->data[i]);
-    if (terminal->index == seat.active) present_active();
+    if (seat_pc_console_write(&seat.console, terminal->index,
+                              payload->data, payload->count) != 0)
+        return FACET_ERROR;
 #endif
     *written = (uint32_t)payload->count;
     return FACET_OK;
@@ -305,7 +283,7 @@ static int export_terminal(SeatTerminal *terminal)
 
 static int export_seat(void)
 {
-    static const char *pc_names[VGA_TERMINALS] = {
+    static const char *pc_names[SEAT_PC_TERMINALS] = {
         "tty1", "tty2", "tty3", "tty4", "tty5",
     };
     seat.terminals = terminals;
@@ -313,14 +291,13 @@ static int export_seat(void)
     seat.terminal_count = 1;
     terminals[0].name = "ttyS0";
 #else
-    seat.terminal_count = VGA_TERMINALS;
-    for (size_t i = 0; i < VGA_TERMINALS; i++) terminals[i].name = pc_names[i];
+    seat.terminal_count = SEAT_PC_TERMINALS;
+    seat_pc_console_initialize(&seat.console, platform_present, NULL);
+    for (size_t i = 0; i < SEAT_PC_TERMINALS; i++) terminals[i].name = pc_names[i];
 #endif
     for (size_t i = 0; i < seat.terminal_count; i++) {
         terminals[i].seat = &seat;
         terminals[i].index = i;
-        for (size_t cell = 0; cell < VGA_CELLS; cell++)
-            terminals[i].cells[cell] = UINT16_C(0x0720);
         if (export_terminal(&terminals[i]) != 0) return -1;
     }
     seat.interface = (ISeat){
@@ -375,6 +352,7 @@ int main(int argc, char **argv)
         facet_sel4_service_init(service_endpoint, cnode, receive_slot,
                                 export_slot, depth) != FACET_OK ||
         seat_platform_initialize(device0, device1, vga_address) != 0 ||
+        facet_app_allocator_use_static() != 0 ||
         export_seat() != 0)
         return 1;
     seL4_CPtr seat_cap;
