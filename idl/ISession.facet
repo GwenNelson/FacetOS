@@ -1,0 +1,7 @@
+// A domain-local authenticated security context.
+interface ISession {
+    uuid auto;
+    requires IGenericObject;
+
+    method FacetResult get_principal(out handle principal);
+}

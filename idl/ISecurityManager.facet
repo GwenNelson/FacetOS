@@ -1,0 +1,5 @@
+// Session creation is deferred until authentication provenance is specified.
+interface ISecurityManager {
+    uuid auto;
+    requires IGenericObject;
+}

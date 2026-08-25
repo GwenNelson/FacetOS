@@ -1,0 +1,11 @@
+// Optional human-oriented metadata for an IPrincipal.
+interface IHumanUser {
+    uuid auto;
+    requires IGenericObject;
+    requires IPrincipal;
+
+    property string full_name read;
+    property string home_path read;
+    property string default_shell read;
+    property handle pronouns read;
+}

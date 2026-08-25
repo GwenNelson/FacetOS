@@ -1,0 +1,16 @@
+interface IPronouns {
+    uuid auto;
+    requires IGenericObject;
+
+    enum GrammaticalNumber : u32 {
+        Singular = 1;
+        Plural = 2;
+    };
+
+    method FacetResult get_subject(in GrammaticalNumber agreement, out string value);
+    method FacetResult get_object(in GrammaticalNumber agreement, out string value);
+    method FacetResult get_possessive_determiner(in GrammaticalNumber agreement, out string value);
+    method FacetResult get_possessive_pronoun(in GrammaticalNumber agreement, out string value);
+    method FacetResult get_reflexive(in GrammaticalNumber agreement, out string value);
+    property string short_form read;
+}

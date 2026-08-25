@@ -1,0 +1,7 @@
+// An authentication result; provenance policy remains server-side.
+interface IAuthenticatedPrincipal {
+    uuid auto;
+    requires IGenericObject;
+
+    method FacetResult get_principal(out handle principal);
+}

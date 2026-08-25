@@ -57,6 +57,11 @@ typedef enum FacetConfigSeatType {
     FACET_CONFIG_SEAT_LOCAL = 1,
 } FacetConfigSeatType;
 
+typedef enum FacetConfigTerminalView {
+    FACET_CONFIG_TERMINAL_VIEW_NATIVE = 0,
+    FACET_CONFIG_TERMINAL_VIEW_POSIX = 1,
+} FacetConfigTerminalView;
+
 typedef struct FacetConfigLoggingSinkDefinition {
     char *name;
     char *type;
@@ -72,6 +77,15 @@ typedef struct FacetConfigSeatDefinition {
     uint32_t _present;
 } FacetConfigSeatDefinition;
 
+typedef struct FacetConfigAuthenticationSource {
+    char *name;
+    uint64_t provider_domain_id;
+    size_t provider_domain_index;
+    char *type;
+    bool required;
+    uint32_t _present;
+} FacetConfigAuthenticationSource;
+
 typedef struct FacetConfigDomainSink {
     char *name;
     FacetConfigLogLevel level;
@@ -82,6 +96,10 @@ typedef struct FacetConfigTerminalAssignment {
     char *reference;
     size_t seat_index;
     size_t terminal_index;
+    FacetConfigTerminalView view;
+    char *initial_process;
+    char *device_name;
+    uint32_t _present;
 } FacetConfigTerminalAssignment;
 
 typedef struct FacetConfigDomain {
@@ -89,6 +107,9 @@ typedef struct FacetConfigDomain {
     char *name;
     FacetConfigPersonality personality;
     FacetConfigDomainManagerMode domain_manager;
+    char *authentication_source;
+    size_t authentication_source_index;
+    char *pid1;
     size_t logging_sink_count;
     FacetConfigDomainSink *logging_sinks;
     size_t terminal_count;
@@ -100,6 +121,8 @@ typedef struct FacetSystemConfig {
     uint64_t version;
     size_t logging_sink_count;
     FacetConfigLoggingSinkDefinition *logging_sinks;
+    size_t authentication_source_count;
+    FacetConfigAuthenticationSource *authentication_sources;
     size_t seat_count;
     FacetConfigSeatDefinition *seats;
     size_t domain_count;

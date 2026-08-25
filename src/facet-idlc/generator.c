@@ -272,9 +272,7 @@ static int server_supported_param(const FacetIdlParam *parameter)
     if (strcmp(parameter->type, "handle") == 0) {
         return 1;
     }
-    if (strcmp(parameter->type, "uuid") == 0) {
-        return parameter->direction != FACET_IDL_OUT;
-    }
+    if (strcmp(parameter->type, "uuid") == 0) return 1;
     return 1;
 }
 
@@ -582,6 +580,10 @@ static void emit_server_method(FILE *file,
             fprintf(file, "    if (reply->attachment_count >= FACET_RPC_MAX_ATTACHMENTS) return FACET_BUFFER_TOO_SMALL;\n"
                     "    reply->attachments[reply->attachment_count].kind = FACET_RPC_ATTACHMENT_HANDLE;\n"
                     "    reply->attachments[reply->attachment_count++].handle = %s;\n", parameter->name);
+        } else if (strcmp(parameter->type, "uuid") == 0) {
+            fprintf(file, "    if (reply->word_count > FACET_RPC_MAX_WORDS - 2) return FACET_BUFFER_TOO_SMALL;\n"
+                    "    memcpy(&reply->words[reply->word_count], &%s, sizeof(%s));\n"
+                    "    reply->word_count += 2;\n", parameter->name, parameter->name);
         } else {
             fprintf(file, "    reply->words[reply->word_count++] = (uint64_t)%s;\n",
                     parameter->name);

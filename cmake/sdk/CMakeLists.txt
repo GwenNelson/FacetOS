@@ -258,6 +258,31 @@ add_custom_target(facet-idl-environment-generated
         "${FACET_GENERATED_IDOMAIN_ENVIRONMENT}"
 )
 
+set(FACET_SHELL_CONTRACT_IDLS
+    IPrincipal IHumanUser IPronouns IAuthenticatedPrincipal ISession
+    ISecurityManager IAuthService
+)
+set(FACET_SHELL_CONTRACT_HEADERS)
+foreach(FACET_SHELL_CONTRACT ${FACET_SHELL_CONTRACT_IDLS})
+    set(FACET_SHELL_CONTRACT_HEADER
+        "${FACET_GENERATED_INCLUDE}/facetos/interfaces/${FACET_SHELL_CONTRACT}.h")
+    add_custom_command(
+        OUTPUT "${FACET_SHELL_CONTRACT_HEADER}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${FACET_GENERATED_INCLUDE}/facetos/interfaces"
+        COMMAND "${FACET_IDLC}" -o "${FACET_SHELL_CONTRACT_HEADER}"
+            "${FACETOS_ROOT}/idl/${FACET_SHELL_CONTRACT}.facet"
+        DEPENDS "${FACET_IDLC}"
+            "${FACETOS_ROOT}/idl/IGenericObject.facet"
+            "${FACETOS_ROOT}/idl/${FACET_SHELL_CONTRACT}.facet"
+        VERBATIM
+    )
+    list(APPEND FACET_SHELL_CONTRACT_HEADERS "${FACET_SHELL_CONTRACT_HEADER}")
+endforeach()
+add_custom_target(facet-idl-shell-contracts-generated
+    DEPENDS ${FACET_SHELL_CONTRACT_HEADERS}
+)
+
 
 #
 # FacetOS libfacet seL4 platform backend.
@@ -362,6 +387,7 @@ add_dependencies(dominit0 facet-idl-debug-generated)
 add_dependencies(dominit0 facet-idl-config-generated)
 add_dependencies(dominit0 facet-idl-page-allocator-generated)
 add_dependencies(dominit0 facet-idl-environment-generated)
+add_dependencies(dominit0 facet-idl-shell-contracts-generated)
 
 target_compile_definitions(dominit0 PRIVATE
     FACET_PLATFORM_SEL4=1

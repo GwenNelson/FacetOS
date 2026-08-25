@@ -546,6 +546,15 @@ static int assign_output(
                                    parameter->type_metadata, destination) == FACET_OK
             ? 0 : -1;
     }
+    if (parameter->type == FACET_TYPE_UUID) {
+        if (*reply_index > reply->word_count ||
+            reply->word_count - *reply_index < 2)
+            return -1;
+        uint64_t words[2] = { reply->words[(*reply_index)++],
+                              reply->words[(*reply_index)++] };
+        memcpy(((uuid_t *)destination)->bytes, words, sizeof(words));
+        return 0;
+    }
     if (*reply_index >= reply->word_count) return -1;
 
     uint64_t word = reply->words[(*reply_index)++];

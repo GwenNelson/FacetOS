@@ -6,6 +6,12 @@ name = "debug"
 type = "platform.sel4.debug"
 required = true
 
+[[authentication_sources]]
+name = "system"
+provider_domain = 0
+type = "local"
+required = true
+
 [[seats]]
 name = "seat0"
 type = "serial"
@@ -21,17 +27,24 @@ id = 0
 name = "system"
 personality = "native"
 domain_manager = "local"
+authentication_source = "system"
 logging_sinks = [
     { name = "debug", level = "debug" },
 ]
-terminals = ["seat0.ttyS0", "seat1.tty1"]
+terminals = [
+    { terminal = "seat0.ttyS0", view = "native", initial_process = "/FacetOS/FacetLogin" },
+    { terminal = "seat1.tty1", view = "native", initial_process = "/FacetOS/FacetLogin" },
+]
 
 [[domains]]
 id = 1
 name = "example-child"
 personality = "native"
 domain_manager = "none"
+authentication_source = "system"
 logging_sinks = [
     { name = "debug", level = "info" },
 ]
-terminals = ["seat1.tty2"]
+terminals = [
+    { terminal = "seat1.tty2", view = "posix", initial_process = "/bin/login" },
+]

@@ -45,6 +45,7 @@ typedef enum SectionKind {
     SECTION_NONE,
     SECTION_FACET,
     SECTION_LOGGING_SINK,
+    SECTION_AUTHENTICATION_SOURCE,
     SECTION_SEAT,
     SECTION_DOMAIN,
 } SectionKind;
@@ -68,6 +69,10 @@ enum {
     SINK_NAME = 1u << 0,
     SINK_TYPE = 1u << 1,
     SINK_REQUIRED = 1u << 2,
+    AUTH_NAME = 1u << 0,
+    AUTH_PROVIDER_DOMAIN = 1u << 1,
+    AUTH_TYPE = 1u << 2,
+    AUTH_REQUIRED = 1u << 3,
     SEAT_NAME = 1u << 0,
     SEAT_TYPE = 1u << 1,
     SEAT_TERMINALS = 1u << 2,
@@ -77,6 +82,12 @@ enum {
     DOMAIN_MANAGER = 1u << 3,
     DOMAIN_SINKS = 1u << 4,
     DOMAIN_TERMINALS = 1u << 5,
+    DOMAIN_AUTHENTICATION_SOURCE = 1u << 6,
+    DOMAIN_PID1 = 1u << 7,
+    TERMINAL_REFERENCE = 1u << 0,
+    TERMINAL_VIEW = 1u << 1,
+    TERMINAL_INITIAL_PROCESS = 1u << 2,
+    TERMINAL_DEVICE = 1u << 3,
 };
 
 static void diagnostic_clear(FacetConfigDiagnostic *diagnostic)
@@ -668,6 +679,15 @@ static int parse_header(Parser *parser)
         parser->config->logging_sink_count++;
         parser->section = SECTION_LOGGING_SINK;
         parser->section_index = count;
+    } else if (array && strcmp(name, "authentication_sources") == 0) {
+        size_t count = parser->config->authentication_source_count;
+        if (grow_array(parser, (void **)&parser->config->authentication_sources,
+                       count, sizeof(*parser->config->authentication_sources)) != 0) {
+            free(name); return -1;
+        }
+        parser->config->authentication_source_count++;
+        parser->section = SECTION_AUTHENTICATION_SOURCE;
+        parser->section_index = count;
     } else if (array && strcmp(name, "seats") == 0) {
         size_t count = parser->config->seat_count;
         if (grow_array(parser, (void **)&parser->config->seats,
@@ -812,6 +832,70 @@ static int domain_sinks_from_array(Parser *parser, Value *value,
     return 0;
 }
 
+static int domain_terminals_from_array(Parser *parser, Value *value,
+                                       FacetConfigDomain *domain)
+{
+    if (require_kind(parser, "terminals", value, VALUE_ARRAY, "array") != 0)
+        return -1;
+    size_t count = value->as.array.count;
+    if (count != 0) {
+        domain->terminals = calloc(count, sizeof(*domain->terminals));
+        if (domain->terminals == NULL)
+            return fail(parser, FACET_CONFIG_DIAGNOSTIC_OUT_OF_MEMORY,
+                        "terminals", "out of memory");
+    }
+    domain->terminal_count = count;
+    for (size_t i = 0; i < count; i++) {
+        Value *item = &value->as.array.items[i];
+        FacetConfigTerminalAssignment *assignment = &domain->terminals[i];
+        if (require_kind(parser, "terminals", item, VALUE_TABLE,
+                         "inline table") != 0)
+            return -1;
+        for (size_t j = 0; j < item->as.table.count; j++) {
+            const ValueEntry *entry = &item->as.table.entries[j];
+            uint32_t bit;
+            char **destination;
+            if (strcmp(entry->key, "terminal") == 0) {
+                bit = TERMINAL_REFERENCE; destination = &assignment->reference;
+            } else if (strcmp(entry->key, "initial_process") == 0) {
+                bit = TERMINAL_INITIAL_PROCESS;
+                destination = &assignment->initial_process;
+            } else if (strcmp(entry->key, "device") == 0) {
+                bit = TERMINAL_DEVICE; destination = &assignment->device_name;
+            } else if (strcmp(entry->key, "view") == 0) {
+                bit = TERMINAL_VIEW; destination = NULL;
+            } else {
+                return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA,
+                               entry->line, entry->column, entry->key,
+                               "unknown terminal assignment key");
+            }
+            if (assignment->_present & bit)
+                return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_DUPLICATE,
+                               entry->line, entry->column, entry->key,
+                               "duplicate terminal assignment key");
+            assignment->_present |= bit;
+            if (require_kind(parser, entry->key, entry->value,
+                             VALUE_STRING, "string") != 0)
+                return -1;
+            if (bit == TERMINAL_VIEW) {
+                if (strcmp(entry->value->as.string, "native") == 0)
+                    assignment->view = FACET_CONFIG_TERMINAL_VIEW_NATIVE;
+                else if (strcmp(entry->value->as.string, "posix") == 0)
+                    assignment->view = FACET_CONFIG_TERMINAL_VIEW_POSIX;
+                else
+                    return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA,
+                                   entry->value->line, entry->value->column,
+                                   entry->key, "terminal view must be native or posix");
+            } else {
+                *destination = duplicate_bytes(parser, entry->value->as.string,
+                                               strlen(entry->value->as.string));
+                if (*destination == NULL) return -1;
+            }
+        }
+    }
+    return 0;
+}
+
 static int apply_value(Parser *parser, char *key, Value *value,
                        size_t line, size_t column)
 {
@@ -853,6 +937,43 @@ static int apply_value(Parser *parser, char *key, Value *value,
         sink->required = value->as.boolean;
         return 0;
     }
+    if (parser->section == SECTION_AUTHENTICATION_SOURCE) {
+        FacetConfigAuthenticationSource *source =
+            &parser->config->authentication_sources[parser->section_index];
+        uint32_t bit;
+        if (strcmp(key, "name") == 0) bit = AUTH_NAME;
+        else if (strcmp(key, "provider_domain") == 0) bit = AUTH_PROVIDER_DOMAIN;
+        else if (strcmp(key, "type") == 0) bit = AUTH_TYPE;
+        else if (strcmp(key, "required") == 0) bit = AUTH_REQUIRED;
+        else return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA,
+                            line, column, key, "unknown authentication source key");
+        if (source->_present & bit)
+            return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_DUPLICATE,
+                           line, column, key, "duplicate authentication source key");
+        source->_present |= bit;
+        if (bit == AUTH_NAME) return take_string(parser, key, value, &source->name);
+        if (bit == AUTH_TYPE) {
+            if (take_string(parser, key, value, &source->type) != 0) return -1;
+            if (strcmp(source->type, "local") != 0)
+                return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA,
+                               line, column, key,
+                               "authentication source type must be local");
+            return 0;
+        }
+        if (bit == AUTH_REQUIRED) {
+            if (require_kind(parser, key, value, VALUE_BOOL, "boolean") != 0)
+                return -1;
+            source->required = value->as.boolean;
+            return 0;
+        }
+        if (require_kind(parser, key, value, VALUE_INTEGER,
+                         "non-negative integer") != 0 || value->as.integer < 0)
+            return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA,
+                           value->line, value->column, key,
+                           "provider domain must be non-negative");
+        source->provider_domain_id = (uint64_t)value->as.integer;
+        return 0;
+    }
     if (parser->section == SECTION_SEAT) {
         FacetConfigSeatDefinition *seat =
             &parser->config->seats[parser->section_index];
@@ -891,6 +1012,9 @@ static int apply_value(Parser *parser, char *key, Value *value,
         else if (strcmp(key, "domain_manager") == 0) bit = DOMAIN_MANAGER;
         else if (strcmp(key, "logging_sinks") == 0) bit = DOMAIN_SINKS;
         else if (strcmp(key, "terminals") == 0) bit = DOMAIN_TERMINALS;
+        else if (strcmp(key, "authentication_source") == 0)
+            bit = DOMAIN_AUTHENTICATION_SOURCE;
+        else if (strcmp(key, "pid1") == 0) bit = DOMAIN_PID1;
         else return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA,
                             line, column, key, "unknown domain key");
         if (domain->_present & bit)
@@ -900,26 +1024,12 @@ static int apply_value(Parser *parser, char *key, Value *value,
         if (bit == DOMAIN_NAME) return take_string(parser, key, value, &domain->name);
         if (bit == DOMAIN_SINKS)
             return domain_sinks_from_array(parser, value, domain);
-        if (bit == DOMAIN_TERMINALS) {
-            char **references = NULL;
-            size_t count = 0;
-            if (strings_from_array(parser, key, value, &references, &count) != 0)
-                return -1;
-            if (count != 0) {
-                domain->terminals = calloc(count, sizeof(*domain->terminals));
-                if (domain->terminals == NULL) {
-                    for (size_t i = 0; i < count; i++) free(references[i]);
-                    free(references);
-                    return fail(parser, FACET_CONFIG_DIAGNOSTIC_OUT_OF_MEMORY,
-                                key, "out of memory");
-                }
-            }
-            for (size_t i = 0; i < count; i++)
-                domain->terminals[i].reference = references[i];
-            free(references);
-            domain->terminal_count = count;
-            return 0;
-        }
+        if (bit == DOMAIN_TERMINALS)
+            return domain_terminals_from_array(parser, value, domain);
+        if (bit == DOMAIN_AUTHENTICATION_SOURCE)
+            return take_string(parser, key, value, &domain->authentication_source);
+        if (bit == DOMAIN_PID1)
+            return take_string(parser, key, value, &domain->pid1);
         if (bit == DOMAIN_ID) {
             if (require_kind(parser, key, value, VALUE_INTEGER,
                              "non-negative integer") != 0)
@@ -1002,6 +1112,26 @@ static int validate_required(Parser *parser)
                                    seat->terminals[j], "duplicate terminal in seat");
         }
     }
+    for (size_t i = 0; i < parser->config->authentication_source_count; i++) {
+        FacetConfigAuthenticationSource *source =
+            &parser->config->authentication_sources[i];
+        if ((source->_present & (AUTH_NAME | AUTH_PROVIDER_DOMAIN |
+                                 AUTH_TYPE | AUTH_REQUIRED)) !=
+            (AUTH_NAME | AUTH_PROVIDER_DOMAIN | AUTH_TYPE | AUTH_REQUIRED))
+            return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
+                           "authentication_sources",
+                           "source requires name, provider_domain, type, and required");
+        if (source->name[0] == '\0' || source->type[0] == '\0')
+            return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
+                           "authentication_sources",
+                           "source name and type must not be empty");
+        for (size_t j = 0; j < i; j++)
+            if (strcmp(source->name,
+                       parser->config->authentication_sources[j].name) == 0)
+                return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_DUPLICATE, 0, 0,
+                               source->name,
+                               "duplicate authentication source name");
+    }
     if (parser->config->domain_count == 0)
         return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
                        "domains", "at least one domain is required");
@@ -1016,6 +1146,10 @@ static int validate_required(Parser *parser)
         if (domain->name[0] == '\0')
             return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
                            "domains.name", "domain name must not be empty");
+        if (domain->personality == FACET_CONFIG_PERSONALITY_VM)
+            return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
+                           domain->name,
+                           "vm domains are not supported by this configuration schema");
         if (domain->id == 0) {
             roots++;
             parser->config->root_index = i;
@@ -1047,8 +1181,43 @@ static int validate_required(Parser *parser)
                                    0, 0, use->name,
                                    "domain references a logging sink twice");
         }
+        if (domain->logging_sink_count == 0 || domain->terminal_count == 0)
+            return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
+                           domain->name,
+                           "domain requires at least one logging sink and terminal");
+        if (domain->personality == FACET_CONFIG_PERSONALITY_NATIVE &&
+            (domain->_present & DOMAIN_PID1) != 0)
+            return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
+                           domain->name, "native domain must not specify pid1");
+        if (domain->personality == FACET_CONFIG_PERSONALITY_POSIX &&
+            ((domain->_present & DOMAIN_PID1) == 0 || domain->pid1[0] == '\0'))
+            return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
+                           domain->name, "posix domain requires pid1");
         for (size_t j = 0; j < domain->terminal_count; j++) {
             FacetConfigTerminalAssignment *assignment = &domain->terminals[j];
+            uint32_t expected = domain->personality == FACET_CONFIG_PERSONALITY_NATIVE
+                ? TERMINAL_REFERENCE | TERMINAL_VIEW | TERMINAL_INITIAL_PROCESS
+                : TERMINAL_REFERENCE | TERMINAL_DEVICE;
+            if (assignment->_present != expected)
+                return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
+                               domain->name,
+                               domain->personality == FACET_CONFIG_PERSONALITY_NATIVE
+                                   ? "native terminal requires terminal, view, and initial_process"
+                                   : "posix terminal requires terminal and device");
+            if (assignment->reference[0] == '\0' ||
+                (assignment->initial_process != NULL &&
+                 assignment->initial_process[0] == '\0') ||
+                (assignment->device_name != NULL && assignment->device_name[0] == '\0'))
+                return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
+                               domain->name, "terminal assignment strings must not be empty");
+            if (domain->personality == FACET_CONFIG_PERSONALITY_POSIX) {
+                for (size_t k = 0; k < j; k++)
+                    if (strcmp(assignment->device_name,
+                               domain->terminals[k].device_name) == 0)
+                        return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_DUPLICATE,
+                                       0, 0, assignment->device_name,
+                                       "duplicate posix domain-local device name");
+            }
             char *dot = strchr(assignment->reference, '.');
             if (dot == NULL || dot == assignment->reference || dot[1] == '\0' ||
                 strchr(dot + 1, '.') != NULL)
@@ -1088,10 +1257,41 @@ static int validate_required(Parser *parser)
                 }
             }
         }
+        if (domain->authentication_source != NULL) {
+            bool found = false;
+            for (size_t j = 0; j < parser->config->authentication_source_count; j++) {
+                if (strcmp(domain->authentication_source,
+                           parser->config->authentication_sources[j].name) == 0) {
+                    domain->authentication_source_index = j;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+                return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_UNRESOLVED_REFERENCE,
+                               0, 0, domain->authentication_source,
+                               "unknown authentication source");
+        }
     }
     if (roots != 1)
         return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
                        "domains", "exactly one domain must have id 0");
+    for (size_t i = 0; i < parser->config->authentication_source_count; i++) {
+        FacetConfigAuthenticationSource *source =
+            &parser->config->authentication_sources[i];
+        bool found = false;
+        for (size_t j = 0; j < parser->config->domain_count; j++) {
+            if (parser->config->domains[j].id == source->provider_domain_id) {
+                source->provider_domain_index = j;
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+            return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_UNRESOLVED_REFERENCE,
+                           0, 0, source->name,
+                           "authentication provider domain does not exist");
+    }
     return 0;
 }
 
@@ -1179,6 +1379,11 @@ int facet_config_make_fallback(FacetSystemConfig *config,
         "name = \"debug\"\n"
         "type = \"platform.sel4.debug\"\n"
         "required = true\n"
+        "[[authentication_sources]]\n"
+        "name = \"system\"\n"
+        "provider_domain = 0\n"
+        "type = \"local\"\n"
+        "required = true\n"
         "[[seats]]\n"
         "name = \"seat0\"\n"
         "type = \"serial\"\n"
@@ -1192,15 +1397,19 @@ int facet_config_make_fallback(FacetSystemConfig *config,
         "name = \"system\"\n"
         "personality = \"native\"\n"
         "domain_manager = \"local\"\n"
+        "authentication_source = \"system\"\n"
         "logging_sinks = [{ name = \"debug\", level = \"debug\" }]\n"
-        "terminals = [\"seat0.ttyS0\", \"seat1.tty1\"]\n"
+        "terminals = ["
+        "{ terminal = \"seat0.ttyS0\", view = \"native\", initial_process = \"/FacetOS/FacetLogin\" },"
+        "{ terminal = \"seat1.tty1\", view = \"native\", initial_process = \"/FacetOS/FacetLogin\" }]\n"
         "[[domains]]\n"
         "id = 1\n"
         "name = \"example-child\"\n"
         "personality = \"native\"\n"
         "domain_manager = \"none\"\n"
+        "authentication_source = \"system\"\n"
         "logging_sinks = [{ name = \"debug\", level = \"info\" }]\n"
-        "terminals = [\"seat1.tty2\"]\n";
+        "terminals = [{ terminal = \"seat1.tty2\", view = \"posix\", initial_process = \"/bin/login\" }]\n";
     return facet_config_parse((const uint8_t *)fallback,
                               sizeof(fallback) - 1, config, diagnostic);
 }
@@ -1213,6 +1422,11 @@ void facet_config_destroy(FacetSystemConfig *config)
         free(config->logging_sinks[i].type);
     }
     free(config->logging_sinks);
+    for (size_t i = 0; i < config->authentication_source_count; i++) {
+        free(config->authentication_sources[i].name);
+        free(config->authentication_sources[i].type);
+    }
+    free(config->authentication_sources);
     for (size_t i = 0; i < config->seat_count; i++) {
         free(config->seats[i].name);
         for (size_t j = 0; j < config->seats[i].terminal_count; j++)
@@ -1225,8 +1439,13 @@ void facet_config_destroy(FacetSystemConfig *config)
         for (size_t j = 0; j < config->domains[i].logging_sink_count; j++)
             free(config->domains[i].logging_sinks[j].name);
         free(config->domains[i].logging_sinks);
-        for (size_t j = 0; j < config->domains[i].terminal_count; j++)
+        free(config->domains[i].authentication_source);
+        free(config->domains[i].pid1);
+        for (size_t j = 0; j < config->domains[i].terminal_count; j++) {
             free(config->domains[i].terminals[j].reference);
+            free(config->domains[i].terminals[j].initial_process);
+            free(config->domains[i].terminals[j].device_name);
+        }
         free(config->domains[i].terminals);
     }
     free(config->domains);

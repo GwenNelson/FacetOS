@@ -20,6 +20,9 @@ static void check_default_shape(const FacetSystemConfig *config)
     assert(strcmp(config->logging_sinks[0].type,
                   "platform.sel4.debug") == 0);
     assert(config->logging_sinks[0].required);
+    assert(config->authentication_source_count == 1);
+    assert(strcmp(config->authentication_sources[0].name, "system") == 0);
+    assert(config->authentication_sources[0].provider_domain_index == 0);
 
     assert(config->seat_count == 2);
     assert(strcmp(config->seats[0].name, "seat0") == 0);
@@ -42,6 +45,12 @@ static void check_default_shape(const FacetSystemConfig *config)
     assert(config->domains[0].logging_sinks[0].sink_definition_index == 0);
     assert(config->domains[0].logging_sinks[0].level == FACET_CONFIG_LOG_DEBUG);
     assert(config->domains[0].terminal_count == 2);
+    assert(strcmp(config->domains[0].authentication_source, "system") == 0);
+    assert(config->domains[0].authentication_source_index == 0);
+    assert(config->domains[0].terminals[0].view ==
+           FACET_CONFIG_TERMINAL_VIEW_NATIVE);
+    assert(strcmp(config->domains[0].terminals[0].initial_process,
+                  "/FacetOS/FacetLogin") == 0);
     assert(config->domains[0].terminals[0].seat_index == 0);
     assert(config->domains[0].terminals[0].terminal_index == 0);
     assert(config->domains[0].terminals[1].seat_index == 1);
@@ -51,6 +60,10 @@ static void check_default_shape(const FacetSystemConfig *config)
     assert(strcmp(config->domains[1].name, "example-child") == 0);
     assert(config->domains[1].logging_sinks[0].level == FACET_CONFIG_LOG_INFO);
     assert(config->domains[1].terminal_count == 1);
+    assert(config->domains[1].terminals[0].view ==
+           FACET_CONFIG_TERMINAL_VIEW_POSIX);
+    assert(strcmp(config->domains[1].terminals[0].initial_process,
+                  "/bin/login") == 0);
     assert(config->domains[1].terminals[0].seat_index == 1);
     assert(config->domains[1].terminals[0].terminal_index == 1);
 }
@@ -104,7 +117,7 @@ static void test_utf8_and_quoted_keys(void)
         "personality = \"native\"\n"
         "domain_manager = \"local\"\n"
         "logging_sinks = [{ name = \"débogage\", level = \"debug\" }]\n"
-        "terminals = [\"seat0.ttyS0\"]\n";
+        "terminals = [{ terminal = \"seat0.ttyS0\", view = \"native\", initial_process = \"/FacetOS/FacetLogin\" }]\n";
     FacetSystemConfig config;
     FacetConfigDiagnostic diagnostic;
     assert(parse_text(text, &config, &diagnostic) == 0);
@@ -166,9 +179,11 @@ static void test_failures(void)
         "[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
         "[[seats]]\nname='s'\ntype='local'\nterminals=['t']\n"
         "[[domains]]\nid=0\nname='a'\npersonality='native'\n"
-        "domain_manager='local'\nlogging_sinks=[]\nterminals=['s.t']\n"
+        "domain_manager='local'\nlogging_sinks=[{name='d',level='info'}]\n"
+        "terminals=[{terminal='s.t',view='native',initial_process='/FacetOS/FacetLogin'}]\n"
         "[[domains]]\nid=1\nname='b'\npersonality='native'\n"
-        "domain_manager='none'\nlogging_sinks=[]\nterminals=['s.t']\n";
+        "domain_manager='none'\nlogging_sinks=[{name='d',level='info'}]\n"
+        "terminals=[{terminal='s.t',view='native',initial_process='/FacetOS/FacetLogin'}]\n";
     expect_failure(duplicate_terminal, FACET_CONFIG_DIAGNOSTIC_DUPLICATE);
 }
 
