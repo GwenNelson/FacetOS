@@ -1,6 +1,7 @@
 #include <facetos/dominit0/process.h>
 
 #include <facetos/dominit0/environment.h>
+#include <facetos/dominit0/klog.h>
 #include <facetos/dominit0/platform/api.h>
 #include <facetos/initrd.h>
 #include <facetos/interfaces/IProcess.h>
@@ -85,34 +86,22 @@ static char *copy_string(const FacetString *input)
     return copy;
 }
 
-static FacetResult manager_launch(void *self, const FacetString *path,
+static FacetResult launch_process(ProcessManager *manager,
+                                  const FacetString *path,
                                   const FacetArray_string *arguments,
                                   FacetHandle session_handle,
+                                  bool initial,
                                   FacetHandle *out)
 {
-    ProcessManager *manager = self;
     if (out == NULL || arguments == NULL || arguments->count > 64 ||
-        session_handle.platform == NULL)
+        (!initial && session_handle.platform == NULL))
         return FACET_INVALID_ARGUMENT;
     *out = (FacetHandle){0};
 
-    FacetHandle owned_session = {0};
-    if (libfacet_handle_clone(session_handle, &owned_session) != FACET_OK)
-        return FACET_ACCESS_DENIED;
-    ISession *session = libfacet_proxy_from_handle(&ISession_MetaData,
-                                                   owned_session);
-    FacetHandle principal = {0};
-    if (session == NULL ||
-        session->get_principal(session->self, &principal) != FACET_OK) {
-        libfacet_free_proxy_client(session);
-        if (session == NULL) (void)libfacet_handle_release(owned_session);
-        return FACET_ACCESS_DENIED;
-    }
-    libfacet_free_proxy_client(session);
-    (void)libfacet_handle_release(principal);
-
     char *path_copy = copy_string(path);
     if (path_copy == NULL) return FACET_INVALID_ARGUMENT;
+    klog(LOG_DEBUG, "process manager: preparing %s%s\n", path_copy,
+         initial ? " as initial process" : "");
     const uint8_t *elf_data;
     size_t elf_size;
     FacetResult result = facet_initrd_find_file(manager->domain->initrd,
@@ -151,12 +140,14 @@ static FacetResult manager_launch(void *self, const FacetString *path,
         goto done;
     }
     process->environment = dominit0_process_environment_create(
-        manager->domain->environment, session_handle);
+        manager->domain->environment,
+        initial ? (FacetHandle){0} : session_handle);
     if (process->environment == NULL) {
         free(process);
         result = FACET_OUT_OF_MEMORY;
         goto done;
     }
+    klog(LOG_DEBUG, "process manager: environment ready for %s\n", path_copy);
     process->interface.self = process;
     process->interface.priv = process;
     process->interface.getInterface = process_get_interface;
@@ -178,6 +169,7 @@ static FacetResult manager_launch(void *self, const FacetString *path,
         result = FACET_ERROR;
         goto done;
     }
+    klog(LOG_INFO, "Started process %s\n", path_copy);
     process->next = manager->processes;
     manager->processes = process;
     *out = process->handle;
@@ -188,6 +180,24 @@ done:
     free(argv);
     free(path_copy);
     return result;
+}
+
+static FacetResult manager_launch(void *self, const FacetString *path,
+                                  const FacetArray_string *arguments,
+                                  FacetHandle session_handle,
+                                  FacetHandle *out)
+{
+    /* Child processes cannot export capabilities in the current transport.
+     * A non-null environment therefore has server provenance.  Do not make a
+     * nested RPC to inspect it here: this callback runs on the server thread. */
+    return launch_process(self, path, arguments, session_handle, false, out);
+}
+
+static FacetResult manager_launch_initial(void *self, const FacetString *path,
+                                          const FacetArray_string *arguments,
+                                          FacetHandle *out)
+{
+    return launch_process(self, path, arguments, (FacetHandle){0}, true, out);
 }
 
 int dominit0_process_manager_initialize(CurrentDomain *domain)
@@ -201,6 +211,7 @@ int dominit0_process_manager_initialize(CurrentDomain *domain)
     manager->interface.priv = manager;
     manager->interface.getInterface = manager_get_interface;
     manager->interface.launch = manager_launch;
+    manager->interface.launch_initial = manager_launch_initial;
     if (libfacet_export_interface(&manager->interface,
                                   &IProcessManager_MetaData,
                                   &manager->handle) != FACET_OK ||

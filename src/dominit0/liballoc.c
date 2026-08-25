@@ -306,10 +306,17 @@ void *liballoc_malloc_impl(size_t size)
 		if ( index < MINEXP ) index = MINEXP;
 		
 
-		// Find one big enough.
-			tag = l_freePages[ index ];				// Start at the front of the list.
-			while ( tag != NULL )
+		/* Find the smallest available size class that can satisfy the
+		 * request.  The imported liballoc code used to inspect only the
+		 * exact bucket.  Since split remainders live in larger buckets that
+		 * made every small allocation request another 16 pages and quickly
+		 * exhausted a child domain. */
+			for ( int candidate = index; candidate < MAXEXP && tag == NULL;
+			      candidate++ )
 			{
+				tag = l_freePages[ candidate ];
+				while ( tag != NULL )
+				{
 					// If there's enough space in this tag.
 				if ( (tag->real_size - sizeof(struct boundary_tag))
 								>= (size + sizeof(struct boundary_tag) ) )
@@ -321,6 +328,8 @@ void *liballoc_malloc_impl(size_t size)
 				}
 
 				tag = tag->next;
+				}
+				if ( tag != NULL ) index = candidate;
 			}
 
 		

@@ -29,6 +29,7 @@ SDK_KERNEL     := $(SDK_BUILD)/kernel/kernel.elf
 FACET_DOMINIT0 := $(SDK_BUILD)/dominit0
 FACET_DOMINIT  := $(SDK_BUILD)/dominit
 FACET_SHELL    := $(SDK_BUILD)/FacetShell
+FACET_LOGIN    := $(SDK_BUILD)/FacetLogin
 FACET_DUMMY    := $(SDK_BUILD)/FacetDummy
 FACET_DUMMYSH  := $(SDK_BUILD)/dummysh
 FACET_CONFIG_FILE := $(ROOT)/config/facet.toml
@@ -509,6 +510,9 @@ dominit: facet-idlc libfacet-common configure
 $(FACET_SHELL): facet-idlc libfacet-common configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) FacetShell
 
+$(FACET_LOGIN): facet-idlc libfacet-common configure
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) FacetLogin
+
 $(FACET_DUMMY) $(FACET_DUMMYSH): facet-idlc libfacet-common configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) FacetDummy dummysh
 
@@ -529,12 +533,13 @@ libfacet: facet-idlc libfacet-common libfacet-platform-sel4
 
 # Build everything needed to boot FacetOS.
 build: klibc facet-config configure libfacet $(INITRD_SYSTEM) $(INITRD_CHILD)
-	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf dominit0 dominit FacetShell FacetDummy dummysh
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf dominit0 dominit FacetLogin FacetShell FacetDummy dummysh
 
-$(INITRD_SYSTEM): $(ROOT)/initrd/system/README $(FACET_SHELL) $(FACET_DUMMY)
+$(INITRD_SYSTEM): $(ROOT)/initrd/system/README $(FACET_LOGIN) $(FACET_SHELL) $(FACET_DUMMY)
 	mkdir -p $(dir $@)
 	mkdir -p $(ROOT)/build/initrd/system-root/FacetOS
 	cp $(ROOT)/initrd/system/README $(ROOT)/build/initrd/system-root/README
+	cp $(FACET_LOGIN) $(ROOT)/build/initrd/system-root/FacetOS/FacetLogin
 	cp $(FACET_SHELL) $(ROOT)/build/initrd/system-root/FacetOS/FacetShell
 	cp $(FACET_DUMMY) $(ROOT)/build/initrd/system-root/FacetOS/FacetDummy
 	cd $(ROOT)/build/initrd/system-root && find . -print | sort | cpio --quiet -o -H newc > $@

@@ -51,6 +51,8 @@ int main(void)
     assert(assignments.count == 2);
     check_string(assignments.data[0].seat, "seat0");
     check_string(assignments.data[0].terminal, "ttyS0");
+    check_string(assignments.data[0].view, "native");
+    check_string(assignments.data[0].initial_process, "/FacetOS/FacetLogin");
     check_string(assignments.data[1].seat, "seat1");
     check_string(assignments.data[1].terminal, "tty1");
 

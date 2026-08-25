@@ -6,4 +6,11 @@ interface IProcessManager {
 
     method FacetResult launch(in string path, in array<string> argv,
                               in handle environment, out handle process);
+
+    // Bootstrap-only entry point. Possession of a domain's process manager is
+    // the authority to start its configured initial program; unlike launch(),
+    // this does not pretend that an IDomainEnvironment is an authenticated
+    // process environment.
+    method FacetResult launch_initial(in string path, in array<string> argv,
+                                      out handle process);
 }

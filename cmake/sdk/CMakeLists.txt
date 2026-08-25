@@ -383,6 +383,22 @@ target_link_libraries(FacetShell PRIVATE
     muslc
 )
 
+add_executable(FacetLogin
+    "${FACETOS_ROOT}/src/apps/facet_login.c"
+    "${FACETOS_ROOT}/src/dominit/platform/allocator.c"
+    "${FACETOS_ROOT}/src/dominit/platform/liballoc.c"
+    "${FACETOS_ROOT}/src/dominit/platform/sel4/api.c"
+)
+facetos_configure_target(FacetLogin)
+target_include_directories(FacetLogin BEFORE PRIVATE
+    "${FACET_GENERATED_INCLUDE}"
+)
+add_dependencies(FacetLogin facet-idl-page-allocator-generated)
+add_dependencies(FacetLogin facet-idl-environment-generated)
+add_dependencies(FacetLogin facet-idl-shell-contracts-generated)
+target_link_libraries(FacetLogin PRIVATE
+    facet_common facet-platform-sel4-client sel4runtime sel4 muslc)
+
 function(add_facet_dummy target message)
     add_executable(${target}
         "${FACETOS_ROOT}/src/apps/facet_dummy.c"

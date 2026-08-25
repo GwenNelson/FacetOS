@@ -118,6 +118,23 @@ static FacetResult get_assignments(void *self, FacetArray_Assignment *value)
     return FACET_OK;
 }
 
+static FacetResult get_assignment_count(void *self, uint64_t *value)
+{
+    if (value == NULL) return FACET_INVALID_ARGUMENT;
+    *value = ((Dominit0DomainConfigObject *)self)->console._assignments.count;
+    return FACET_OK;
+}
+
+static FacetResult get_assignment(void *self, uint64_t index,
+                                  Assignment *value)
+{
+    Dominit0DomainConfigObject *object = self;
+    if (value == NULL) return FACET_INVALID_ARGUMENT;
+    if (index >= object->console._assignments.count) return FACET_NOT_FOUND;
+    *value = object->console._assignments.data[index];
+    return FACET_OK;
+}
+
 static void set_diagnostic(FacetConfigDiagnostic *diagnostic,
                            const char *context, const char *message)
 {
@@ -188,6 +205,8 @@ static int initialize_domain_object(Dominit0DomainConfigObject *object,
     object->console.priv = object;
     object->console.getInterface = console_get_interface;
     object->console.getassignments = get_assignments;
+    object->console.getassignment_count = get_assignment_count;
+    object->console.get_assignment = get_assignment;
     object->console._assignments.count = source->terminal_count;
     if (source->terminal_count != 0) {
         if (source->terminal_count > SIZE_MAX / sizeof(Assignment)) {
@@ -212,6 +231,16 @@ static int initialize_domain_object(Dominit0DomainConfigObject *object,
             object->console._assignments.data[i].seat.length = strlen(seat->name);
             object->console._assignments.data[i].terminal.data = terminal;
             object->console._assignments.data[i].terminal.length = strlen(terminal);
+            object->console._assignments.data[i].view.data =
+                assignment->view == FACET_CONFIG_TERMINAL_VIEW_POSIX
+                    ? "posix" : "native";
+            object->console._assignments.data[i].view.length =
+                assignment->view == FACET_CONFIG_TERMINAL_VIEW_POSIX ? 5 : 6;
+            object->console._assignments.data[i].initial_process.data =
+                assignment->initial_process;
+            object->console._assignments.data[i].initial_process.length =
+                assignment->initial_process == NULL ? 0 :
+                    strlen(assignment->initial_process);
         }
     }
     return 0;
