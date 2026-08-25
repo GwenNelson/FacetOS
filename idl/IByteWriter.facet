@@ -1,0 +1,6 @@
+// Write authority for a byte stream.
+interface IByteWriter {
+    uuid auto;
+    requires IGenericObject;
+    // Byte-buffer parameter syntax is not yet accepted by facet-idlc.
+}

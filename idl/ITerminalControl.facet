@@ -1,0 +1,5 @@
+// Administrative terminal controls; ordinary applications need not receive it.
+interface ITerminalControl {
+    uuid auto;
+    requires IGenericObject;
+}

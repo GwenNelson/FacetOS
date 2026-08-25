@@ -1,0 +1,8 @@
+// One terminal session, exposing separately delegated stream capabilities.
+interface ITerminal {
+    uuid auto;
+    requires IGenericObject;
+    method FacetResult get_input(out handle input);
+    method FacetResult get_output(out handle output);
+    method FacetResult get_control(out handle control);
+}

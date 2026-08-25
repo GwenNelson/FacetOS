@@ -260,7 +260,8 @@ add_custom_target(facet-idl-environment-generated
 
 set(FACET_SHELL_CONTRACT_IDLS
     IPrincipal IHumanUser IPronouns IAuthenticatedPrincipal ISession
-    ISecurityManager IAuthService
+    ISecurityManager IAuthService IByteReader IByteWriter ITerminalControl
+    ITerminal ISeat
 )
 set(FACET_SHELL_CONTRACT_HEADERS)
 foreach(FACET_SHELL_CONTRACT ${FACET_SHELL_CONTRACT_IDLS})

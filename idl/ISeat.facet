@@ -1,0 +1,8 @@
+// Administrative seat authority for terminal lookup and active-terminal routing.
+interface ISeat {
+    uuid auto;
+    requires IGenericObject;
+    method FacetResult get_terminal(in string name, out handle terminal);
+    method FacetResult get_active_terminal(out handle terminal);
+    method FacetResult set_active_terminal(in handle terminal);
+}
