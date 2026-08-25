@@ -1,6 +1,7 @@
 #include <facetos/dominit/platform/api.h>
-#include <facetos/interfaces/IDebug.h>
+#include <facetos/interfaces/IDomainEnvironment.h>
 #include <facetos/interfaces/IGenericObject.h>
+#include <facetos/interfaces/ILogger.h>
 #include <facetos/interfaces/IPageAllocator.h>
 
 #include <stddef.h>
@@ -9,61 +10,71 @@
 
 #include "platform/allocator.h"
 
-static void debug_putc(IDebug *debug, char c)
+static FacetResult child_log(ILogger *logger, uint32_t event)
 {
-    (void)debug->putc(debug->self, (uint8_t)(unsigned char)c);
-}
-
-static void debug_puts(IDebug *debug, const char *s)
-{
-    while (*s)
-        debug_putc(debug, *s++);
+    return logger->log(logger->self, 40, event);
 }
 
 int main(int argc, char **argv)
 {
     if (libfacet_register_generic_metadata(&IGenericObject_MetaData) != FACET_OK ||
-        libfacet_register_interface_metadata(&IDebug_MetaData) != FACET_OK ||
+        libfacet_register_interface_metadata(&IDomainEnvironment_MetaData) != FACET_OK ||
+        libfacet_register_interface_metadata(&ILogger_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IPageAllocator_MetaData) != FACET_OK)
         return 1;
 
     IGenericObject *root;
-    IPageAllocator *page_allocator;
-    if (platform_init(&argc, &argv, &root, &page_allocator) != FACET_OK)
+    if (platform_init(&argc, &argv, &root) != FACET_OK)
         return 1;
 
-    IDebug *debug = (IDebug *)libfacet_proxy_client_get_interface(
-        root, IID_IDebug);
-    if (debug == NULL) {
+    IDomainEnvironment *environment =
+        (IDomainEnvironment *)libfacet_proxy_client_get_interface(
+            root, IID_IDomainEnvironment);
+    ILogger *logger = (ILogger *)libfacet_proxy_client_get_interface(root, IID_ILogger);
+    IPageAllocator *page_allocator =
+        (IPageAllocator *)libfacet_proxy_client_get_interface(root, IID_IPageAllocator);
+    if (environment == NULL || logger == NULL || page_allocator == NULL) {
+        libfacet_free_proxy_client(environment);
+        libfacet_free_proxy_client(logger);
         libfacet_free_proxy_client(page_allocator);
         libfacet_free_proxy_client(root);
         return 1;
     }
 
-    debug_puts(debug, "child received IPageAllocator\n");
+    (void)logger->flush(logger->self);
+    if (child_log(logger, 1) != FACET_OK) {
+        libfacet_free_proxy_client(environment);
+        libfacet_free_proxy_client(logger);
+        libfacet_free_proxy_client(page_allocator);
+        libfacet_free_proxy_client(root);
+        return 1;
+    }
     if (dominit_allocator_use_pages(page_allocator) != 0) {
-        debug_puts(debug, "child could not activate IPageAllocator\n");
-        libfacet_free_proxy_client(debug);
-        libfacet_free_proxy_client(page_allocator);
+        child_log(logger, 4);
+        libfacet_free_proxy_client(environment);
+        libfacet_free_proxy_client(logger);
         libfacet_free_proxy_client(root);
         return 1;
     }
-    debug_puts(debug, "child activated IPageAllocator\n");
+    child_log(logger, 2);
 
     /* This is deliberately larger than the bootstrap heap's remaining
      * liballoc region. It proves allocations now reach this domain's
      * IPageAllocator rather than dominit0's own allocator. */
     void *allocation_probe = malloc(512u * 1024u);
     if (allocation_probe == NULL) {
-        libfacet_free_proxy_client(debug);
+        child_log(logger, 5);
+        libfacet_free_proxy_client(environment);
+        libfacet_free_proxy_client(logger);
         libfacet_free_proxy_client(root);
         return 1;
     }
     free(allocation_probe);
 
-    debug_puts(debug, "child IPageAllocator/liballoc ready\n");
+    child_log(logger, 3);
 
-    libfacet_free_proxy_client(debug);
+    libfacet_free_proxy_client(environment);
+    libfacet_free_proxy_client(logger);
     libfacet_free_proxy_client(root);
 
     /* allocator.c retains this proxy for every later liballoc page request. */

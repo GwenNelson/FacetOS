@@ -1,5 +1,6 @@
 #include <facetos/config.h>
 #include <facetos/dominit0/config.h>
+#include <facetos/dominit0/environment.h>
 #include <facetos/dominit0/klog.h>
 #include <facetos/dominit0/logging.h>
 #include <facetos/dominit0/kmalloc.h>
@@ -67,7 +68,7 @@ static void launch_configured_domains(Dominit0SystemConfig *system)
           uint64_t domain_id = UINT64_MAX;
           FacetString domain_name = {0};
 
-          current->platform_state = platform_start_domain(config);
+          current->platform_state = platform_start_domain(current);
           if (current->platform_state != NULL)
                continue;
 
@@ -115,6 +116,9 @@ void main(int argc, char **argv, char **envp) {
 
      if (dominit0_logging_initialize(dominit0_config_get_system()) != 0)
           kpanic("Unable to initialise configured logging!");
+
+     if (dominit0_environment_initialize(dominit0_config_get_system()) != 0)
+          kpanic("Unable to initialise domain environments!");
 
      if (fallback)
           klog(LOG_WARN,

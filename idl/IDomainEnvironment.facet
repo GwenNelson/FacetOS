@@ -1,21 +1,9 @@
-// Environment object containing named interface entries for a domain.
+// Read-only bootstrap authority for one domain.
 interface IDomainEnvironment {
     uuid auto;
     requires IGenericObject;
 
-    struct Entry {
-        string name;
-        uuid iid;
-        u64 handle;
-    };
-
-    property array<Entry> entries read write;
-
-    // The legacy handle typedef is a uint64_t value. It is represented as a
-    // scalar here until the interface uses FacetHandle explicitly.
-    method FacetResult assign(
-        in string name,
-        in uuid iid,
-        in u64 handle
-    );
+    property u64 domain_id read;
+    property string domain_name read;
+    property u32 personality read;
 }

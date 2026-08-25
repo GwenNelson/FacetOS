@@ -1,0 +1,11 @@
+// Domain-bound logging authority. The server supplies attribution.
+interface ILogger {
+    uuid auto;
+    requires IGenericObject;
+
+    // Bootstrap events avoid payload transport until the general string record
+    // transport is introduced. The server maps each event to its fixed text.
+    // Levels use the numeric values from ILoggingConfig.LogLevel.
+    method FacetResult log(in i32 level, in u32 event);
+    method FacetResult flush();
+}

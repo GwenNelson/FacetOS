@@ -3,6 +3,8 @@
 #include <facetos/config.h>
 #include <facetos/interfaces/IDomainConfig.h>
 
+typedef struct Dominit0DomainEnvironment Dominit0DomainEnvironment;
+
 typedef struct Dominit0DomainConfigObject {
     IDomainConfig domain;
     ILoggingConfig logging;
@@ -19,6 +21,7 @@ typedef struct Dominit0DomainConfigObject {
  * and interprets platform_state after platform_start_domain() succeeds. */
 typedef struct CurrentDomain {
     IDomainConfig *config;
+    Dominit0DomainEnvironment *environment;
     void *platform_state;
 } CurrentDomain;
 

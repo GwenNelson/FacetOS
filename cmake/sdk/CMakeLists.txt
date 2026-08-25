@@ -181,6 +181,12 @@ set(FACET_GENERATED_IDOMAIN_CONFIG
 set(FACET_GENERATED_IPAGE_ALLOCATOR
     "${FACET_GENERATED_INCLUDE}/facetos/interfaces/IPageAllocator.h"
 )
+set(FACET_GENERATED_ILOGGER
+    "${FACET_GENERATED_INCLUDE}/facetos/interfaces/ILogger.h"
+)
+set(FACET_GENERATED_IDOMAIN_ENVIRONMENT
+    "${FACET_GENERATED_INCLUDE}/facetos/interfaces/IDomainEnvironment.h"
+)
 
 add_custom_command(
     OUTPUT
@@ -191,6 +197,8 @@ add_custom_command(
         "${FACET_GENERATED_IDOMAIN_CONSOLE_CONFIG}"
         "${FACET_GENERATED_IDOMAIN_CONFIG}"
         "${FACET_GENERATED_IPAGE_ALLOCATOR}"
+        "${FACET_GENERATED_ILOGGER}"
+        "${FACET_GENERATED_IDOMAIN_ENVIRONMENT}"
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "${FACET_GENERATED_INCLUDE}/facetos/interfaces"
     COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_IGENERIC}"
@@ -207,6 +215,10 @@ add_custom_command(
         "${FACETOS_ROOT}/idl/IDomainConfig.facet"
     COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_IPAGE_ALLOCATOR}"
         "${FACETOS_ROOT}/idl/IPageAllocator.facet"
+    COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_ILOGGER}"
+        "${FACETOS_ROOT}/idl/ILogger.facet"
+    COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_IDOMAIN_ENVIRONMENT}"
+        "${FACETOS_ROOT}/idl/IDomainEnvironment.facet"
     DEPENDS
         "${FACET_IDLC}"
         "${FACETOS_ROOT}/idl/IGenericObject.facet"
@@ -216,6 +228,8 @@ add_custom_command(
         "${FACETOS_ROOT}/idl/IDomainConsoleConfig.facet"
         "${FACETOS_ROOT}/idl/IDomainConfig.facet"
         "${FACETOS_ROOT}/idl/IPageAllocator.facet"
+        "${FACETOS_ROOT}/idl/ILogger.facet"
+        "${FACETOS_ROOT}/idl/IDomainEnvironment.facet"
     VERBATIM
 )
 
@@ -236,6 +250,12 @@ add_custom_target(facet-idl-config-generated
 add_custom_target(facet-idl-page-allocator-generated
     DEPENDS
         "${FACET_GENERATED_IPAGE_ALLOCATOR}"
+)
+
+add_custom_target(facet-idl-environment-generated
+    DEPENDS
+        "${FACET_GENERATED_ILOGGER}"
+        "${FACET_GENERATED_IDOMAIN_ENVIRONMENT}"
 )
 
 
@@ -301,6 +321,7 @@ target_include_directories(dominit BEFORE PRIVATE
 )
 add_dependencies(dominit facet-idl-debug-generated)
 add_dependencies(dominit facet-idl-page-allocator-generated)
+add_dependencies(dominit facet-idl-environment-generated)
 
 # `sel4` is CMake's libsel4 target. sel4runtime supplies process startup,
 # TLS, and the IPC-buffer pointer; dominit supplies its own bump allocator,
@@ -340,6 +361,7 @@ target_include_directories(dominit0 BEFORE PRIVATE
 add_dependencies(dominit0 facet-idl-debug-generated)
 add_dependencies(dominit0 facet-idl-config-generated)
 add_dependencies(dominit0 facet-idl-page-allocator-generated)
+add_dependencies(dominit0 facet-idl-environment-generated)
 
 target_compile_definitions(dominit0 PRIVATE
     FACET_PLATFORM_SEL4=1

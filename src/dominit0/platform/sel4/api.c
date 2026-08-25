@@ -2,7 +2,7 @@
 #include <facetos/dominit0/klog.h>
 #include <facetos/dominit0/kmalloc.h>
 #include <facetos/dominit0/kpanic.h>
-#include <facetos/interfaces/IDebug.h>
+#include <facetos/dominit0/environment.h>
 #include <facetos/interfaces/IPageAllocator.h>
 #include <facetos/libfacet/platform/sel4.h>
 
@@ -47,7 +47,6 @@ static sel4utils_alloc_data_t sel4_vspace_data;
 static IPageAllocator *page_allocator;
 static IPageAllocator page_alloc_instance;
 
-static FacetHandle debug_server_handle;
 static seL4_Word next_debug_badge = 1;
 
 typedef struct Sel4ChildPageAllocation {
@@ -66,6 +65,7 @@ typedef struct Sel4ChildPageAllocator {
 typedef struct Sel4DomainState {
     sel4utils_process_t process;
     Sel4ChildPageAllocator page_allocator;
+    Dominit0DomainEnvironment *environment;
 } Sel4DomainState;
 
 static bool
@@ -228,7 +228,17 @@ child_page_allocator_prepare(sel4utils_process_t *process, void *context,
         child_page_allocator_destroy(state);
         return -1;
     }
-    *out_bootstrap_handle = allocator->exported_handle;
+    if (dominit0_environment_bind_page_allocator(
+            state->environment, allocator->exported_handle) != 0) {
+        child_page_allocator_destroy(state);
+        return -1;
+    }
+    *out_bootstrap_handle =
+        dominit0_environment_root_handle(state->environment);
+    if (!handle_is_bound(*out_bootstrap_handle)) {
+        child_page_allocator_destroy(state);
+        return -1;
+    }
     return 0;
 }
 
@@ -351,44 +361,6 @@ find_boot_module(const seL4_BootInfo *bi, const char *wanted,
     return found ? 0 : 1;
 }
 
-static void
-debug_putchar(char c)
-{
-    seL4_DebugPutChar(c);
-}
-
-static FacetResult
-debug_get_interface(void *self, uuid_t iid, FacetHandle *result)
-{
-    (void)self;
-    if (memcmp(iid.bytes, IID_IDebug.bytes, sizeof(iid.bytes)) != 0 &&
-        memcmp(iid.bytes, IID_IGenericObject.bytes, sizeof(iid.bytes)) != 0) {
-        return FACET_NO_INTERFACE;
-    }
-
-    /* IDebug is served by this endpoint already.  Returning the exported
-     * handle directly avoids allocating a second server-side cap for this
-     * same-object interface query.  The platform reply path treats this as a
-     * borrowed handle and does not release the export handle itself. */
-    *result = debug_server_handle;
-    return FACET_OK;
-}
-
-static FacetResult
-debug_putc(void *self, uint8_t c)
-{
-    (void)self;
-    debug_putchar((char)c);
-    return FACET_OK;
-}
-
-static IDebug debug_object = {
-    .self = &debug_object,
-    .priv = NULL,
-    .getInterface = debug_get_interface,
-    .putc = debug_putc,
-};
-
 static seL4_CPtr
 mint_endpoint_to_process(sel4utils_process_t *process, FacetHandle handle)
 {
@@ -464,7 +436,7 @@ load_and_start_domain(sel4utils_process_t *process,
         }
     }
 
-    char *spawn_argv[argc + 5];
+    char *spawn_argv[argc + 4];
 
     if (sel4_allocman == NULL) {
         klog(LOG_ERROR,
@@ -493,32 +465,24 @@ load_and_start_domain(sel4utils_process_t *process,
         return -1;
     }
 
-    FacetHandle child_page_allocator_handle = {0};
+    FacetHandle child_bootstrap_handle = {0};
     if (pre_spawn != NULL &&
-        pre_spawn(process, hook_context, &child_page_allocator_handle) != 0) {
+        pre_spawn(process, hook_context, &child_bootstrap_handle) != 0) {
         klog(LOG_ERROR,
              "load_and_start_domain(): process service setup failed\n");
         goto fail;
     }
 
-    seL4_CPtr child_debug_endpoint =
-        mint_endpoint_to_process(process, debug_server_handle);
-    if (child_debug_endpoint == seL4_CapNull) {
+    if (!handle_is_bound(child_bootstrap_handle)) {
         klog(LOG_ERROR,
-             "load_and_start_domain(): could not mint debug endpoint\n");
+             "load_and_start_domain(): process has no bootstrap environment\n");
         goto fail;
     }
-
-    if (!handle_is_bound(child_page_allocator_handle)) {
+    seL4_CPtr child_bootstrap_endpoint =
+        mint_endpoint_to_process(process, child_bootstrap_handle);
+    if (child_bootstrap_endpoint == seL4_CapNull) {
         klog(LOG_ERROR,
-             "load_and_start_domain(): process has no page allocator\n");
-        goto fail;
-    }
-    seL4_CPtr child_page_allocator_endpoint =
-        mint_endpoint_to_process(process, child_page_allocator_handle);
-    if (child_page_allocator_endpoint == seL4_CapNull) {
-        klog(LOG_ERROR,
-             "load_and_start_domain(): could not mint page allocator\n");
+             "load_and_start_domain(): could not mint bootstrap environment\n");
         goto fail;
     }
 
@@ -538,36 +502,32 @@ load_and_start_domain(sel4utils_process_t *process,
         goto fail;
     }
 
-    char endpoint_string[5][WORD_STRING_SIZE];
-    char *endpoint_argv[5];
+    char endpoint_string[4][WORD_STRING_SIZE];
+    char *endpoint_argv[4];
     seL4_CPtr child_receive_slot = process->cspace_next_free;
-    seL4_Word child_words[5] = {
-        (seL4_Word)child_debug_endpoint,
-        (seL4_Word)child_page_allocator_endpoint,
+    seL4_Word child_words[4] = {
+        (seL4_Word)child_bootstrap_endpoint,
         (seL4_Word)SEL4UTILS_CNODE_SLOT,
         (seL4_Word)child_receive_slot,
         (seL4_Word)seL4_WordBits,
     };
-    sel4utils_create_word_args(endpoint_string, endpoint_argv, 5,
+    sel4utils_create_word_args(endpoint_string, endpoint_argv, 4,
                                child_words[0], child_words[1],
-                               child_words[2], child_words[3],
-                               child_words[4]);
+                               child_words[2], child_words[3]);
 
-    /* argv[1] is the debug endpoint, argv[2] is this child's page allocator,
-     * and argv[3..5] describe the empty
+    /* argv[1] is this child's environment root and argv[2..4] describe the empty
      * capability receive slot in the child's CSpace. */
     spawn_argv[0] = argv[0];
     spawn_argv[1] = endpoint_argv[0];
     spawn_argv[2] = endpoint_argv[1];
     spawn_argv[3] = endpoint_argv[2];
     spawn_argv[4] = endpoint_argv[3];
-    spawn_argv[5] = endpoint_argv[4];
     for (int i = 1; i < argc; i++) {
-        spawn_argv[i + 5] = argv[i];
+        spawn_argv[i + 4] = argv[i];
     }
 
     if (sel4utils_spawn_process_v(process, &sel4_vka, &sel4_vspace,
-                                  argc + 5, spawn_argv, 1) != 0) {
+                                  argc + 4, spawn_argv, 1) != 0) {
         klog(LOG_ERROR, "load_and_start_domain(): process start failed\n");
         goto fail;
     }
@@ -711,7 +671,7 @@ void platform_init(void) {
 
      kmalloc_init(page_allocator);
 
-     klog(LOG_DEBUG, "platform_init() - setting up libfacet debug server\n");
+     klog(LOG_DEBUG, "platform_init() - setting up libfacet platform\n");
      FacetSel4PlatformConfig facet_config = {
          .vka = &sel4_vka,
          .vspace = &sel4_vspace,
@@ -720,9 +680,6 @@ void platform_init(void) {
      if (facet_sel4_platform_init(&facet_config) != FACET_OK)
          kpanic("Unable to initialise libfacet seL4 platform!");
 
-     if (libfacet_export_interface(&debug_object, &IDebug_MetaData,
-                                   &debug_server_handle) != FACET_OK)
-         kpanic("Unable to export libfacet debug interface!");
 
      klog(LOG_INFO,"seL4 platform ready\n");
 }
@@ -747,18 +704,21 @@ platform_get_config_source(PlatformConfigSource *source)
     return PLATFORM_CONFIG_SOURCE_FOUND;
 }
 
-void *platform_start_domain(IDomainConfig *config)
+void *platform_start_domain(CurrentDomain *current)
 {
-     if (config == NULL) {
+     if (current == NULL || current->config == NULL ||
+         current->environment == NULL) {
          klog(LOG_ERROR, "platform_start_domain(): invalid domain config\n");
          return NULL;
      }
+     IDomainConfig *config = current->config;
 
      Sel4DomainState *state = calloc(1, sizeof(*state));
      if (state == NULL) {
          klog(LOG_ERROR, "platform_start_domain(): out of memory\n");
          return NULL;
      }
+     state->environment = current->environment;
 
      uint64_t domain_id = UINT64_MAX;
      FacetString domain_name = {0};
