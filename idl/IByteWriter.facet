@@ -2,5 +2,5 @@
 interface IByteWriter {
     uuid auto;
     requires IGenericObject;
-    // Byte-buffer parameter syntax is not yet accepted by facet-idlc.
+    method FacetResult write_bytes(in array<u8> payload, out u32 written);
 }
