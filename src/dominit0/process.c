@@ -168,7 +168,7 @@ static FacetResult launch_process(ProcessManager *manager,
     }
     process->environment = dominit0_process_environment_create(
         manager->domain->environment,
-        initial ? (FacetHandle){0} : session_handle);
+        initial ? (FacetHandle){0} : session_handle, initial);
     if (process->environment == NULL) {
         free(process);
         result = FACET_OUT_OF_MEMORY;

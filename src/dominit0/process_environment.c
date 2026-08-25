@@ -136,14 +136,13 @@ static FacetResult list_bindings(void *self, FacetArray_BindingInfo *out)
 }
 
 Dominit0ProcessEnvironment *dominit0_process_environment_create(
-    Dominit0DomainEnvironment *parent, FacetHandle session)
+    Dominit0DomainEnvironment *parent, FacetHandle session,
+    bool bootstrap_authority)
 {
     if (parent == NULL) return NULL;
     Dominit0ProcessEnvironment *environment = calloc(1, sizeof(*environment));
     if (environment == NULL) return NULL;
-    static const char *delegated[] = {
-        "logger", "files", "auth", "security", "processes",
-    };
+    static const char *delegated[] = {"logger", "files"};
     for (size_t i = 0; i < sizeof(delegated) / sizeof(delegated[0]); i++) {
         uuid_t iid;
         FacetHandle handle = {0};
@@ -151,6 +150,22 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
             parent, delegated[i], &iid, &handle);
         if (result == FACET_OK && bind(environment, delegated[i], iid, handle) != 0)
             goto fail;
+    }
+    static const char *bootstrap_delegated[] = {
+        "auth", "security", "processes",
+    };
+    if (bootstrap_authority) {
+        for (size_t i = 0;
+             i < sizeof(bootstrap_delegated) / sizeof(bootstrap_delegated[0]);
+             i++) {
+            uuid_t iid;
+            FacetHandle handle = {0};
+            FacetResult result = dominit0_environment_resolve_named(
+                parent, bootstrap_delegated[i], &iid, &handle);
+            if (result == FACET_OK &&
+                bind(environment, bootstrap_delegated[i], iid, handle) != 0)
+                goto fail;
+        }
     }
     if (session.platform != NULL) {
         if (libfacet_handle_clone(session, &environment->owned_session) != FACET_OK ||

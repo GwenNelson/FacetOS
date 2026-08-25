@@ -163,7 +163,7 @@ static IProcessEnvironment *make_environment(Dominit0SystemConfig *system,
                                              Dominit0ProcessEnvironment **server_out)
 {
     Dominit0ProcessEnvironment *server = dominit0_process_environment_create(
-        system->current_domains[domain]->environment, (FacetHandle){0});
+        system->current_domains[domain]->environment, (FacetHandle){0}, false);
     assert(server != NULL);
     assert(dominit0_terminal_bind_process_environment(
                system->current_domains[domain], assignment, server) == 0);
