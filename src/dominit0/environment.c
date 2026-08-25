@@ -7,6 +7,7 @@
 #include <facetos/interfaces/IPageAllocator.h>
 #include <facetos/interfaces/IProcessEnvironment.h>
 #include <facetos/interfaces/IFileStore.h>
+#include <facetos/utf8.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -76,7 +77,7 @@ static FacetResult process_binding(Dominit0DomainEnvironment *environment,
                                    FacetHandle *handle)
 {
     if (name == NULL || name->data == NULL || name->length == 0 ||
-        name->length > 127)
+        name->length > 127 || !facet_utf8_is_valid(name->data, name->length))
         return FACET_INVALID_ARGUMENT;
     if (name_equal(name, "logger")) {
         if (iid != NULL) *iid = IID_ILogger;
@@ -363,6 +364,7 @@ int dominit0_environment_bind_named(Dominit0DomainEnvironment *environment,
 {
     if (environment == NULL || name == NULL || name[0] == '\0' ||
         strlen(name) > 127 || object.platform == NULL ||
+        !facet_utf8_is_valid(name, strlen(name)) ||
         environment->extra_binding_count == DOMINIT0_EXTRA_BINDINGS_MAX)
         return -1;
     FacetString facet_name = { .data = name, .length = strlen(name) };

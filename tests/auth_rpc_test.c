@@ -166,6 +166,11 @@ int main(void)
     assert(dominit0_auth_initialize(&system) == 0);
 
     IProcessEnvironment *domain0 = domain_process_environment(&system, 0);
+    char malformed_name_data[] = {(char)0xc0, (char)0x80};
+    FacetString malformed_name = {.data = malformed_name_data, .length = 2};
+    FacetHandle malformed_result = {0};
+    assert(domain0->resolve(domain0->self, &malformed_name,
+                            &malformed_result) == FACET_INVALID_ARGUMENT);
     IAuthService *auth = resolve(domain0, "auth", &IAuthService_MetaData);
     ISecurityManager *security0 = resolve(domain0, "security",
                                           &ISecurityManager_MetaData);

@@ -4,6 +4,7 @@
 #include <facetos/interfaces/IPageAllocator.h>
 #include <facetos/interfaces/IProcessEnvironment.h>
 #include <facetos/interfaces/ISession.h>
+#include <facetos/utf8.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -41,7 +42,8 @@ static ProcessBinding *find_binding(Dominit0ProcessEnvironment *environment,
                                     const FacetString *name)
 {
     if (environment == NULL || name == NULL || name->data == NULL ||
-        name->length == 0 || name->length > 127)
+        name->length == 0 || name->length > 127 ||
+        !facet_utf8_is_valid(name->data, name->length))
         return NULL;
     for (size_t i = 0; i < environment->binding_count; i++)
         if (name_equal(name, environment->bindings[i].name))
@@ -54,6 +56,7 @@ static int bind(Dominit0ProcessEnvironment *environment, const char *name,
 {
     if (environment == NULL || name == NULL || name[0] == '\0' ||
         strlen(name) > 127 || handle.platform == NULL ||
+        !facet_utf8_is_valid(name, strlen(name)) ||
         environment->binding_count == PROCESS_BINDING_MAX)
         return -1;
     FacetString candidate = {.data = name, .length = strlen(name)};
@@ -83,6 +86,9 @@ static FacetResult resolve(void *self, const FacetString *name, FacetHandle *out
 {
     if (out == NULL) return FACET_INVALID_ARGUMENT;
     *out = (FacetHandle){0};
+    if (name == NULL || name->data == NULL || name->length == 0 ||
+        name->length > 127 || !facet_utf8_is_valid(name->data, name->length))
+        return FACET_INVALID_ARGUMENT;
     ProcessBinding *binding = find_binding(self, name);
     if (binding == NULL) return FACET_NOT_FOUND;
     return libfacet_handle_clone(binding->handle, out);
@@ -93,6 +99,9 @@ static FacetResult resolve_as(void *self, const FacetString *name, uuid_t iid,
 {
     if (out == NULL) return FACET_INVALID_ARGUMENT;
     *out = (FacetHandle){0};
+    if (name == NULL || name->data == NULL || name->length == 0 ||
+        name->length > 127 || !facet_utf8_is_valid(name->data, name->length))
+        return FACET_INVALID_ARGUMENT;
     ProcessBinding *binding = find_binding(self, name);
     if (binding == NULL) return FACET_NOT_FOUND;
     if (!iid_equal(binding->iid, iid)) return FACET_NO_INTERFACE;
@@ -102,6 +111,9 @@ static FacetResult resolve_as(void *self, const FacetString *name, uuid_t iid,
 static FacetResult primary_iid(void *self, const FacetString *name, uuid_t *out)
 {
     if (out == NULL) return FACET_INVALID_ARGUMENT;
+    if (name == NULL || name->data == NULL || name->length == 0 ||
+        name->length > 127 || !facet_utf8_is_valid(name->data, name->length))
+        return FACET_INVALID_ARGUMENT;
     ProcessBinding *binding = find_binding(self, name);
     if (binding == NULL) return FACET_NOT_FOUND;
     *out = binding->iid;
@@ -114,6 +126,9 @@ static FacetResult advertised_iids(void *self, const FacetString *name,
     if (out == NULL) return FACET_INVALID_ARGUMENT;
     out->data = NULL;
     out->count = 0;
+    if (name == NULL || name->data == NULL || name->length == 0 ||
+        name->length > 127 || !facet_utf8_is_valid(name->data, name->length))
+        return FACET_INVALID_ARGUMENT;
     ProcessBinding *binding = find_binding(self, name);
     if (binding == NULL) return FACET_NOT_FOUND;
     out->data = &binding->iid;
