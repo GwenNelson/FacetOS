@@ -557,12 +557,15 @@ image: build
 #
 
 QEMU := qemu-system-x86_64
+BOCHS_DEBUG_LOG := $(ROOT)/build/bochs-debug.log
 
 QEMU_FLAGS := \
 	-enable-kvm \
 	-cpu host \
 	-m 512M \
-	-serial stdio
+	-serial stdio \
+	-debugcon file:$(BOCHS_DEBUG_LOG) \
+	-global isa-debugcon.iobase=0xe9
 
 ifeq ($(QEMU_GDB),1)
 	QEMU_FLAGS += -S -s
@@ -570,6 +573,7 @@ endif
 
 QEMU_DIRECT_FLAGS := \
 	-kernel $(BOOTSTUB32) \
+	-append "debug_port=0xe9" \
 	-initrd $(SDK_KERNEL),$(FACET_DOMINIT0),$(FACET_DOMINIT),$(FACET_CONFIG_FILE),$(INITRD_SYSTEM),$(INITRD_CHILD)
 
 QEMU_ISO_FLAGS := \
@@ -579,6 +583,7 @@ QEMU_ISO_FLAGS := \
 # One command now does the incremental kernel/dominit0/dominit build, incrementally
 # builds bootstub32, and boots the result.
 run: build bootstub32
+	rm -f $(BOCHS_DEBUG_LOG)
 	timeout 30s $(QEMU) \
 		$(QEMU_FLAGS) \
 		$(QEMU_DIRECT_FLAGS)
