@@ -136,10 +136,18 @@ int main(int argc, char **argv)
     if (auth_service != NULL && security_manager != NULL) {
         FacetString root = { .data = "root", .length = 4 };
         FacetString password = { .data = "facetos", .length = 7 };
-        if (auth_service->authenticate(auth_service->self, &root, &password, &authenticated) == FACET_OK &&
-            security_manager->create_session(security_manager->self, authenticated, &session) == FACET_OK)
+        FacetResult auth_result = auth_service->authenticate(auth_service->self, &root, &password, &authenticated);
+        FacetResult session_result = auth_result == FACET_OK
+            ? security_manager->create_session(security_manager->self, authenticated, &session)
+            : auth_result;
+        if (auth_result == FACET_OK && session_result == FACET_OK)
             child_log(logger, "authenticated root session ready");
-        else child_log(logger, "root authentication/session failed");
+        else child_log(logger, auth_result != FACET_OK
+                       ? (auth_result == FACET_OUT_OF_MEMORY ? "root authentication out of memory" : "root authentication failed")
+                       : (session_result == FACET_PROTOCOL_ERROR ? "root session protocol error" :
+                          session_result == FACET_OUT_OF_MEMORY ? "root session out of memory" :
+                          session_result == FACET_ACCESS_DENIED ? "root session access denied" :
+                          "root session creation failed"));
     } else child_log(logger, "auth/security bindings unavailable");
     libfacet_free_proxy_client(auth_service);
     libfacet_free_proxy_client(security_manager);

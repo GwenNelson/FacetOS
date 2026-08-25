@@ -32,7 +32,10 @@
 
 extern seL4_BootInfo* platform_sel4_bi;
 
-#define ALLOCMAN_BOOTSTRAP_POOL_SIZE (80 * 1024 * 1024)
+/* Keep enough dynamic heap after platform setup for the intentionally
+ * capability-rich dominit0 service graph (terminal, config, auth, sessions).
+ * The bootstrap allocman itself does not require the former 80 MiB pool. */
+#define ALLOCMAN_BOOTSTRAP_POOL_SIZE (70 * 1024 * 1024)
 
 static simple_t sel4_simple;
 static allocman_t *sel4_allocman;

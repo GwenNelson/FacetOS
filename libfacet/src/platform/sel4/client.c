@@ -118,13 +118,24 @@ FacetResult libfacet_platform_call(
     }
     size_t request_payload_words = wire_word_count(request->payload_size);
     if ((request->payload_size != 0 && request->payload == NULL) ||
-        request->attachment_count != 0 ||
+        request->attachment_count > FACET_RPC_MAX_ATTACHMENTS ||
+        request->attachment_count > seL4_MsgMaxExtraCaps ||
         request_payload_words == SIZE_MAX ||
         request->payload_size > FACET_RPC_MAX_INLINE_PAYLOAD ||
         request->word_count > FACET_RPC_MAX_WORDS ||
         request->word_count > seL4_MsgMaxLength - 4 ||
         request_payload_words > seL4_MsgMaxLength - 4 - request->word_count) {
         return FACET_NOT_SUPPORTED;
+    }
+
+    for (size_t i = 0; i < request->attachment_count; i++) {
+        if (request->attachments[i].kind != FACET_RPC_ATTACHMENT_HANDLE ||
+            request->attachments[i].handle.platform == NULL) {
+            return FACET_NOT_SUPPORTED;
+        }
+        ClientHandle *attachment =
+            as_client_handle(request->attachments[i].handle);
+        seL4_SetCap((int)i, attachment->endpoint);
     }
 
     seL4_Word length = 4 + request->word_count + request_payload_words;
@@ -150,7 +161,7 @@ FacetResult libfacet_platform_call(
         client_receive_depth);
 
     seL4_MessageInfo_t info = seL4_MessageInfo_new(
-        0, 0, 0, length);
+        0, 0, (seL4_Word)request->attachment_count, length);
     seL4_MessageInfo_t received = seL4_Call(native->endpoint, info);
 
     size_t received_length = seL4_MessageInfo_get_length(received);

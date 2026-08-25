@@ -380,7 +380,10 @@ static void facet_sel4_server_entry(
         if (buffer_count > extra_caps) request_result = FACET_PROTOCOL_ERROR;
         seL4_CPtr received_caps[FACET_RPC_MAX_ATTACHMENTS] = {0};
         for (size_t i = 0; i < extra_caps; i++) {
-            received_caps[i] = seL4_GetCap((int)i);
+            /* Transferred caps are installed at the configured receive path.
+             * caps_or_badges contains sender-side IPC metadata, not a stable
+             * destination CPtr in this CSpace. */
+            received_caps[i] = export_state->receive_paths[i].capPtr;
             request.attachments[i].kind = i >= extra_caps - buffer_count
                 ? FACET_RPC_ATTACHMENT_BUFFER : FACET_RPC_ATTACHMENT_HANDLE;
             request.attachment_count++;
@@ -657,7 +660,7 @@ FacetResult libfacet_platform_call(
     }
     seL4_CPtr received_caps[FACET_RPC_MAX_ATTACHMENTS] = {0};
     for (size_t i = 0; i < extra_caps; i++) {
-        received_caps[i] = seL4_GetCap((int)i);
+        received_caps[i] = receive_paths[i].capPtr;
         reply->attachments[i].kind = i >= extra_caps - buffer_count
             ? FACET_RPC_ATTACHMENT_BUFFER : FACET_RPC_ATTACHMENT_HANDLE;
         if (reply->attachments[i].kind == FACET_RPC_ATTACHMENT_HANDLE &&
