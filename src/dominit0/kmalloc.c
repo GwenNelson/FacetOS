@@ -224,16 +224,15 @@ int liballoc_unlock(void)
 
 void *liballoc_alloc(int pages)
 {
-
     void *base = NULL;
 
-    if (kmalloc_allocator == NULL)
+    if (kmalloc_allocator == NULL || pages <= 0)
         return NULL;
 
     if (kmalloc_allocator->alloc(
             kmalloc_allocator->self,
-            pages,
-            &base) != 0)
+            (uint64_t)pages,
+            &base) != FACET_OK)
         return NULL;
 
     return base;
@@ -241,11 +240,11 @@ void *liballoc_alloc(int pages)
 
 int liballoc_free(void *ptr, int pages)
 {
-    if (kmalloc_allocator == NULL)
+    if (kmalloc_allocator == NULL || ptr == NULL || pages <= 0)
         return -1;
 
     return kmalloc_allocator->free(
         kmalloc_allocator->self,
-        pages,
-        ptr);
+        (uint64_t)pages,
+        (uint64_t)(uintptr_t)ptr) == FACET_OK ? 0 : -1;
 }

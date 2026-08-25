@@ -178,6 +178,9 @@ set(FACET_GENERATED_IDOMAIN_CONSOLE_CONFIG
 set(FACET_GENERATED_IDOMAIN_CONFIG
     "${FACET_GENERATED_INCLUDE}/facetos/interfaces/IDomainConfig.h"
 )
+set(FACET_GENERATED_IPAGE_ALLOCATOR
+    "${FACET_GENERATED_INCLUDE}/facetos/interfaces/IPageAllocator.h"
+)
 
 add_custom_command(
     OUTPUT
@@ -187,6 +190,7 @@ add_custom_command(
         "${FACET_GENERATED_ILOGGING_SINK}"
         "${FACET_GENERATED_IDOMAIN_CONSOLE_CONFIG}"
         "${FACET_GENERATED_IDOMAIN_CONFIG}"
+        "${FACET_GENERATED_IPAGE_ALLOCATOR}"
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "${FACET_GENERATED_INCLUDE}/facetos/interfaces"
     COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_IGENERIC}"
@@ -201,6 +205,8 @@ add_custom_command(
         "${FACETOS_ROOT}/idl/IDomainConsoleConfig.facet"
     COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_IDOMAIN_CONFIG}"
         "${FACETOS_ROOT}/idl/IDomainConfig.facet"
+    COMMAND "${FACET_IDLC}" -o "${FACET_GENERATED_IPAGE_ALLOCATOR}"
+        "${FACETOS_ROOT}/idl/IPageAllocator.facet"
     DEPENDS
         "${FACET_IDLC}"
         "${FACETOS_ROOT}/idl/IGenericObject.facet"
@@ -209,6 +215,7 @@ add_custom_command(
         "${FACETOS_ROOT}/idl/ILoggingSink.facet"
         "${FACETOS_ROOT}/idl/IDomainConsoleConfig.facet"
         "${FACETOS_ROOT}/idl/IDomainConfig.facet"
+        "${FACETOS_ROOT}/idl/IPageAllocator.facet"
     VERBATIM
 )
 
@@ -224,6 +231,11 @@ add_custom_target(facet-idl-config-generated
         "${FACET_GENERATED_ILOGGING_SINK}"
         "${FACET_GENERATED_IDOMAIN_CONSOLE_CONFIG}"
         "${FACET_GENERATED_IDOMAIN_CONFIG}"
+)
+
+add_custom_target(facet-idl-page-allocator-generated
+    DEPENDS
+        "${FACET_GENERATED_IPAGE_ALLOCATOR}"
 )
 
 
@@ -325,6 +337,7 @@ target_include_directories(dominit0 BEFORE PRIVATE
 )
 add_dependencies(dominit0 facet-idl-debug-generated)
 add_dependencies(dominit0 facet-idl-config-generated)
+add_dependencies(dominit0 facet-idl-page-allocator-generated)
 
 target_compile_definitions(dominit0 PRIVATE
     FACET_PLATFORM_SEL4=1

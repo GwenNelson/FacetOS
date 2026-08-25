@@ -7,10 +7,6 @@
 
 typedef struct ILoggingSink ILoggingSink;
 
-#ifdef FACET_PLATFORM_SEL4
-#include <sel4utils/process.h>
-#endif
-
 
 void platform_init_early(void); // anything the platform needs IMMEDIATELY, usually a NOP
 
@@ -43,21 +39,3 @@ void *platform_start_domain(IDomainConfig *config);
 void platform_yield(void);	// yields to the microkernel or other tasks
 
 void platform_debug_print(char* str); // prints a debug string
-
-#ifdef FACET_PLATFORM_SEL4
-/*
- * Configure and start a process from a complete ELF image mapped into this
- * task. The process object must remain at the same address for the lifetime of
- * the process and may later be passed to sel4utils_destroy_process(). The ELF
- * buffer is no longer needed after this function returns successfully. argv
- * must contain at least argv[0]; argv[1] is inserted by this function and
- * contains the child-visible debug endpoint CPtr. Existing arguments from
- * argv[1] onward are shifted up by one slot.
- */
-int load_and_start_domain(sel4utils_process_t *process,
-                          const void *elf_buffer,
-                          size_t elf_size,
-                          uint8_t priority,
-                          int argc,
-                          char *argv[]);
-#endif

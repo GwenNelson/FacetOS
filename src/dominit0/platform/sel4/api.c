@@ -24,6 +24,7 @@
 #include <sel4utils/vspace.h>
 
 #include <stddef.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -49,9 +50,190 @@ static IPageAllocator page_alloc_instance;
 static FacetHandle debug_server_handle;
 static seL4_Word next_debug_badge = 1;
 
+typedef struct Sel4ChildPageAllocation {
+    uintptr_t base;
+    uint64_t page_count;
+    struct Sel4ChildPageAllocation *next;
+} Sel4ChildPageAllocation;
+
+typedef struct Sel4ChildPageAllocator {
+    IPageAllocator interface;
+    sel4utils_process_t *process;
+    FacetHandle exported_handle;
+    Sel4ChildPageAllocation *allocations;
+} Sel4ChildPageAllocator;
+
 typedef struct Sel4DomainState {
     sel4utils_process_t process;
+    Sel4ChildPageAllocator page_allocator;
 } Sel4DomainState;
+
+static bool
+iid_equal(uuid_t left, uuid_t right)
+{
+    return memcmp(left.bytes, right.bytes, sizeof(left.bytes)) == 0;
+}
+
+static bool
+handle_is_bound(FacetHandle handle)
+{
+    return handle.platform != NULL;
+}
+
+static FacetResult
+child_page_allocator_get_interface(void *self, uuid_t iid,
+                                   FacetHandle *result)
+{
+    Sel4ChildPageAllocator *allocator = self;
+    if (result == NULL)
+        return FACET_INVALID_ARGUMENT;
+    *result = (FacetHandle){0};
+    if (!iid_equal(iid, IID_IGenericObject) &&
+        !iid_equal(iid, IID_IPageAllocator))
+        return FACET_NO_INTERFACE;
+    if (!handle_is_bound(allocator->exported_handle))
+        return FACET_INVALID_HANDLE;
+    *result = allocator->exported_handle;
+    return FACET_OK;
+}
+
+static FacetResult
+child_page_allocator_get_page_size(void *self, uint64_t *page_size)
+{
+    (void)self;
+    if (page_size == NULL)
+        return FACET_INVALID_ARGUMENT;
+    *page_size = UINT64_C(1) << seL4_PageBits;
+    return FACET_OK;
+}
+
+static FacetResult
+child_page_allocator_alloc(void *self, uint64_t count, void **pages)
+{
+    Sel4ChildPageAllocator *allocator = self;
+    if (pages == NULL)
+        return FACET_INVALID_ARGUMENT;
+    *pages = NULL;
+    if (allocator->process == NULL || count == 0 || count > SIZE_MAX)
+        return FACET_INVALID_ARGUMENT;
+
+    Sel4ChildPageAllocation *record = calloc(1, sizeof(*record));
+    if (record == NULL)
+        return FACET_OUT_OF_MEMORY;
+
+    void *base = vspace_new_pages(&allocator->process->vspace,
+                                  seL4_AllRights, (size_t)count,
+                                  seL4_PageBits);
+    if (base == NULL) {
+        free(record);
+        return FACET_OUT_OF_MEMORY;
+    }
+
+    record->base = (uintptr_t)base;
+    record->page_count = count;
+    record->next = allocator->allocations;
+    allocator->allocations = record;
+    *pages = base;
+    return FACET_OK;
+}
+
+static FacetResult
+child_page_allocator_free(void *self, uint64_t count, uint64_t base)
+{
+    Sel4ChildPageAllocator *allocator = self;
+    if (allocator->process == NULL || count == 0 || base == 0 ||
+        base > UINTPTR_MAX)
+        return FACET_INVALID_ARGUMENT;
+
+    Sel4ChildPageAllocation **link = &allocator->allocations;
+    while (*link != NULL && ((*link)->base != (uintptr_t)base ||
+                             (*link)->page_count != count)) {
+        link = &(*link)->next;
+    }
+    if (*link == NULL)
+        return FACET_INVALID_ARGUMENT;
+
+    Sel4ChildPageAllocation *record = *link;
+    vspace_unmap_pages(&allocator->process->vspace, (void *)(uintptr_t)base,
+                       (size_t)count, seL4_PageBits, VSPACE_FREE);
+    *link = record->next;
+    free(record);
+    return FACET_OK;
+}
+
+static void
+child_page_allocator_destroy(Sel4DomainState *state)
+{
+    Sel4ChildPageAllocator *allocator = &state->page_allocator;
+    while (allocator->allocations != NULL) {
+        Sel4ChildPageAllocation *record = allocator->allocations;
+        allocator->allocations = record->next;
+        if (allocator->process != NULL) {
+            vspace_unmap_pages(&allocator->process->vspace,
+                               (void *)record->base,
+                               (size_t)record->page_count, seL4_PageBits,
+                               VSPACE_FREE);
+        }
+        free(record);
+    }
+    if (handle_is_bound(allocator->exported_handle))
+        (void)libfacet_unexport_interface(allocator->exported_handle);
+    memset(allocator, 0, sizeof(*allocator));
+}
+
+static int
+child_page_allocator_self_test(Sel4ChildPageAllocator *allocator)
+{
+    uint64_t page_size = 0;
+    void *page = NULL;
+    if (allocator->interface.get_page_size(allocator, &page_size) != FACET_OK ||
+        page_size != (UINT64_C(1) << seL4_PageBits) ||
+        allocator->interface.alloc(allocator, 0, &page) == FACET_OK ||
+        allocator->interface.alloc(allocator, 1, &page) != FACET_OK ||
+        page == NULL ||
+        allocator->interface.free(allocator, 1, (uint64_t)(uintptr_t)page) !=
+            FACET_OK ||
+        allocator->interface.free(allocator, 1, (uint64_t)(uintptr_t)page) ==
+            FACET_OK)
+        return -1;
+    return 0;
+}
+
+static int
+child_page_allocator_prepare(sel4utils_process_t *process, void *context)
+{
+    Sel4DomainState *state = context;
+    if (process == NULL || state == NULL || process != &state->process)
+        return -1;
+
+    Sel4ChildPageAllocator *allocator = &state->page_allocator;
+    allocator->process = process;
+    allocator->interface.self = allocator;
+    allocator->interface.priv = allocator;
+    allocator->interface.getInterface = child_page_allocator_get_interface;
+    allocator->interface.get_page_size = child_page_allocator_get_page_size;
+    allocator->interface.alloc = child_page_allocator_alloc;
+    allocator->interface.free = child_page_allocator_free;
+
+    if (libfacet_export_interface(&allocator->interface,
+                                  &IPageAllocator_MetaData,
+                                  &allocator->exported_handle) != FACET_OK) {
+        child_page_allocator_destroy(state);
+        return -1;
+    }
+    if (child_page_allocator_self_test(allocator) != 0) {
+        child_page_allocator_destroy(state);
+        return -1;
+    }
+    return 0;
+}
+
+static void
+child_page_allocator_cleanup(void *context)
+{
+    if (context != NULL)
+        child_page_allocator_destroy(context);
+}
 
 typedef struct boot_module {
     const void *data;
@@ -250,13 +432,20 @@ copy_elf_program_headers(sel4utils_process_t *process, const elf_t *elf)
     return 0;
 }
 
-int
+typedef int (*DomainPreSpawnHook)(sel4utils_process_t *process,
+                                  void *context);
+typedef void (*DomainFailureCleanup)(void *context);
+
+static int
 load_and_start_domain(sel4utils_process_t *process,
                       const void *elf_buffer,
                       size_t elf_size,
                       uint8_t priority,
                       int argc,
-                      char *argv[])
+                      char *argv[],
+                      DomainPreSpawnHook pre_spawn,
+                      DomainFailureCleanup failure_cleanup,
+                      void *hook_context)
 {
     if (process == NULL || elf_buffer == NULL || elf_size == 0 ||
         argc < 1 || argv == NULL) {
@@ -298,6 +487,12 @@ load_and_start_domain(sel4utils_process_t *process,
                                            &sel4_vspace, config) != 0) {
         klog(LOG_ERROR, "load_and_start_domain(): process setup failed\n");
         return -1;
+    }
+
+    if (pre_spawn != NULL && pre_spawn(process, hook_context) != 0) {
+        klog(LOG_ERROR,
+             "load_and_start_domain(): process service setup failed\n");
+        goto fail;
     }
 
     seL4_CPtr child_debug_endpoint = mint_debug_endpoint(process);
@@ -356,64 +551,89 @@ load_and_start_domain(sel4utils_process_t *process,
     return 0;
 
 fail:
+    if (failure_cleanup != NULL)
+        failure_cleanup(hook_context);
     sel4utils_destroy_process(process, &sel4_vka);
     return -1;
 }
 
-size_t sel4_page_alloc_get_page_size(void* self) {
-	// temporary hack
-	return 4096;
-}
-
-static int
-sel4_page_alloc_alloc(void *self, size_t count, void **pages)
+static FacetResult
+sel4_page_alloc_get_interface(void *self, uuid_t iid, FacetHandle *result)
 {
     IPageAllocator *allocator = self;
+    (void)allocator;
+    (void)iid;
+    if (result == NULL)
+        return FACET_INVALID_ARGUMENT;
+    *result = (FacetHandle){0};
+    return FACET_NO_INTERFACE;
+}
+
+static FacetResult
+sel4_page_alloc_get_page_size(void *self, uint64_t *page_size)
+{
+    (void)self;
+    if (page_size == NULL)
+        return FACET_INVALID_ARGUMENT;
+    *page_size = UINT64_C(1) << seL4_PageBits;
+    return FACET_OK;
+}
+
+static FacetResult
+sel4_page_alloc_alloc(void *self, uint64_t count, void **pages)
+{
+    IPageAllocator *allocator = self;
+    if (pages == NULL || count == 0 || count > SIZE_MAX)
+        return FACET_INVALID_ARGUMENT;
     vspace_t *vspace = allocator->priv;
 
     void *base = vspace_new_pages(
-        &sel4_vspace,
+        vspace,
         seL4_AllRights,
-        count,
+        (size_t)count,
         seL4_PageBits
     );
 
     if (base == NULL)
-        return -1;
+        return FACET_OUT_OF_MEMORY;
 
     *pages = base;
-    return 0;
+    return FACET_OK;
 }
 
-static int
-sel4_page_alloc_free(void *self, size_t count, void *base)
+static FacetResult
+sel4_page_alloc_free(void *self, uint64_t count, uint64_t base)
 {
     IPageAllocator *allocator = self;
     vspace_t *vspace = allocator->priv;
 
-    if (base == NULL || count == 0)
-        return -1;
+    if (base == 0 || count == 0 || count > SIZE_MAX || base > UINTPTR_MAX)
+        return FACET_INVALID_ARGUMENT;
 
     vspace_unmap_pages(
         vspace,
-        base,
-        count,
+        (void *)(uintptr_t)base,
+        (size_t)count,
         seL4_PageBits,
         VSPACE_FREE
     );
 
-    return 0;
+    return FACET_OK;
 }
 
-IPageAllocator* sel4_page_allocator_create(vka_t *vka) {
-	klog(LOG_DEBUG,"sel4_page_allocator_create()\n");
-	IPageAllocator *retval = &page_alloc_instance;
-	retval->self = (void*)retval;
-	retval->priv = (void*)&sel4_vspace;
-	retval->get_page_size = &sel4_page_alloc_get_page_size;
-	retval->alloc         = &sel4_page_alloc_alloc;
-	retval->free          = &sel4_page_alloc_free;
-	return retval;
+IPageAllocator *
+sel4_page_allocator_create(vka_t *vka)
+{
+    (void)vka;
+    klog(LOG_DEBUG, "sel4_page_allocator_create()\n");
+    IPageAllocator *retval = &page_alloc_instance;
+    retval->self = retval;
+    retval->priv = &sel4_vspace;
+    retval->getInterface = sel4_page_alloc_get_interface;
+    retval->get_page_size = sel4_page_alloc_get_page_size;
+    retval->alloc = sel4_page_alloc_alloc;
+    retval->free = sel4_page_alloc_free;
+    return retval;
 }
 
 void platform_init_early(void) {
@@ -547,13 +767,20 @@ void *platform_start_domain(IDomainConfig *config)
                                dominit_module.size,
                                seL4_MaxPrio,
                                1,
-                               dominit_argv) != 0) {
+                               dominit_argv,
+                               child_page_allocator_prepare,
+                               child_page_allocator_cleanup,
+                               state) != 0) {
          klog(LOG_ERROR,
               "platform_start_domain(): unable to start dominit for domain %llu (%s)\n",
               (unsigned long long)domain_id, domain_name.data);
          free(state);
          return NULL;
      }
+
+     klog(LOG_INFO,
+          "Prepared and self-tested child IPageAllocator for domain %llu (%s)\n",
+          (unsigned long long)domain_id, domain_name.data);
 
      return state;
 }

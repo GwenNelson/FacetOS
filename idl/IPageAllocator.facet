@@ -1,6 +1,8 @@
 // Interface for allocating and freeing pages.
 interface IPageAllocator {
-    uuid auto;
+    // Stable ABI: this is also the UUID used by the former hand-written
+    // header, which the generated header now replaces.
+    uuid "bb0edfa1-fb32-476f-a37a-12380b12757c";
     requires IGenericObject;
 
     method FacetResult get_page_size(out u64 page_size);
