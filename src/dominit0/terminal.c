@@ -6,6 +6,8 @@
 #include <facetos/interfaces/IByteReader.h>
 #include <facetos/interfaces/IByteWriter.h>
 #include <facetos/interfaces/ITerminal.h>
+#include <facetos/interfaces/ITerminalControl.h>
+#include <facetos/interfaces/ISeat.h>
 
 #include <string.h>
 
@@ -13,9 +15,13 @@ typedef struct Dominit0SerialTerminal {
     IByteReader input;
     IByteWriter output;
     ITerminal terminal;
+    ITerminalControl control;
+    ISeat seat;
     FacetHandle input_handle;
     FacetHandle output_handle;
     FacetHandle terminal_handle;
+    FacetHandle control_handle;
+    FacetHandle seat_handle;
 } Dominit0SerialTerminal;
 
 static Dominit0SerialTerminal serial_terminal;
@@ -118,8 +124,53 @@ static FacetResult terminal_get_output(void *self, FacetHandle *output)
 static FacetResult terminal_get_control(void *self, FacetHandle *control)
 {
     (void)self;
-    if (control != NULL) *control = (FacetHandle){0};
+    return return_handle(serial_terminal.control_handle, control);
+}
+
+static FacetResult control_get_interface(void *self, uuid_t iid,
+                                         FacetHandle *result)
+{
+    (void)self;
+    if (iid_equal(iid, IID_IGenericObject) || iid_equal(iid, IID_ITerminalControl))
+        return return_handle(serial_terminal.control_handle, result);
+    if (result != NULL) *result = (FacetHandle){0};
     return FACET_NO_INTERFACE;
+}
+
+static FacetResult seat_get_interface(void *self, uuid_t iid, FacetHandle *result)
+{
+    (void)self;
+    if (iid_equal(iid, IID_IGenericObject) || iid_equal(iid, IID_ISeat))
+        return return_handle(serial_terminal.seat_handle, result);
+    if (result != NULL) *result = (FacetHandle){0};
+    return FACET_NO_INTERFACE;
+}
+
+static FacetResult seat_get_terminal(void *self, const FacetString *name,
+                                     FacetHandle *terminal)
+{
+    (void)self;
+    static const char terminal_name[] = "ttyS0";
+    if (name == NULL || name->data == NULL ||
+        name->length != sizeof(terminal_name) - 1 ||
+        memcmp(name->data, terminal_name, sizeof(terminal_name) - 1) != 0)
+        return FACET_NOT_FOUND;
+    return return_handle(serial_terminal.terminal_handle, terminal);
+}
+
+static FacetResult seat_get_active_terminal(void *self, FacetHandle *terminal)
+{
+    (void)self;
+    return return_handle(serial_terminal.terminal_handle, terminal);
+}
+
+static FacetResult seat_set_active_terminal(void *self, FacetHandle terminal)
+{
+    (void)self;
+    /* A serial seat has one immutable active terminal.  It accepts only a
+     * non-null delegated terminal capability; multi-terminal selection is
+     * implemented by the later VGA/PS2 seat backend. */
+    return terminal.platform == NULL ? FACET_INVALID_HANDLE : FACET_OK;
 }
 
 static int serial_terminal_export(void)
@@ -140,12 +191,25 @@ static int serial_terminal_export(void)
     serial_terminal.terminal.get_input = terminal_get_input;
     serial_terminal.terminal.get_output = terminal_get_output;
     serial_terminal.terminal.get_control = terminal_get_control;
+    serial_terminal.control.self = &serial_terminal;
+    serial_terminal.control.priv = &serial_terminal;
+    serial_terminal.control.getInterface = control_get_interface;
+    serial_terminal.seat.self = &serial_terminal;
+    serial_terminal.seat.priv = &serial_terminal;
+    serial_terminal.seat.getInterface = seat_get_interface;
+    serial_terminal.seat.get_terminal = seat_get_terminal;
+    serial_terminal.seat.get_active_terminal = seat_get_active_terminal;
+    serial_terminal.seat.set_active_terminal = seat_set_active_terminal;
     if (libfacet_export_interface(&serial_terminal.input, &IByteReader_MetaData,
                                   &serial_terminal.input_handle) != FACET_OK ||
         libfacet_export_interface(&serial_terminal.output, &IByteWriter_MetaData,
                                   &serial_terminal.output_handle) != FACET_OK ||
+        libfacet_export_interface(&serial_terminal.control, &ITerminalControl_MetaData,
+                                  &serial_terminal.control_handle) != FACET_OK ||
         libfacet_export_interface(&serial_terminal.terminal, &ITerminal_MetaData,
-                                  &serial_terminal.terminal_handle) != FACET_OK) {
+                                  &serial_terminal.terminal_handle) != FACET_OK ||
+        libfacet_export_interface(&serial_terminal.seat, &ISeat_MetaData,
+                                  &serial_terminal.seat_handle) != FACET_OK) {
         dominit0_terminal_destroy();
         return -1;
     }
@@ -160,6 +224,10 @@ static int bind_serial_terminal(Dominit0DomainEnvironment *environment)
                                            serial_terminal.input_handle) ||
            dominit0_environment_bind_named(environment, "terminal.output", IID_IByteWriter,
                                            serial_terminal.output_handle) ||
+           dominit0_environment_bind_named(environment, "terminal.control", IID_ITerminalControl,
+                                           serial_terminal.control_handle) ||
+           dominit0_environment_bind_named(environment, "seat", IID_ISeat,
+                                           serial_terminal.seat_handle) ||
            dominit0_environment_bind_named(environment, "stdin", IID_IByteReader,
                                            serial_terminal.input_handle) ||
            dominit0_environment_bind_named(environment, "stdout", IID_IByteWriter,
@@ -197,6 +265,10 @@ void dominit0_terminal_destroy(void)
 {
     if (serial_terminal.terminal_handle.platform != NULL)
         (void)libfacet_unexport_interface(serial_terminal.terminal_handle);
+    if (serial_terminal.seat_handle.platform != NULL)
+        (void)libfacet_unexport_interface(serial_terminal.seat_handle);
+    if (serial_terminal.control_handle.platform != NULL)
+        (void)libfacet_unexport_interface(serial_terminal.control_handle);
     if (serial_terminal.output_handle.platform != NULL)
         (void)libfacet_unexport_interface(serial_terminal.output_handle);
     if (serial_terminal.input_handle.platform != NULL)
