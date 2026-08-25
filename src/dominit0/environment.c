@@ -11,6 +11,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define DOMINIT0_EXTRA_BINDINGS_MAX 8
+
+typedef struct ProcessBindingEntry {
+    char *name;
+    uuid_t primary_iid;
+    FacetHandle handle;
+} ProcessBindingEntry;
+
 struct Dominit0DomainEnvironment {
     IDomainEnvironment interface;
     IProcessEnvironment process_environment;
@@ -22,6 +30,8 @@ struct Dominit0DomainEnvironment {
     FacetHandle domain_config_handle;
     FacetHandle page_allocator_handle;
     FacetHandle file_store_handle;
+    ProcessBindingEntry extra_bindings[DOMINIT0_EXTRA_BINDINGS_MAX];
+    size_t extra_binding_count;
 };
 
 static bool iid_equal(uuid_t left, uuid_t right)
@@ -88,6 +98,14 @@ static FacetResult process_binding(Dominit0DomainEnvironment *environment,
         if (handle != NULL) *handle = environment->file_store_handle;
         return environment->file_store_handle.platform == NULL ? FACET_INVALID_HANDLE : FACET_OK;
     }
+    for (size_t i = 0; i < environment->extra_binding_count; i++) {
+        ProcessBindingEntry *entry = &environment->extra_bindings[i];
+        if (!name_equal(name, entry->name))
+            continue;
+        if (iid != NULL) *iid = entry->primary_iid;
+        if (handle != NULL) *handle = entry->handle;
+        return entry->handle.platform == NULL ? FACET_INVALID_HANDLE : FACET_OK;
+    }
     return FACET_NO_INTERFACE;
 }
 
@@ -145,7 +163,7 @@ static FacetResult process_get_advertised_iids(void *self, const FacetString *na
 
 static FacetResult process_list_bindings(void *self, FacetArray_BindingInfo *bindings)
 {
-    static BindingInfo values[4];
+    static BindingInfo values[4 + DOMINIT0_EXTRA_BINDINGS_MAX];
     static const char *names[] = { "logger", "memory.pages", "domain.config", "files" };
     Dominit0DomainEnvironment *environment = self;
     if (bindings == NULL) return FACET_INVALID_ARGUMENT;
@@ -155,8 +173,14 @@ static FacetResult process_list_bindings(void *self, FacetArray_BindingInfo *bin
             return FACET_INVALID_HANDLE;
         values[i].name = name;
     }
+    for (size_t i = 0; i < environment->extra_binding_count; i++) {
+        size_t output = 4 + i;
+        values[output].name.data = environment->extra_bindings[i].name;
+        values[output].name.length = strlen(environment->extra_bindings[i].name);
+        values[output].primary_iid = environment->extra_bindings[i].primary_iid;
+    }
     bindings->data = values;
-    bindings->count = 4;
+    bindings->count = 4 + environment->extra_binding_count;
     return FACET_OK;
 }
 
@@ -315,6 +339,8 @@ void dominit0_environment_destroy(Dominit0SystemConfig *system)
             (void)libfacet_unexport_interface(environment->logger_handle);
         if (environment->process_environment_handle.platform != NULL)
             (void)libfacet_unexport_interface(environment->process_environment_handle);
+        for (size_t binding = 0; binding < environment->extra_binding_count; binding++)
+            free(environment->extra_bindings[binding].name);
         free(environment);
         current->environment = NULL;
     }
@@ -337,6 +363,28 @@ int dominit0_environment_bind_file_store(Dominit0DomainEnvironment *environment,
         environment->file_store_handle.platform != NULL)
         return -1;
     environment->file_store_handle = file_store;
+    return 0;
+}
+
+int dominit0_environment_bind_named(Dominit0DomainEnvironment *environment,
+                                    const char *name, uuid_t primary_iid,
+                                    FacetHandle object)
+{
+    if (environment == NULL || name == NULL || name[0] == '\0' ||
+        strlen(name) > 127 || object.platform == NULL ||
+        environment->extra_binding_count == DOMINIT0_EXTRA_BINDINGS_MAX)
+        return -1;
+    FacetString facet_name = { .data = name, .length = strlen(name) };
+    if (process_binding(environment, &facet_name, NULL, NULL) == FACET_OK)
+        return -1;
+    char *copy = strdup(name);
+    if (copy == NULL)
+        return -1;
+    ProcessBindingEntry *entry =
+        &environment->extra_bindings[environment->extra_binding_count++];
+    entry->name = copy;
+    entry->primary_iid = primary_iid;
+    entry->handle = object;
     return 0;
 }
 

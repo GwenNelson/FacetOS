@@ -6,6 +6,7 @@
 #include <facetos/dominit0/kmalloc.h>
 #include <facetos/dominit0/kpanic.h>
 #include <facetos/dominit0/platform/api.h>
+#include <facetos/dominit0/terminal.h>
 #include <facetos/initrd.h>
 
 #ifdef DEBUG
@@ -80,11 +81,15 @@ static void launch_configured_domains(Dominit0SystemConfig *system)
           }
           current->initrd = facet_initrd_create(initrd_source.data, initrd_source.size);
           FacetHandle file_store = {0};
-          if (current->initrd == NULL ||
-              facet_initrd_export(current->initrd, &file_store) != FACET_OK ||
-              dominit0_environment_bind_file_store(current->environment, file_store) != 0) {
+          FacetResult store_result = current->initrd == NULL ? FACET_ERROR :
+              facet_initrd_export(current->initrd, &file_store);
+          int bind_result = store_result == FACET_OK ?
+              dominit0_environment_bind_file_store(current->environment, file_store) : -1;
+          if (current->initrd == NULL || store_result != FACET_OK || bind_result != 0) {
                klog(LOG_ERROR, "Unable to prepare initrd %s for domain %llu\n",
                     parsed->initrd, (unsigned long long)parsed->id);
+               klog(LOG_ERROR, "  initrd create=%s export=%d bind=%d\n",
+                    current->initrd == NULL ? "failed" : "ok", store_result, bind_result);
                facet_initrd_destroy(current->initrd);
                current->initrd = NULL;
                continue;
@@ -141,6 +146,9 @@ void main(int argc, char **argv, char **envp) {
 
      if (dominit0_environment_initialize(dominit0_config_get_system()) != 0)
           kpanic("Unable to initialise domain environments!");
+
+     if (dominit0_terminal_initialize(dominit0_config_get_system()) != 0)
+          kpanic("Unable to initialise configured terminals!");
 
      if (fallback)
           klog(LOG_WARN,

@@ -19,6 +19,10 @@ typedef struct FacetSel4Export FacetSel4Export;
  * and every current Facet method transfers at most one object plus, at most,
  * one bulk frame, so two slots are sufficient during bring-up. */
 #define FACET_SEL4_MAX_ATTACHMENTS 2u
+/* Facet RPC dispatch is deliberately small and non-recursive.  A full
+ * sel4utils 64 KiB server stack for every exported interface prematurely
+ * exhausts dominit0 while it is setting up per-domain environments. */
+#define FACET_SEL4_SERVER_STACK_PAGES 8u
 
 typedef struct FacetSel4BulkState {
     vka_object_t frames[FACET_RPC_MAX_ATTACHMENTS];
@@ -730,6 +734,8 @@ FacetResult libfacet_platform_export(
         cspace_data,
         seL4_CapNull,
         seL4_MaxPrio);
+    thread_config = thread_config_stack_size(thread_config,
+                                             FACET_SEL4_SERVER_STACK_PAGES);
     error = sel4utils_configure_thread_config(
         platform_config.vka, platform_config.vspace, platform_config.vspace,
         thread_config, &export_state->thread);

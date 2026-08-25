@@ -4,6 +4,7 @@
 #include <facetos/interfaces/ILogger.h>
 #include <facetos/interfaces/IPageAllocator.h>
 #include <facetos/interfaces/IProcessEnvironment.h>
+#include <facetos/interfaces/IByteWriter.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -25,7 +26,8 @@ int main(int argc, char **argv)
         libfacet_register_interface_metadata(&IDomainEnvironment_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IProcessEnvironment_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&ILogger_MetaData) != FACET_OK ||
-        libfacet_register_interface_metadata(&IPageAllocator_MetaData) != FACET_OK)
+        libfacet_register_interface_metadata(&IPageAllocator_MetaData) != FACET_OK ||
+        libfacet_register_interface_metadata(&IByteWriter_MetaData) != FACET_OK)
         return 1;
 
     IGenericObject *root;
@@ -96,6 +98,29 @@ int main(int argc, char **argv)
     free(allocation_probe);
 
     child_log(logger, "IPageAllocator/liballoc ready");
+
+    /* A terminal is delegated only to domains that own one.  This confirms
+     * that normal user-facing output reaches COM1, independently of klog's
+     * Bochs debug sink. */
+    FacetString stdout_name = { .data = "stdout", .length = 6 };
+    FacetHandle stdout_handle = {0};
+    if (process_environment->resolve(process_environment->self, &stdout_name,
+                                     &stdout_handle) == FACET_OK) {
+        IByteWriter *stdout_stream = libfacet_proxy_from_handle(
+            &IByteWriter_MetaData, stdout_handle);
+        if (stdout_stream != NULL) {
+            static const uint8_t greeting[] =
+                "FacetOS serial terminal ready\r\n";
+            FacetArray_u8 bytes = {
+                .data = (uint8_t *)(uintptr_t)greeting,
+                .count = sizeof(greeting) - 1,
+            };
+            uint32_t written;
+            (void)stdout_stream->write_bytes(stdout_stream->self, &bytes,
+                                             &written);
+        }
+        libfacet_free_proxy_client(stdout_stream);
+    }
 
     libfacet_free_proxy_client(environment);
     libfacet_free_proxy_client(process_environment);

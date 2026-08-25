@@ -308,8 +308,10 @@ FacetResult facet_initrd_export(FacetInitrd *initrd, FacetHandle *store)
     initrd->store_interface.getInterface = store_get_interface;
     initrd->store_interface.open_file = store_open_file;
     initrd->store_interface.open_directory = store_open_directory;
-    if (libfacet_export_interface(&initrd->store_interface, &IFileStore_MetaData,
-                                  &initrd->store_handle) != FACET_OK) return FACET_ERROR;
+    FacetResult result = libfacet_export_interface(&initrd->store_interface,
+                                                   &IFileStore_MetaData,
+                                                   &initrd->store_handle);
+    if (result != FACET_OK) return result;
     return return_handle(initrd->store_handle, store);
 }
 
