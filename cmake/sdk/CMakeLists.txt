@@ -383,6 +383,26 @@ target_link_libraries(FacetShell PRIVATE
     muslc
 )
 
+function(add_facet_dummy target message)
+    add_executable(${target}
+        "${FACETOS_ROOT}/src/apps/facet_dummy.c"
+        "${FACETOS_ROOT}/src/dominit/platform/sel4/api.c"
+    )
+    facetos_configure_target(${target})
+    target_include_directories(${target} BEFORE PRIVATE
+        "${FACET_GENERATED_INCLUDE}"
+    )
+    add_dependencies(${target} facet-idl-environment-generated)
+    add_dependencies(${target} facet-idl-shell-contracts-generated)
+    target_compile_definitions(${target} PRIVATE
+        FACET_DUMMY_MESSAGE="${message}")
+    target_link_libraries(${target} PRIVATE
+        facet_common facet-platform-sel4-client sel4runtime sel4 muslc)
+endfunction()
+
+add_facet_dummy(FacetDummy "FacetDummy native override selected\\r\\n")
+add_facet_dummy(dummysh "dummysh POSIX override selected\\r\\n")
+
 
 #
 # FacetOS dominit0.

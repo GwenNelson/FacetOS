@@ -10,6 +10,7 @@
 #include <facetos/interfaces/ISecurityManager.h>
 #include <facetos/interfaces/ISession.h>
 #include <facetos/interfaces/IPrincipal.h>
+#include <facetos/interfaces/IHumanUser.h>
 #include <facetos/interfaces/IProcess.h>
 #include <facetos/interfaces/IProcessManager.h>
 #include <facetos/interfaces/IByteReader.h>
@@ -84,6 +85,34 @@ static void clear_secret(char *buffer, size_t capacity)
     while (capacity-- != 0) *bytes++ = 0;
 }
 
+static FacetString session_shell(ISession *session, char **owned)
+{
+    FacetString shell = {
+        .data = "/FacetOS/FacetShell",
+        .length = sizeof("/FacetOS/FacetShell") - 1,
+    };
+    *owned = NULL;
+    if (session == NULL) return shell;
+    FacetHandle principal_handle = {0};
+    if (session->get_principal(session->self, &principal_handle) != FACET_OK)
+        return shell;
+    IPrincipal *principal = libfacet_proxy_from_handle(&IPrincipal_MetaData,
+                                                       principal_handle);
+    IHumanUser *human = principal == NULL ? NULL :
+        (IHumanUser *)libfacet_proxy_client_get_interface(principal,
+                                                          IID_IHumanUser);
+    FacetString configured = {0};
+    if (human != NULL &&
+        human->getdefault_shell(human->self, &configured) == FACET_OK &&
+        configured.data != NULL && configured.length != 0) {
+        shell = configured;
+        *owned = (char *)(uintptr_t)configured.data;
+    }
+    libfacet_free_proxy_client(human);
+    libfacet_free_proxy_client(principal);
+    return shell;
+}
+
 static void serial_login(IByteReader *input, IByteWriter *output,
                          IAuthService *auth, ISecurityManager *security,
                          IProcessManager *processes)
@@ -116,10 +145,16 @@ static void serial_login(IByteReader *input, IByteWriter *output,
             (void)stream_write(output, "Login incorrect\r\n");
             continue;
         }
-        FacetString shell = {
-            .data = "/FacetOS/FacetShell",
-            .length = sizeof("/FacetOS/FacetShell") - 1,
-        };
+        char *owned_shell = NULL;
+        FacetHandle session_query = {0};
+        ISession *session_object = NULL;
+        if (libfacet_handle_clone(session, &session_query) == FACET_OK)
+            session_object = libfacet_proxy_from_handle(&ISession_MetaData,
+                                                        session_query);
+        if (session_object == NULL && session_query.platform != NULL)
+            (void)libfacet_handle_release(session_query);
+        FacetString shell = session_shell(session_object, &owned_shell);
+        libfacet_free_proxy_client(session_object);
         FacetString shell_argument = shell;
         FacetArray_string shell_arguments = {
             .data = &shell_argument,
@@ -129,6 +164,7 @@ static void serial_login(IByteReader *input, IByteWriter *output,
         result = processes == NULL ? FACET_NO_INTERFACE :
             processes->launch(processes->self, &shell, &shell_arguments,
                               session, &process);
+        free(owned_shell);
         if (result == FACET_OK) {
             (void)stream_write(output, "Starting FacetShell...\r\n");
             if (process.platform != NULL) (void)libfacet_handle_release(process);
@@ -153,6 +189,7 @@ int main(int argc, char **argv)
         libfacet_register_interface_metadata(&ISecurityManager_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&ISession_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IPrincipal_MetaData) != FACET_OK ||
+        libfacet_register_interface_metadata(&IHumanUser_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IProcess_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IProcessManager_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IByteReader_MetaData) != FACET_OK ||

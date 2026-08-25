@@ -15,10 +15,10 @@ typedef struct FacetSel4Export FacetSel4Export;
 #define FACET_SEL4_FLAG_SHARED_PAYLOAD (1u << 31)
 #define FACET_SEL4_BUFFER_COUNT_SHIFT 24
 #define FACET_SEL4_BUFFER_COUNT_MASK 0x7fu
-/* Each exported server reserves receive slots.  The bootstrap CSpace is small
- * and every current Facet method transfers at most one object plus, at most,
- * one bulk frame, so two slots are sufficient during bring-up. */
-#define FACET_SEL4_MAX_ATTACHMENTS 2u
+/* Each exported server reserves receive slots in dominit0's bootstrap CSpace.
+ * Current methods transfer either one object or one bulk frame, never both;
+ * reserve exactly the capability count the implemented ABI requires. */
+#define FACET_SEL4_MAX_ATTACHMENTS 1u
 /* Facet RPC dispatch is deliberately small and non-recursive.  A full
  * sel4utils 64 KiB server stack for every exported interface prematurely
  * exhausts dominit0 while it is setting up per-domain environments. */

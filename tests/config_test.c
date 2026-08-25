@@ -160,6 +160,32 @@ static void test_posix_terminal_mapping(void)
     facet_config_destroy(&config);
 }
 
+static void test_user_shell_overrides(void)
+{
+    static const char text[] =
+        "[facet]\nversion=1\n"
+        "[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
+        "[[users]]\nname='root'\n"
+        "password_sha256='f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59'\n"
+        "admin=true\nnative_shell='/FacetOS/FacetDummy'\nposix_shell='/bin/dummysh'\n"
+        "[[seats]]\nname='s'\ntype='serial'\nterminals=['t']\n"
+        "[[domains]]\nid=0\nname='n'\npersonality='native'\n"
+        "domain_manager='local'\ninitrd='n.initrd'\n"
+        "logging_sinks=[{name='d',level='info'}]\n"
+        "terminals=[{terminal='s.t',view='native',initial_process='/FacetOS/FacetLogin'}]\n";
+    FacetSystemConfig config;
+    FacetConfigDiagnostic diagnostic;
+    int result = parse_text(text, &config, &diagnostic);
+    if (result != 0)
+        fprintf(stderr, "shell override parse failed: %s (%s)\n",
+                diagnostic.message, diagnostic.context);
+    assert(result == 0);
+    assert(strcmp(config.users[0].native_shell,
+                  "/FacetOS/FacetDummy") == 0);
+    assert(strcmp(config.users[0].posix_shell, "/bin/dummysh") == 0);
+    facet_config_destroy(&config);
+}
+
 static void expect_failure(const char *text,
                            FacetConfigDiagnosticCategory category)
 {
@@ -253,6 +279,7 @@ int main(void)
     test_packaged_config();
     test_utf8_and_quoted_keys();
     test_posix_terminal_mapping();
+    test_user_shell_overrides();
     test_failures();
     puts("config tests passed");
     return 0;
