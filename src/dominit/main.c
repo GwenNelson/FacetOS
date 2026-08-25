@@ -5,6 +5,10 @@
 #include <facetos/interfaces/IPageAllocator.h>
 #include <facetos/interfaces/IProcessEnvironment.h>
 #include <facetos/interfaces/IDomainConfig.h>
+#include <facetos/interfaces/IAuthService.h>
+#include <facetos/interfaces/IAuthenticatedPrincipal.h>
+#include <facetos/interfaces/ISecurityManager.h>
+#include <facetos/interfaces/ISession.h>
 #include <facetos/interfaces/IByteWriter.h>
 
 #include <stddef.h>
@@ -29,6 +33,10 @@ int main(int argc, char **argv)
         libfacet_register_interface_metadata(&ILogger_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IPageAllocator_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IDomainConfig_MetaData) != FACET_OK ||
+        libfacet_register_interface_metadata(&IAuthService_MetaData) != FACET_OK ||
+        libfacet_register_interface_metadata(&IAuthenticatedPrincipal_MetaData) != FACET_OK ||
+        libfacet_register_interface_metadata(&ISecurityManager_MetaData) != FACET_OK ||
+        libfacet_register_interface_metadata(&ISession_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IByteWriter_MetaData) != FACET_OK)
         return 1;
 
@@ -114,6 +122,27 @@ int main(int argc, char **argv)
         child_log(logger, "received configured domain capability");
     }
     libfacet_free_proxy_client(domain_config);
+
+    FacetString auth_name = { .data = "auth", .length = 4 };
+    FacetString security_name = { .data = "security", .length = 8 };
+    FacetHandle auth_handle = {0}, security_handle = {0}, authenticated = {0}, session = {0};
+    IAuthService *auth_service = NULL;
+    ISecurityManager *security_manager = NULL;
+    if (process_environment->resolve(process_environment->self, &auth_name, &auth_handle) == FACET_OK &&
+        process_environment->resolve(process_environment->self, &security_name, &security_handle) == FACET_OK) {
+        auth_service = libfacet_proxy_from_handle(&IAuthService_MetaData, auth_handle);
+        security_manager = libfacet_proxy_from_handle(&ISecurityManager_MetaData, security_handle);
+    }
+    if (auth_service != NULL && security_manager != NULL) {
+        FacetString root = { .data = "root", .length = 4 };
+        FacetString password = { .data = "facetos", .length = 7 };
+        if (auth_service->authenticate(auth_service->self, &root, &password, &authenticated) == FACET_OK &&
+            security_manager->create_session(security_manager->self, authenticated, &session) == FACET_OK)
+            child_log(logger, "authenticated root session ready");
+        else child_log(logger, "root authentication/session failed");
+    } else child_log(logger, "auth/security bindings unavailable");
+    libfacet_free_proxy_client(auth_service);
+    libfacet_free_proxy_client(security_manager);
 
     /* A terminal is delegated only to domains that own one.  This confirms
      * that normal user-facing output reaches COM1, independently of klog's
