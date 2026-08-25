@@ -10,9 +10,12 @@
 
 #include "platform/allocator.h"
 
-static FacetResult child_log(ILogger *logger, uint32_t event)
+static FacetResult child_log(ILogger *logger, const char *text)
 {
-    return logger->log(logger->self, 40, event);
+    FacetString message = { .data = text, .length = 0 };
+    while (text[message.length] != '\0')
+        message.length++;
+    return logger->log(logger->self, 40, &message);
 }
 
 int main(int argc, char **argv)
@@ -42,7 +45,7 @@ int main(int argc, char **argv)
     }
 
     (void)logger->flush(logger->self);
-    if (child_log(logger, 1) != FACET_OK) {
+    if (child_log(logger, "received environment IPageAllocator") != FACET_OK) {
         libfacet_free_proxy_client(environment);
         libfacet_free_proxy_client(logger);
         libfacet_free_proxy_client(page_allocator);
@@ -50,20 +53,20 @@ int main(int argc, char **argv)
         return 1;
     }
     if (dominit_allocator_use_pages(page_allocator) != 0) {
-        child_log(logger, 4);
+        child_log(logger, "could not activate IPageAllocator");
         libfacet_free_proxy_client(environment);
         libfacet_free_proxy_client(logger);
         libfacet_free_proxy_client(root);
         return 1;
     }
-    child_log(logger, 2);
+    child_log(logger, "activated IPageAllocator");
 
     /* This is deliberately larger than the bootstrap heap's remaining
      * liballoc region. It proves allocations now reach this domain's
      * IPageAllocator rather than dominit0's own allocator. */
     void *allocation_probe = malloc(512u * 1024u);
     if (allocation_probe == NULL) {
-        child_log(logger, 5);
+        child_log(logger, "could not allocate through IPageAllocator");
         libfacet_free_proxy_client(environment);
         libfacet_free_proxy_client(logger);
         libfacet_free_proxy_client(root);
@@ -71,7 +74,7 @@ int main(int argc, char **argv)
     }
     free(allocation_probe);
 
-    child_log(logger, 3);
+    child_log(logger, "IPageAllocator/liballoc ready");
 
     libfacet_free_proxy_client(environment);
     libfacet_free_proxy_client(logger);

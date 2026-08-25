@@ -587,6 +587,16 @@ static void emit_server_method(FILE *file,
                     parameter->name);
         }
     }
+    for (size_t i = 0; i < method->parameter_count; i++) {
+        const FacetIdlParam *parameter = &method->parameters[i];
+        if (parameter->direction == FACET_IDL_OUT ||
+            !payload_type_for(definition, parameter->type))
+            continue;
+        const char *meta = type_meta_symbol(parameter->type);
+        fprintf(file, "    facet_rpc_release_value(%s, %s, &%s);\n",
+                meta_type_for(definition, parameter->type),
+                meta == NULL ? "NULL" : meta, parameter->name);
+    }
     fprintf(file, "    return FACET_OK;\n}\n\n");
 }
 

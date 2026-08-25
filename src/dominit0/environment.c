@@ -84,18 +84,11 @@ static FacetResult logger_get_interface(void *self, uuid_t iid,
     return FACET_NO_INTERFACE;
 }
 
-static FacetResult logger_log(void *self, int32_t level, uint32_t event)
+static FacetResult logger_log(void *self, int32_t level,
+                              const FacetString *message)
 {
     Dominit0DomainEnvironment *environment = self;
-    static const char *const messages[] = {
-        NULL,
-        "received environment IPageAllocator",
-        "activated IPageAllocator",
-        "IPageAllocator/liballoc ready",
-        "could not activate IPageAllocator",
-        "could not allocate through IPageAllocator",
-    };
-    if (event == 0 || event >= sizeof(messages) / sizeof(messages[0]))
+    if (message == NULL || (message->length != 0 && message->data == NULL))
         return FACET_INVALID_ARGUMENT;
     uint64_t domain_id;
     FacetResult result = environment_get_domain_id(environment, &domain_id);
@@ -103,11 +96,8 @@ static FacetResult logger_log(void *self, int32_t level, uint32_t event)
         return result;
     Dominit0DomainConfigObject *config = environment->config->self;
     FacetString component = { .data = "dominit", .length = 7 };
-    FacetString message = { .data = messages[event], .length = 0 };
-    while (messages[event][message.length] != '\0')
-        message.length++;
     return dominit0_logging_emit(&config->logging, domain_id, level,
-                                 component, message);
+                                 component, *message);
 }
 
 static FacetResult logger_flush(void *self)

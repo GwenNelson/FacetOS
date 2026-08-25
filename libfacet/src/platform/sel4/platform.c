@@ -278,23 +278,31 @@ static FacetResult request_from_message(
     size_t available = length >= 4 ? length - 4 : 0;
     if (available < payload_words || payload_words > seL4_MsgMaxLength - 4)
         return FACET_PROTOCOL_ERROR;
+    uint8_t inline_payload[seL4_MsgMaxLength * sizeof(seL4_Word)];
+    if ((request->flags & FACET_SEL4_FLAG_SHARED_PAYLOAD) == 0 &&
+        request->payload_size > sizeof(inline_payload))
+        return FACET_PROTOCOL_ERROR;
     request->word_count = available >= payload_words
         ? available - payload_words : 0;
     if (request->word_count > FACET_RPC_MAX_WORDS)
         return FACET_PROTOCOL_ERROR;
     for (size_t i = 0; i < request->word_count; i++)
         request->words[i] = seL4_GetMR(4 + i);
-    if (request->payload_size != 0 && payload_words <= available) {
+    if ((request->flags & FACET_SEL4_FLAG_SHARED_PAYLOAD) == 0) {
+        for (size_t i = 0; i < payload_words; i++) {
+            seL4_Word word = seL4_GetMR(4 + request->word_count + i);
+            size_t offset = i * sizeof(word);
+            size_t copy = request->payload_size - offset;
+            if (copy > sizeof(word)) copy = sizeof(word);
+            memcpy(inline_payload + offset, &word, copy);
+        }
+    }
+    if ((request->flags & FACET_SEL4_FLAG_SHARED_PAYLOAD) == 0 &&
+        request->payload_size != 0 && payload_words <= available) {
         request->payload = malloc(request->payload_size);
         request->payload_capacity = request->payload_size;
         if (request->payload == NULL) return FACET_OUT_OF_MEMORY;
-        for (size_t i = 0; i < payload_words; i++) {
-                seL4_Word word = seL4_GetMR(4 + request->word_count + i);
-                size_t offset = i * sizeof(word);
-                size_t copy = request->payload_size - offset;
-                if (copy > sizeof(word)) copy = sizeof(word);
-                memcpy(request->payload + offset, &word, copy);
-        }
+        memcpy(request->payload, inline_payload, request->payload_size);
     }
     return FACET_OK;
 }
