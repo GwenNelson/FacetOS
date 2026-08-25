@@ -1585,7 +1585,7 @@ int facet_config_make_fallback(FacetSystemConfig *config,
         "[[seats]]\n"
         "name = \"seat1\"\n"
         "type = \"local\"\n"
-        "terminals = [\"tty1\", \"tty2\"]\n"
+        "terminals = [\"tty1\", \"tty2\", \"tty3\", \"tty4\", \"tty5\"]\n"
         "[[domains]]\n"
         "id = 0\n"
         "name = \"system\"\n"

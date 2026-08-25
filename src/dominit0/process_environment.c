@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define PROCESS_BINDING_MAX 12
+#define PROCESS_BINDING_MAX 16
 
 typedef struct ProcessBinding {
     char *name;
@@ -142,7 +142,6 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
     Dominit0ProcessEnvironment *environment = calloc(1, sizeof(*environment));
     if (environment == NULL) return NULL;
     static const char *delegated[] = {
-        "stdin", "stdout", "stderr", "terminal.control",
         "logger", "files", "auth", "security", "processes",
     };
     for (size_t i = 0; i < sizeof(delegated) / sizeof(delegated[0]); i++) {
@@ -175,6 +174,13 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
 fail:
     dominit0_process_environment_destroy(environment);
     return NULL;
+}
+
+int dominit0_process_environment_bind_named(
+    Dominit0ProcessEnvironment *environment, const char *name,
+    uuid_t primary_iid, FacetHandle object)
+{
+    return bind(environment, name, primary_iid, object);
 }
 
 int dominit0_process_environment_bind_page_allocator(

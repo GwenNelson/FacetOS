@@ -26,6 +26,9 @@ FacetResult dominit0_environment_resolve_named(
 
 Dominit0ProcessEnvironment *dominit0_process_environment_create(
     Dominit0DomainEnvironment *parent, FacetHandle session);
+int dominit0_process_environment_bind_named(
+    Dominit0ProcessEnvironment *environment, const char *name,
+    uuid_t primary_iid, FacetHandle object);
 int dominit0_process_environment_bind_page_allocator(
     Dominit0ProcessEnvironment *environment, FacetHandle allocator);
 FacetHandle dominit0_process_environment_root_handle(

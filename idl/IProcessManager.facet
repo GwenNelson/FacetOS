@@ -12,5 +12,12 @@ interface IProcessManager {
     // this does not pretend that an IDomainEnvironment is an authenticated
     // process environment.
     method FacetResult launch_initial(in string path, in array<string> argv,
+                                      in u64 terminal_index,
                                       out handle process);
+
+    method FacetResult launch_on_terminal(in string path,
+                                          in array<string> argv,
+                                          in handle environment,
+                                          in u64 terminal_index,
+                                          out handle process);
 }

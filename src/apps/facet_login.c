@@ -110,7 +110,7 @@ static FacetString shell_for_session(FacetHandle session_handle, char **owned)
 
 static void login_loop(IByteReader *input, IByteWriter *output,
                        IAuthService *auth, ISecurityManager *security,
-                       IProcessManager *processes)
+                       IProcessManager *processes, uint64_t terminal_index)
 {
     char username[128];
     char password[256];
@@ -145,8 +145,9 @@ static void login_loop(IByteReader *input, IByteWriter *output,
         FacetString argument = shell;
         FacetArray_string arguments = {.data = &argument, .count = 1};
         FacetHandle process = {0};
-        result = processes->launch(processes->self, &shell, &arguments,
-                                   session, &process);
+        result = processes->launch_on_terminal(
+            processes->self, &shell, &arguments, session, terminal_index,
+            &process);
         free(owned_shell);
         if (result == FACET_OK) {
             (void)write_text(output, "Starting session...\r\n");
@@ -203,6 +204,15 @@ int main(int argc, char **argv)
         security == NULL || processes == NULL ||
         dominit_allocator_use_pages(allocator) != 0)
         return 1;
-    login_loop(input, output, auth, security, processes);
+    uint64_t terminal_index = 0;
+    if (argc > 1 && argv[1] != NULL) {
+        for (const char *cursor = argv[1]; *cursor != '\0'; cursor++) {
+            if (*cursor < '0' || *cursor > '9' ||
+                terminal_index > (UINT64_MAX - 9) / 10)
+                return 1;
+            terminal_index = terminal_index * 10 + (uint64_t)(*cursor - '0');
+        }
+    }
+    login_loop(input, output, auth, security, processes, terminal_index);
     return 0;
 }

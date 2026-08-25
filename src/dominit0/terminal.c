@@ -9,6 +9,7 @@
 #include <facetos/interfaces/ITerminalControl.h>
 #include <facetos/interfaces/ISeat.h>
 
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct Dominit0SerialTerminal {
@@ -25,6 +26,18 @@ typedef struct Dominit0SerialTerminal {
 } Dominit0SerialTerminal;
 
 static Dominit0SerialTerminal serial_terminal;
+
+typedef struct TerminalAssignmentBinding {
+    CurrentDomain *domain;
+    size_t assignment_index;
+    FacetHandle input;
+    FacetHandle output;
+    FacetHandle control;
+    FacetHandle terminal;
+} TerminalAssignmentBinding;
+
+static TerminalAssignmentBinding *assignment_bindings;
+static size_t assignment_binding_count;
 
 static bool iid_equal(uuid_t left, uuid_t right)
 {
@@ -216,24 +229,24 @@ static int serial_terminal_export(void)
     return 0;
 }
 
-static int bind_serial_terminal(Dominit0DomainEnvironment *environment)
+static int add_serial_assignment(CurrentDomain *domain, size_t assignment_index)
 {
-    return dominit0_environment_bind_named(environment, "terminal", IID_ITerminal,
-                                           serial_terminal.terminal_handle) ||
-           dominit0_environment_bind_named(environment, "terminal.input", IID_IByteReader,
-                                           serial_terminal.input_handle) ||
-           dominit0_environment_bind_named(environment, "terminal.output", IID_IByteWriter,
-                                           serial_terminal.output_handle) ||
-           dominit0_environment_bind_named(environment, "terminal.control", IID_ITerminalControl,
-                                           serial_terminal.control_handle) ||
-           dominit0_environment_bind_named(environment, "seat", IID_ISeat,
-                                           serial_terminal.seat_handle) ||
-           dominit0_environment_bind_named(environment, "stdin", IID_IByteReader,
-                                           serial_terminal.input_handle) ||
-           dominit0_environment_bind_named(environment, "stdout", IID_IByteWriter,
-                                           serial_terminal.output_handle) ||
-           dominit0_environment_bind_named(environment, "stderr", IID_IByteWriter,
-                                           serial_terminal.output_handle);
+    TerminalAssignmentBinding *expanded = realloc(
+        assignment_bindings,
+        (assignment_binding_count + 1) * sizeof(*assignment_bindings));
+    if (expanded == NULL) return -1;
+    assignment_bindings = expanded;
+    TerminalAssignmentBinding *binding =
+        &assignment_bindings[assignment_binding_count++];
+    *binding = (TerminalAssignmentBinding){
+        .domain = domain,
+        .assignment_index = assignment_index,
+        .input = serial_terminal.input_handle,
+        .output = serial_terminal.output_handle,
+        .control = serial_terminal.control_handle,
+        .terminal = serial_terminal.terminal_handle,
+    };
+    return 0;
 }
 
 int dominit0_terminal_initialize(Dominit0SystemConfig *system)
@@ -252,7 +265,8 @@ int dominit0_terminal_initialize(Dominit0SystemConfig *system)
             if (!serial_is_assigned && serial_terminal_export() != 0)
                 return -1;
             serial_is_assigned = true;
-            if (bind_serial_terminal(system->current_domains[domain_index]->environment) != 0)
+            if (add_serial_assignment(system->current_domains[domain_index],
+                                      terminal_index) != 0)
                 return -1;
             klog(LOG_INFO, "Delegated serial terminal %s to domain %llu\n",
                  assignment->reference, (unsigned long long)domain->id);
@@ -261,8 +275,43 @@ int dominit0_terminal_initialize(Dominit0SystemConfig *system)
     return 0;
 }
 
+int dominit0_terminal_bind_process_environment(
+    CurrentDomain *domain, size_t assignment_index,
+    Dominit0ProcessEnvironment *environment)
+{
+    if (domain == NULL || environment == NULL) return -1;
+    for (size_t i = 0; i < assignment_binding_count; i++) {
+        TerminalAssignmentBinding *binding = &assignment_bindings[i];
+        if (binding->domain != domain ||
+            binding->assignment_index != assignment_index)
+            continue;
+        return dominit0_process_environment_bind_named(
+                   environment, "terminal", IID_ITerminal,
+                   binding->terminal) ||
+               dominit0_process_environment_bind_named(
+                   environment, "terminal.input", IID_IByteReader,
+                   binding->input) ||
+               dominit0_process_environment_bind_named(
+                   environment, "terminal.output", IID_IByteWriter,
+                   binding->output) ||
+               dominit0_process_environment_bind_named(
+                   environment, "terminal.control", IID_ITerminalControl,
+                   binding->control) ||
+               dominit0_process_environment_bind_named(
+                   environment, "stdin", IID_IByteReader, binding->input) ||
+               dominit0_process_environment_bind_named(
+                   environment, "stdout", IID_IByteWriter, binding->output) ||
+               dominit0_process_environment_bind_named(
+                   environment, "stderr", IID_IByteWriter, binding->output);
+    }
+    return -1;
+}
+
 void dominit0_terminal_destroy(void)
 {
+    free(assignment_bindings);
+    assignment_bindings = NULL;
+    assignment_binding_count = 0;
     if (serial_terminal.terminal_handle.platform != NULL)
         (void)libfacet_unexport_interface(serial_terminal.terminal_handle);
     if (serial_terminal.seat_handle.platform != NULL)

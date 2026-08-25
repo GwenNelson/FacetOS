@@ -39,8 +39,9 @@ static void check_default_shape(const FacetSystemConfig *config)
     assert(strcmp(config->seats[0].terminals[0], "ttyS0") == 0);
     assert(strcmp(config->seats[1].name, "seat1") == 0);
     assert(config->seats[1].type == FACET_CONFIG_SEAT_LOCAL);
-    assert(config->seats[1].terminal_count == 2);
+    assert(config->seats[1].terminal_count == 5);
     assert(strcmp(config->seats[1].terminals[0], "tty1") == 0);
+    assert(strcmp(config->seats[1].terminals[4], "tty5") == 0);
     assert(strcmp(config->seats[1].terminals[1], "tty2") == 0);
 
     assert(config->domain_count == 2);

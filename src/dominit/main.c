@@ -33,7 +33,7 @@ static void *resolve(IProcessEnvironment *environment, const char *name,
 }
 
 static FacetResult configured_initial_process(IDomainEnvironment *environment,
-                                              ILogger *logger,
+                                              uint64_t index,
                                               FacetString *path)
 {
     FacetHandle config_handle = {0};
@@ -52,10 +52,10 @@ static FacetResult configured_initial_process(IDomainEnvironment *environment,
     uint64_t assignment_count = 0;
     result = console == NULL ? FACET_INVALID_HANDLE :
         console->getassignment_count(console->self, &assignment_count);
-    if (result == FACET_OK && assignment_count != 0)
-        result = console->get_assignment(console->self, 0, &assignment);
+    if (result == FACET_OK && index < assignment_count)
+        result = console->get_assignment(console->self, index, &assignment);
     libfacet_free_proxy_client(console);
-    if (result != FACET_OK || assignment_count == 0 ||
+    if (result != FACET_OK || index >= assignment_count ||
         assignment.initial_process.data == NULL ||
         assignment.initial_process.length == 0) {
         facet_rpc_release_value(FACET_TYPE_STRUCT,
@@ -67,6 +67,27 @@ static FacetResult configured_initial_process(IDomainEnvironment *environment,
      * decoded fields avoids allocator RPCs in the bootstrap path. */
     *path = assignment.initial_process;
     return FACET_OK;
+}
+
+static uint64_t configured_assignment_count(IDomainEnvironment *environment)
+{
+    FacetHandle config_handle = {0};
+    if (environment->getdomain_config(environment->self, &config_handle) != FACET_OK)
+        return 0;
+    IDomainConfig *config = libfacet_proxy_from_handle(&IDomainConfig_MetaData,
+                                                       config_handle);
+    FacetHandle console_handle = {0};
+    FacetResult result = config == NULL ? FACET_INVALID_HANDLE :
+        config->getconsole_config(config->self, &console_handle);
+    libfacet_free_proxy_client(config);
+    IDomainConsoleConfig *console = result == FACET_OK ?
+        libfacet_proxy_from_handle(&IDomainConsoleConfig_MetaData,
+                                   console_handle) : NULL;
+    uint64_t count = 0;
+    if (console != NULL)
+        (void)console->getassignment_count(console->self, &count);
+    libfacet_free_proxy_client(console);
+    return count;
 }
 
 int main(int argc, char **argv)
@@ -103,18 +124,45 @@ int main(int argc, char **argv)
     IProcessManager *processes = resolve(environment, "processes",
                                          &IProcessManager_MetaData);
     if (processes != NULL) {
-        FacetString initial = {0};
-        FacetHandle process = {0};
-        if (configured_initial_process(domain, logger, &initial) == FACET_OK) {
+        uint64_t assignment_count = configured_assignment_count(domain);
+        for (uint64_t index = 0; index < assignment_count; index++) {
+            FacetString initial = {0};
+            FacetHandle process = {0};
+            if (configured_initial_process(domain, index, &initial) !=
+                FACET_OK)
+                continue;
             FacetString argument = initial;
-            FacetArray_string arguments = {.data = &argument, .count = 1};
+            char index_text[24];
+            size_t index_length = 0;
+            uint64_t value = index;
+            do {
+                index_text[index_length++] = (char)('0' + value % 10);
+                value /= 10;
+            } while (value != 0);
+            for (size_t left = 0, right = index_length - 1;
+                 left < right; left++, right--) {
+                char temporary = index_text[left];
+                index_text[left] = index_text[right];
+                index_text[right] = temporary;
+            }
+            FacetString index_argument = {
+                .data = index_text,
+                .length = index_length,
+            };
+            FacetString argument_values[] = {argument, index_argument};
+            FacetArray_string arguments = {
+                .data = argument_values,
+                .count = 2,
+            };
             if (processes->launch_initial(processes->self, &initial, &arguments,
+                                          index,
                                           &process) == FACET_OK)
                 child_log(logger, "launched configured initial process");
             else
                 child_log(logger, "could not launch configured initial process");
+            if (process.platform != NULL)
+                (void)libfacet_handle_release(process);
         }
-        if (process.platform != NULL) (void)libfacet_handle_release(process);
     } else {
         child_log(logger, "no local process manager configured");
     }
