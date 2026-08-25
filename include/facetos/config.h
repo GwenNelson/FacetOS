@@ -71,6 +71,7 @@ typedef struct FacetConfigLoggingSinkDefinition {
 
 typedef struct FacetConfigSeatDefinition {
     char *name;
+    char *server;
     FacetConfigSeatType type;
     size_t terminal_count;
     char **terminals;
@@ -131,6 +132,7 @@ typedef struct FacetConfigDomain {
 
 typedef struct FacetSystemConfig {
     uint64_t version;
+    char *seat_initrd;
     size_t logging_sink_count;
     FacetConfigLoggingSinkDefinition *logging_sinks;
     size_t authentication_source_count;

@@ -77,6 +77,7 @@ enum {
     SEAT_NAME = 1u << 0,
     SEAT_TYPE = 1u << 1,
     SEAT_TERMINALS = 1u << 2,
+    SEAT_SERVER = 1u << 3,
     DOMAIN_ID = 1u << 0,
     DOMAIN_NAME = 1u << 1,
     DOMAIN_PERSONALITY = 1u << 2,
@@ -984,6 +985,13 @@ static int apply_value(Parser *parser, char *key, Value *value,
     if (consume_entry(parser, line, column, key) != 0)
         return -1;
     if (parser->section == SECTION_FACET) {
+        if (strcmp(key, "seat_initrd") == 0) {
+            if (parser->config->seat_initrd != NULL)
+                return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_DUPLICATE,
+                               line, column, key, "duplicate seat_initrd");
+            return take_string(parser, key, value,
+                               &parser->config->seat_initrd);
+        }
         if (strcmp(key, "version") != 0)
             return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA,
                            line, column, key, "unknown [facet] key");
@@ -1089,6 +1097,7 @@ static int apply_value(Parser *parser, char *key, Value *value,
         uint32_t bit;
         if (strcmp(key, "name") == 0) bit = SEAT_NAME;
         else if (strcmp(key, "type") == 0) bit = SEAT_TYPE;
+        else if (strcmp(key, "server") == 0) bit = SEAT_SERVER;
         else if (strcmp(key, "terminals") == 0) bit = SEAT_TERMINALS;
         else return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA,
                             line, column, key, "unknown seat key");
@@ -1097,6 +1106,8 @@ static int apply_value(Parser *parser, char *key, Value *value,
                            line, column, key, "duplicate seat key");
         seat->_present |= bit;
         if (bit == SEAT_NAME) return take_string(parser, key, value, &seat->name);
+        if (bit == SEAT_SERVER)
+            return take_string(parser, key, value, &seat->server);
         if (bit == SEAT_TERMINALS)
             return strings_from_array(parser, key, value, &seat->terminals,
                                       &seat->terminal_count);
@@ -1241,13 +1252,15 @@ static int validate_required(Parser *parser)
     }
     for (size_t i = 0; i < parser->config->seat_count; i++) {
         FacetConfigSeatDefinition *seat = &parser->config->seats[i];
-        if ((seat->_present & (SEAT_NAME | SEAT_TYPE | SEAT_TERMINALS)) !=
-            (SEAT_NAME | SEAT_TYPE | SEAT_TERMINALS))
+        if ((seat->_present & (SEAT_NAME | SEAT_TYPE | SEAT_SERVER |
+                               SEAT_TERMINALS)) !=
+            (SEAT_NAME | SEAT_TYPE | SEAT_SERVER | SEAT_TERMINALS))
             return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
-                           "seats", "seat requires name, type, and terminals");
-        if (seat->name[0] == '\0' || strchr(seat->name, '.') != NULL)
+                           "seats", "seat requires name, type, server, and terminals");
+        if (seat->name[0] == '\0' || seat->server[0] == '\0' ||
+            seat->server[0] != '/' || strchr(seat->name, '.') != NULL)
             return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
-                           "seats", "seat name must be nonempty and contain no dot");
+                           "seats", "seat name must contain no dot and server must be an absolute path");
         for (size_t j = 0; j < i; j++)
             if (strcmp(seat->name, parser->config->seats[j].name) == 0)
                 return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_DUPLICATE, 0, 0,
@@ -1482,6 +1495,11 @@ static int validate_required(Parser *parser)
                            0, 0, source->name,
                            "authentication provider domain does not exist");
     }
+    if (parser->config->seat_initrd == NULL ||
+        parser->config->seat_initrd[0] == '\0')
+        return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
+                       "facet.seat_initrd",
+                       "[facet] seat_initrd is required and must not be empty");
     return 0;
 }
 
@@ -1565,6 +1583,7 @@ int facet_config_make_fallback(FacetSystemConfig *config,
     static const char fallback[] =
         "[facet]\n"
         "version = 1\n"
+        "seat_initrd = \"dominit0.initrd\"\n"
         "[[logging_sinks]]\n"
         "name = \"bochs-debug\"\n"
         "type = \"platform.x86.bochs-debug\"\n"
@@ -1581,10 +1600,12 @@ int facet_config_make_fallback(FacetSystemConfig *config,
         "[[seats]]\n"
         "name = \"seat0\"\n"
         "type = \"serial\"\n"
+        "server = \"/FacetOS/seat-server-serial\"\n"
         "terminals = [\"ttyS0\"]\n"
         "[[seats]]\n"
         "name = \"seat1\"\n"
         "type = \"local\"\n"
+        "server = \"/FacetOS/seat-server-pc-console\"\n"
         "terminals = [\"tty1\", \"tty2\", \"tty3\", \"tty4\", \"tty5\"]\n"
         "[[domains]]\n"
         "id = 0\n"
@@ -1601,7 +1622,7 @@ int facet_config_make_fallback(FacetSystemConfig *config,
         "id = 1\n"
         "name = \"example-child\"\n"
         "personality = \"native\"\n"
-        "domain_manager = \"none\"\n"
+        "domain_manager = \"local\"\n"
         "initrd = \"child.initrd\"\n"
         "authentication_source = \"system\"\n"
         "logging_sinks = [{ name = \"bochs-debug\", level = \"info\" }]\n"
@@ -1628,11 +1649,13 @@ void facet_config_destroy(FacetSystemConfig *config)
     free(config->users);
     for (size_t i = 0; i < config->seat_count; i++) {
         free(config->seats[i].name);
+        free(config->seats[i].server);
         for (size_t j = 0; j < config->seats[i].terminal_count; j++)
             free(config->seats[i].terminals[j]);
         free(config->seats[i].terminals);
     }
     free(config->seats);
+    free(config->seat_initrd);
     for (size_t i = 0; i < config->domain_count; i++) {
         free(config->domains[i].name);
         for (size_t j = 0; j < config->domains[i].logging_sink_count; j++)

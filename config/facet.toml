@@ -1,5 +1,6 @@
 [facet]
 version = 1
+seat_initrd = "dominit0.initrd"
 
 [[logging_sinks]]
 name = "bochs-debug"
@@ -20,11 +21,13 @@ admin = true
 [[seats]]
 name = "seat0"
 type = "serial"
+server = "/FacetOS/seat-server-serial"
 terminals = ["ttyS0"]
 
 [[seats]]
 name = "seat1"
 type = "local"
+server = "/FacetOS/seat-server-pc-console"
 terminals = ["tty1", "tty2", "tty3", "tty4", "tty5"]
 
 [[domains]]
@@ -46,7 +49,7 @@ terminals = [
 id = 1
 name = "example-child"
 personality = "native"
-domain_manager = "none"
+domain_manager = "local"
 initrd = "child.initrd"
 authentication_source = "system"
 logging_sinks = [
