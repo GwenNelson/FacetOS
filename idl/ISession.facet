@@ -4,4 +4,5 @@ interface ISession {
     requires IGenericObject;
 
     method FacetResult get_principal(out handle principal);
+    method FacetResult get_domain_id(out u64 domain_id);
 }

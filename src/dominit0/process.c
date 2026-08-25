@@ -187,9 +187,25 @@ static FacetResult manager_launch(void *self, const FacetString *path,
                                   FacetHandle session_handle,
                                   FacetHandle *out)
 {
-    /* Child processes cannot export capabilities in the current transport.
-     * A non-null environment therefore has server provenance.  Do not make a
-     * nested RPC to inspect it here: this callback runs on the server thread. */
+    ProcessManager *manager = self;
+    FacetHandle owned = {0};
+    if (libfacet_handle_clone(session_handle, &owned) != FACET_OK)
+        return FACET_ACCESS_DENIED;
+    ISession *session = libfacet_proxy_from_handle(&ISession_MetaData, owned);
+    FacetHandle principal = {0};
+    uint64_t session_domain_id = UINT64_MAX;
+    uint64_t manager_domain_id = UINT64_MAX;
+    FacetResult result = session == NULL ? FACET_ACCESS_DENIED :
+        session->get_principal(session->self, &principal);
+    if (result == FACET_OK)
+        result = session->get_domain_id(session->self, &session_domain_id);
+    if (result == FACET_OK)
+        result = manager->domain->config->getdomain_id(
+            manager->domain->config->self, &manager_domain_id);
+    libfacet_free_proxy_client(session);
+    if (principal.platform != NULL) (void)libfacet_handle_release(principal);
+    if (result != FACET_OK || session_domain_id != manager_domain_id)
+        return FACET_ACCESS_DENIED;
     return launch_process(self, path, arguments, session_handle, false, out);
 }
 
