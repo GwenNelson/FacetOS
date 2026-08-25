@@ -719,14 +719,16 @@ QEMU_ISO_FLAGS := \
 # builds bootstub32, and boots the result.
 run: build bootstub32
 	rm -f $(BOCHS_DEBUG_LOG)
-	timeout 30s $(QEMU) \
+	$(TIMEOUT) $(QEMU) \
 		$(QEMU_FLAGS) \
 		$(QEMU_EXTRA_FLAGS) \
 		$(QEMU_DIRECT_FLAGS)
 
 
+
+
 run-iso: image
-	timeout 30s $(QEMU) \
+	$(TIMEOUT) $(QEMU) \
 		$(QEMU_FLAGS) \
 		$(QEMU_EXTRA_FLAGS) \
 		$(QEMU_ISO_FLAGS)
