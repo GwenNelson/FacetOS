@@ -1566,8 +1566,8 @@ int facet_config_make_fallback(FacetSystemConfig *config,
         "[facet]\n"
         "version = 1\n"
         "[[logging_sinks]]\n"
-        "name = \"debug\"\n"
-        "type = \"platform.sel4.debug\"\n"
+        "name = \"bochs-debug\"\n"
+        "type = \"platform.x86.bochs-debug\"\n"
         "required = true\n"
         "[[authentication_sources]]\n"
         "name = \"system\"\n"
@@ -1593,7 +1593,7 @@ int facet_config_make_fallback(FacetSystemConfig *config,
         "domain_manager = \"local\"\n"
         "initrd = \"system.initrd\"\n"
         "authentication_source = \"system\"\n"
-        "logging_sinks = [{ name = \"debug\", level = \"debug\" }]\n"
+        "logging_sinks = [{ name = \"bochs-debug\", level = \"debug\" }]\n"
         "terminals = ["
         "{ terminal = \"seat0.ttyS0\", view = \"native\", initial_process = \"/FacetOS/FacetLogin\" },"
         "{ terminal = \"seat1.tty1\", view = \"native\", initial_process = \"/FacetOS/FacetLogin\" }]\n"
@@ -1604,7 +1604,7 @@ int facet_config_make_fallback(FacetSystemConfig *config,
         "domain_manager = \"none\"\n"
         "initrd = \"child.initrd\"\n"
         "authentication_source = \"system\"\n"
-        "logging_sinks = [{ name = \"debug\", level = \"info\" }]\n"
+        "logging_sinks = [{ name = \"bochs-debug\", level = \"info\" }]\n"
         "terminals = [{ terminal = \"seat1.tty2\", view = \"posix\", initial_process = \"/bin/login\" }]\n";
     return facet_config_parse((const uint8_t *)fallback,
                               sizeof(fallback) - 1, config, diagnostic);

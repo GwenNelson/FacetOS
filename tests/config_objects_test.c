@@ -45,7 +45,7 @@ int main(void)
     assert(manager == DomainManagerMode_Local);
     assert(root->logging.getsinks(root->logging.self, &sinks) == FACET_OK);
     assert(sinks.count == 1);
-    check_string(sinks.data[0].name, "debug");
+    check_string(sinks.data[0].name, "bochs-debug");
     assert(sinks.data[0].level == LogLevel_Debug);
     assert(root->console.getassignments(root->console.self, &assignments) == FACET_OK);
     assert(assignments.count == 2);

@@ -2,8 +2,8 @@
 version = 1
 
 [[logging_sinks]]
-name = "debug"
-type = "platform.sel4.debug"
+name = "bochs-debug"
+type = "platform.x86.bochs-debug"
 required = true
 
 [[authentication_sources]]
@@ -35,7 +35,7 @@ domain_manager = "local"
 initrd = "system.initrd"
 authentication_source = "system"
 logging_sinks = [
-    { name = "debug", level = "debug" },
+    { name = "bochs-debug", level = "debug" },
 ]
 terminals = [
     { terminal = "seat0.ttyS0", view = "native", initial_process = "/FacetOS/FacetLogin" },
@@ -50,7 +50,7 @@ domain_manager = "none"
 initrd = "child.initrd"
 authentication_source = "system"
 logging_sinks = [
-    { name = "debug", level = "info" },
+    { name = "bochs-debug", level = "info" },
 ]
 terminals = [
     { terminal = "seat1.tty2", view = "posix", initial_process = "/bin/login" },

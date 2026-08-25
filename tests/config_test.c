@@ -22,9 +22,9 @@ static void check_default_shape(const FacetSystemConfig *config)
 {
     assert(config->version == 1);
     assert(config->logging_sink_count == 1);
-    assert(strcmp(config->logging_sinks[0].name, "debug") == 0);
+    assert(strcmp(config->logging_sinks[0].name, "bochs-debug") == 0);
     assert(strcmp(config->logging_sinks[0].type,
-                  "platform.sel4.debug") == 0);
+                  "platform.x86.bochs-debug") == 0);
     assert(config->logging_sinks[0].required);
     assert(config->authentication_source_count == 1);
     assert(strcmp(config->authentication_sources[0].name, "system") == 0);

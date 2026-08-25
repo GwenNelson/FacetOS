@@ -49,6 +49,16 @@ static ILoggingSink sel4_debug_sink = {
     .emit = sel4_debug_emit,
 };
 
+/* The configured x86 Bochs sink is intentionally distinct from the early
+ * emergency sink, even while both use seL4's debug-character transport during
+ * bring-up.  Terminal traffic never uses this object. */
+static ILoggingSink bochs_debug_sink = {
+    .self = &bochs_debug_sink,
+    .priv = NULL,
+    .getInterface = sel4_debug_get_interface,
+    .emit = sel4_debug_emit,
+};
+
 ILoggingSink *platform_get_early_logging_sink(void)
 {
     return &sel4_debug_sink;
@@ -59,8 +69,11 @@ int platform_get_logging_sink(const char *type, ILoggingSink **result)
     if (type == NULL || result == NULL)
         return -1;
     *result = NULL;
-    if (strcmp(type, "platform.sel4.debug") != 0)
+    if (strcmp(type, "platform.sel4.debug") == 0)
+        *result = &sel4_debug_sink;
+    else if (strcmp(type, "platform.x86.bochs-debug") == 0)
+        *result = &bochs_debug_sink;
+    else
         return -1;
-    *result = &sel4_debug_sink;
     return 0;
 }
