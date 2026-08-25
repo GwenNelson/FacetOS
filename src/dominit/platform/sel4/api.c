@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define SEL4_BOOTSTRAP_ARGUMENT_COUNT 4
+#define SEL4_BOOTSTRAP_ARGUMENT_COUNT 5
 
 static int
 parse_word(const char *text, uint64_t *result)
@@ -58,11 +58,13 @@ consume_bootstrap_arguments(int *argc, char **argv)
 }
 
 FacetResult
-platform_init(int *argc, char ***argv, IGenericObject **out_root)
+platform_init(int *argc, char ***argv, IGenericObject **out_root,
+              IPageAllocator **out_page_allocator)
 {
-    if (out_root == NULL)
+    if (out_root == NULL || out_page_allocator == NULL)
         return FACET_INVALID_ARGUMENT;
     *out_root = NULL;
+    *out_page_allocator = NULL;
 
     if (argc == NULL || argv == NULL || *argv == NULL ||
         *argc < SEL4_BOOTSTRAP_ARGUMENT_COUNT + 1) {
@@ -76,13 +78,16 @@ platform_init(int *argc, char ***argv, IGenericObject **out_root)
     }
 
     uint64_t endpoint;
+    uint64_t page_allocator_endpoint;
     uint64_t receive_cnode;
     uint64_t receive_slot;
     uint64_t receive_depth;
     if (parse_word(arguments[1], &endpoint) != 0 || endpoint == 0 ||
-        parse_word(arguments[2], &receive_cnode) != 0 || receive_cnode == 0 ||
-        parse_word(arguments[3], &receive_slot) != 0 || receive_slot == 0 ||
-        parse_word(arguments[4], &receive_depth) != 0 || receive_depth == 0) {
+        parse_word(arguments[2], &page_allocator_endpoint) != 0 ||
+            page_allocator_endpoint == 0 ||
+        parse_word(arguments[3], &receive_cnode) != 0 || receive_cnode == 0 ||
+        parse_word(arguments[4], &receive_slot) != 0 || receive_slot == 0 ||
+        parse_word(arguments[5], &receive_depth) != 0 || receive_depth == 0) {
         return FACET_INVALID_ARGUMENT;
     }
 
@@ -95,8 +100,25 @@ platform_init(int *argc, char ***argv, IGenericObject **out_root)
     if (root == NULL)
         return FACET_ERROR;
 
+    IGenericObject *allocator_root =
+        libfacet_proxy_from(page_allocator_endpoint);
+    if (allocator_root == NULL) {
+        libfacet_free_proxy_client(root);
+        return FACET_ERROR;
+    }
+
+    IPageAllocator *page_allocator =
+        (IPageAllocator *)libfacet_proxy_client_get_interface(
+            allocator_root, IID_IPageAllocator);
+    libfacet_free_proxy_client(allocator_root);
+    if (page_allocator == NULL) {
+        libfacet_free_proxy_client(root);
+        return FACET_ERROR;
+    }
+
     consume_bootstrap_arguments(argc, arguments);
     *out_root = root;
+    *out_page_allocator = page_allocator;
     return FACET_OK;
 }
 

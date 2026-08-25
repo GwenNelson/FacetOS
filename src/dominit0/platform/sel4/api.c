@@ -200,11 +200,14 @@ child_page_allocator_self_test(Sel4ChildPageAllocator *allocator)
 }
 
 static int
-child_page_allocator_prepare(sel4utils_process_t *process, void *context)
+child_page_allocator_prepare(sel4utils_process_t *process, void *context,
+                             FacetHandle *out_bootstrap_handle)
 {
     Sel4DomainState *state = context;
-    if (process == NULL || state == NULL || process != &state->process)
+    if (process == NULL || state == NULL || out_bootstrap_handle == NULL ||
+        process != &state->process)
         return -1;
+    *out_bootstrap_handle = (FacetHandle){0};
 
     Sel4ChildPageAllocator *allocator = &state->page_allocator;
     allocator->process = process;
@@ -225,6 +228,7 @@ child_page_allocator_prepare(sel4utils_process_t *process, void *context)
         child_page_allocator_destroy(state);
         return -1;
     }
+    *out_bootstrap_handle = allocator->exported_handle;
     return 0;
 }
 
@@ -386,16 +390,15 @@ static IDebug debug_object = {
 };
 
 static seL4_CPtr
-mint_debug_endpoint(sel4utils_process_t *process)
+mint_endpoint_to_process(sel4utils_process_t *process, FacetHandle handle)
 {
-    seL4_CPtr debug_endpoint;
-    if (facet_sel4_handle_get_cap(debug_server_handle,
-                                  &debug_endpoint) != FACET_OK) {
+    seL4_CPtr endpoint;
+    if (facet_sel4_handle_get_cap(handle, &endpoint) != FACET_OK) {
         return seL4_CapNull;
     }
 
     cspacepath_t source;
-    vka_cspace_make_path(&sel4_vka, debug_endpoint, &source);
+    vka_cspace_make_path(&sel4_vka, endpoint, &source);
 
     seL4_Word badge = next_debug_badge++;
     if (next_debug_badge == 0) {
@@ -433,7 +436,8 @@ copy_elf_program_headers(sel4utils_process_t *process, const elf_t *elf)
 }
 
 typedef int (*DomainPreSpawnHook)(sel4utils_process_t *process,
-                                  void *context);
+                                  void *context,
+                                  FacetHandle *out_bootstrap_handle);
 typedef void (*DomainFailureCleanup)(void *context);
 
 static int
@@ -460,7 +464,7 @@ load_and_start_domain(sel4utils_process_t *process,
         }
     }
 
-    char *spawn_argv[argc + 4];
+    char *spawn_argv[argc + 5];
 
     if (sel4_allocman == NULL) {
         klog(LOG_ERROR,
@@ -489,16 +493,32 @@ load_and_start_domain(sel4utils_process_t *process,
         return -1;
     }
 
-    if (pre_spawn != NULL && pre_spawn(process, hook_context) != 0) {
+    FacetHandle child_page_allocator_handle = {0};
+    if (pre_spawn != NULL &&
+        pre_spawn(process, hook_context, &child_page_allocator_handle) != 0) {
         klog(LOG_ERROR,
              "load_and_start_domain(): process service setup failed\n");
         goto fail;
     }
 
-    seL4_CPtr child_debug_endpoint = mint_debug_endpoint(process);
+    seL4_CPtr child_debug_endpoint =
+        mint_endpoint_to_process(process, debug_server_handle);
     if (child_debug_endpoint == seL4_CapNull) {
         klog(LOG_ERROR,
              "load_and_start_domain(): could not mint debug endpoint\n");
+        goto fail;
+    }
+
+    if (!handle_is_bound(child_page_allocator_handle)) {
+        klog(LOG_ERROR,
+             "load_and_start_domain(): process has no page allocator\n");
+        goto fail;
+    }
+    seL4_CPtr child_page_allocator_endpoint =
+        mint_endpoint_to_process(process, child_page_allocator_handle);
+    if (child_page_allocator_endpoint == seL4_CapNull) {
+        klog(LOG_ERROR,
+             "load_and_start_domain(): could not mint page allocator\n");
         goto fail;
     }
 
@@ -518,32 +538,36 @@ load_and_start_domain(sel4utils_process_t *process,
         goto fail;
     }
 
-    char endpoint_string[4][WORD_STRING_SIZE];
-    char *endpoint_argv[4];
+    char endpoint_string[5][WORD_STRING_SIZE];
+    char *endpoint_argv[5];
     seL4_CPtr child_receive_slot = process->cspace_next_free;
-    seL4_Word child_words[4] = {
+    seL4_Word child_words[5] = {
         (seL4_Word)child_debug_endpoint,
+        (seL4_Word)child_page_allocator_endpoint,
         (seL4_Word)SEL4UTILS_CNODE_SLOT,
         (seL4_Word)child_receive_slot,
         (seL4_Word)seL4_WordBits,
     };
-    sel4utils_create_word_args(endpoint_string, endpoint_argv, 4,
+    sel4utils_create_word_args(endpoint_string, endpoint_argv, 5,
                                child_words[0], child_words[1],
-                               child_words[2], child_words[3]);
+                               child_words[2], child_words[3],
+                               child_words[4]);
 
-    /* argv[1] is the debug endpoint. argv[2..4] describe the empty
+    /* argv[1] is the debug endpoint, argv[2] is this child's page allocator,
+     * and argv[3..5] describe the empty
      * capability receive slot in the child's CSpace. */
     spawn_argv[0] = argv[0];
     spawn_argv[1] = endpoint_argv[0];
     spawn_argv[2] = endpoint_argv[1];
     spawn_argv[3] = endpoint_argv[2];
     spawn_argv[4] = endpoint_argv[3];
+    spawn_argv[5] = endpoint_argv[4];
     for (int i = 1; i < argc; i++) {
-        spawn_argv[i + 4] = argv[i];
+        spawn_argv[i + 5] = argv[i];
     }
 
     if (sel4utils_spawn_process_v(process, &sel4_vka, &sel4_vspace,
-                                  argc + 4, spawn_argv, 1) != 0) {
+                                  argc + 5, spawn_argv, 1) != 0) {
         klog(LOG_ERROR, "load_and_start_domain(): process start failed\n");
         goto fail;
     }

@@ -287,6 +287,7 @@ target_link_libraries(facet-platform-sel4 PRIVATE
 
 file(GLOB FACET_DOMINIT_SRCS CONFIGURE_DEPENDS
     "${FACETOS_ROOT}/src/dominit/*.c"
+    "${FACETOS_ROOT}/src/dominit/platform/*.c"
     "${FACETOS_ROOT}/src/dominit/platform/sel4/*.c"
 )
 
@@ -299,6 +300,7 @@ target_include_directories(dominit BEFORE PRIVATE
     "${FACET_GENERATED_INCLUDE}"
 )
 add_dependencies(dominit facet-idl-debug-generated)
+add_dependencies(dominit facet-idl-page-allocator-generated)
 
 # `sel4` is CMake's libsel4 target. sel4runtime supplies process startup,
 # TLS, and the IPC-buffer pointer; dominit supplies its own bump allocator,
