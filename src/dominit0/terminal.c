@@ -167,10 +167,10 @@ static FacetResult seat_get_active_terminal(void *self, FacetHandle *terminal)
 static FacetResult seat_set_active_terminal(void *self, FacetHandle terminal)
 {
     (void)self;
-    /* A serial seat has one immutable active terminal.  It accepts only a
-     * non-null delegated terminal capability; multi-terminal selection is
-     * implemented by the later VGA/PS2 seat backend. */
-    return terminal.platform == NULL ? FACET_INVALID_HANDLE : FACET_OK;
+    (void)terminal;
+    /* A serial seat has one immutable active terminal.  Multi-terminal
+     * selection belongs to the later VGA/PS2 seat backend. */
+    return FACET_NOT_SUPPORTED;
 }
 
 static int serial_terminal_export(void)
