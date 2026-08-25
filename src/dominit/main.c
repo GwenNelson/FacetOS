@@ -4,6 +4,7 @@
 #include <facetos/interfaces/ILogger.h>
 #include <facetos/interfaces/IPageAllocator.h>
 #include <facetos/interfaces/IProcessEnvironment.h>
+#include <facetos/interfaces/IDomainConfig.h>
 #include <facetos/interfaces/IByteWriter.h>
 
 #include <stddef.h>
@@ -27,6 +28,7 @@ int main(int argc, char **argv)
         libfacet_register_interface_metadata(&IProcessEnvironment_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&ILogger_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IPageAllocator_MetaData) != FACET_OK ||
+        libfacet_register_interface_metadata(&IDomainConfig_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IByteWriter_MetaData) != FACET_OK)
         return 1;
 
@@ -98,6 +100,20 @@ int main(int argc, char **argv)
     free(allocation_probe);
 
     child_log(logger, "IPageAllocator/liballoc ready");
+
+    FacetHandle domain_config_handle = {0};
+    IDomainConfig *domain_config = NULL;
+    uint64_t configured_domain_id = UINT64_MAX;
+    if (environment->getdomain_config(environment->self, &domain_config_handle) == FACET_OK)
+        domain_config = libfacet_proxy_from_handle(&IDomainConfig_MetaData,
+                                                   domain_config_handle);
+    if (domain_config == NULL ||
+        domain_config->getdomain_id(domain_config->self, &configured_domain_id) != FACET_OK) {
+        child_log(logger, "could not resolve IDomainConfig");
+    } else if (configured_domain_id != 0) {
+        child_log(logger, "received configured domain capability");
+    }
+    libfacet_free_proxy_client(domain_config);
 
     /* A terminal is delegated only to domains that own one.  This confirms
      * that normal user-facing output reaches COM1, independently of klog's
