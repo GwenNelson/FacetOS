@@ -603,15 +603,6 @@ int dominit0_terminal_bind_process_environment(
             binding->assignment_index != assignment_index)
             continue;
         return dominit0_process_environment_bind_named(
-                   environment, "terminal", IID_ITerminal,
-                   binding->terminal) ||
-               dominit0_process_environment_bind_named(
-                   environment, "terminal.input", IID_IByteReader,
-                   binding->input) ||
-               dominit0_process_environment_bind_named(
-                   environment, "terminal.output", IID_IByteWriter,
-                   binding->output) ||
-               dominit0_process_environment_bind_named(
                    environment, "terminal.control", IID_ITerminalControl,
                    binding->control) ||
                dominit0_process_environment_bind_named(
