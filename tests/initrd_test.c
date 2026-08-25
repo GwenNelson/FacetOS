@@ -1,6 +1,7 @@
 #include <facetos/initrd.h>
 #include <facetos/interfaces/IFile.h>
 #include <facetos/interfaces/IFileStore.h>
+#include <facetos/interfaces/IDirectory.h>
 #include <facetos/libfacet/platform.h>
 
 #include <assert.h>
@@ -63,6 +64,7 @@ FacetResult libfacet_platform_call(FacetHandle target,
     if (generated.word_count == 0)
         generated.words[generated.word_count++] = (uint64_t)(int64_t)result;
     for (size_t i = 0; i < generated.attachment_count; i++) {
+        if (generated.attachments[i].handle.platform == NULL) continue;
         FacetHandle clone = {0};
         if (libfacet_platform_handle_clone(generated.attachments[i].handle,
                                            &clone) != FACET_OK)
@@ -146,10 +148,43 @@ static void test_lookup_and_read_only_rpc(void)
     FacetHandle file_handle = {0};
     assert(store->open_file(store->self, &path, &file_handle) == FACET_OK);
     IFile *file = libfacet_new_proxy_client(&IFile_MetaData, file_handle);
+    uint64_t file_size = 0;
+    assert(file->get_size(file->self, &file_size) == FACET_OK);
+    assert(file_size == strlen("hello from initrd\n"));
+    FacetArray_u8 read = {0};
+    assert(file->read_at(file->self, 6, 4, &read) == FACET_OK);
+    assert(read.count == 4);
+    assert(memcmp(read.data, "from", 4) == 0);
+    free(read.data);
     FacetArray_u8 payload = {.data = (uint8_t *)"no", .count = 2};
     uint32_t written = 99;
     assert(file->write_at(file->self, 0, &payload, &written) == FACET_NOT_SUPPORTED);
     libfacet_free_proxy_client(file);
+
+    FacetString root_path = {.data = "/", .length = 1};
+    FacetHandle directory_handle = {0};
+    assert(store->open_directory(store->self, &root_path,
+                                 &directory_handle) == FACET_OK);
+    IDirectory *directory = libfacet_new_proxy_client(&IDirectory_MetaData,
+                                                       directory_handle);
+    FacetArray_Entry entries = {0};
+    uint64_t next = 0;
+    bool end = false;
+    assert(directory->list(directory->self, 0, 16, &entries, &next, &end) ==
+           FACET_OK);
+    assert(end);
+    assert(entries.count == 2);
+    assert(entries.data[0].name.length == strlen("README"));
+    assert(memcmp(entries.data[0].name.data, "README",
+                  entries.data[0].name.length) == 0);
+    assert(entries.data[0].type == EntryType_File);
+    assert(entries.data[1].name.length == strlen("dir"));
+    assert(memcmp(entries.data[1].name.data, "dir",
+                  entries.data[1].name.length) == 0);
+    assert(entries.data[1].type == EntryType_Directory);
+    facet_rpc_release_value(FACET_TYPE_ARRAY,
+                            &FacetArray_Entry_TypeMeta, &entries);
+    libfacet_free_proxy_client(directory);
     libfacet_free_proxy_client(store);
     facet_initrd_destroy(initrd);
 }

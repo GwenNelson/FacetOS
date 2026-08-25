@@ -336,6 +336,8 @@ FACET_KLOG_TEST := $(FACET_CONFIG_BUILD)/klog-test
 FACET_LOGGING_SETUP_TEST := $(FACET_CONFIG_BUILD)/logging-setup-test
 FACET_SHA256_TEST := $(FACET_CONFIG_BUILD)/sha256-test
 FACET_INITRD_TEST := $(FACET_CONFIG_BUILD)/initrd-test
+FACET_AUTH_RPC_TEST := $(FACET_CONFIG_BUILD)/auth-rpc-test
+FACET_TERMINAL_RPC_TEST := $(FACET_CONFIG_BUILD)/terminal-rpc-test
 
 $(FACET_GENERATED_IGENERIC): $(FACET_IDLC) $(ROOT)/idl/IGenericObject.facet
 	@mkdir -p $(FACET_GENERATED_INTERFACE_DIR)
@@ -409,6 +411,45 @@ $(FACET_INITRD_TEST): $(ROOT)/tests/initrd_test.c \
 test-initrd: $(FACET_INITRD_TEST)
 	$(FACET_INITRD_TEST)
 
+$(FACET_AUTH_RPC_TEST): $(ROOT)/tests/auth_rpc_test.c \
+		$(ROOT)/src/config.c $(ROOT)/src/dominit0/config.c \
+		$(ROOT)/src/dominit0/environment.c $(ROOT)/src/dominit0/auth.c \
+		$(ROOT)/libfacet/src/common/runtime.c \
+		$(ROOT)/libfacet/src/common/sha256.c $(FACET_IDLC)
+	@mkdir -p $(dir $@)
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) facet-idl-config-generated \
+		facet-idl-environment-generated facet-idl-shell-contracts-generated
+	$(CC) -std=gnu11 -O2 -ffunction-sections -fdata-sections \
+		-Wall -Wextra -Werror -I$(FACET_GENERATED_INCLUDE) -I$(ROOT)/include \
+		$(ROOT)/libfacet/src/common/runtime.c \
+		$(ROOT)/libfacet/src/common/sha256.c $(ROOT)/src/config.c \
+		$(ROOT)/src/dominit0/config.c $(ROOT)/src/dominit0/environment.c \
+		$(ROOT)/src/dominit0/auth.c $(ROOT)/tests/auth_rpc_test.c \
+		-Wl,--gc-sections -o $@
+
+test-auth-rpc: $(FACET_AUTH_RPC_TEST)
+	$(FACET_AUTH_RPC_TEST)
+
+$(FACET_TERMINAL_RPC_TEST): $(ROOT)/tests/terminal_rpc_test.c \
+		$(ROOT)/src/config.c $(ROOT)/src/dominit0/config.c \
+		$(ROOT)/src/dominit0/environment.c \
+		$(ROOT)/src/dominit0/process_environment.c \
+		$(ROOT)/src/dominit0/terminal.c $(ROOT)/libfacet/src/common/runtime.c \
+		$(FACET_IDLC)
+	@mkdir -p $(dir $@)
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) facet-idl-config-generated \
+		facet-idl-environment-generated facet-idl-shell-contracts-generated
+	$(CC) -std=gnu11 -O2 -ffunction-sections -fdata-sections \
+		-Wall -Wextra -Werror -I$(FACET_GENERATED_INCLUDE) -I$(ROOT)/include \
+		$(ROOT)/libfacet/src/common/runtime.c $(ROOT)/src/config.c \
+		$(ROOT)/src/dominit0/config.c $(ROOT)/src/dominit0/environment.c \
+		$(ROOT)/src/dominit0/process_environment.c \
+		$(ROOT)/src/dominit0/terminal.c $(ROOT)/tests/terminal_rpc_test.c \
+		-Wl,--gc-sections -o $@
+
+test-terminal-rpc: $(FACET_TERMINAL_RPC_TEST)
+	$(FACET_TERMINAL_RPC_TEST)
+
 $(FACET_KLOG_TEST): $(ROOT)/tests/klog_test.c \
 		$(ROOT)/src/dominit0/klog.c $(ROOT)/src/dominit0/klock.c \
 		$(ROOT)/include/facetos/dominit0/klog.h \
@@ -440,7 +481,8 @@ test-logging-setup: $(FACET_LOGGING_SETUP_TEST)
 	$(FACET_LOGGING_SETUP_TEST) optional
 	$(FACET_LOGGING_SETUP_TEST) required
 
-test: test-config test-sha256 test-initrd test-klog test-logging-setup
+test: test-config test-sha256 test-initrd test-auth-rpc test-terminal-rpc \
+	test-klog test-logging-setup
 
 
 #

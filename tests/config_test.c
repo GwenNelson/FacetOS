@@ -11,6 +11,9 @@
     "password_sha256='f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59'\n" \
     "admin=true\n"
 
+#define ZERO_HASH \
+    "0000000000000000000000000000000000000000000000000000000000000000"
+
 static int parse_text(const char *text, FacetSystemConfig *config,
                       FacetConfigDiagnostic *diagnostic)
 {
@@ -187,6 +190,28 @@ static void test_user_shell_overrides(void)
     facet_config_destroy(&config);
 }
 
+static void test_domain_user_merge(void)
+{
+    static const char text[] =
+        "[facet]\nversion=1\n"
+        "[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
+        ROOT_USER_CONFIG
+        "[[seats]]\nname='s'\ntype='serial'\nterminals=['t']\n"
+        "[[domains]]\nid=0\nname='n'\npersonality='native'\n"
+        "domain_manager='local'\ninitrd='n.initrd'\n"
+        "users=[{name='alice',password_sha256='" ZERO_HASH "',admin=false}]\n"
+        "logging_sinks=[{name='d',level='info'}]\n"
+        "terminals=[{terminal='s.t',view='native',initial_process='/x'}]\n";
+    FacetSystemConfig config;
+    FacetConfigDiagnostic diagnostic;
+    assert(parse_text(text, &config, &diagnostic) == 0);
+    assert(config.user_count == 1);
+    assert(config.domains[0].user_count == 1);
+    assert(strcmp(config.domains[0].users[0].name, "alice") == 0);
+    assert(!config.domains[0].users[0].admin);
+    facet_config_destroy(&config);
+}
+
 static void expect_failure(const char *text,
                            FacetConfigDiagnosticCategory category)
 {
@@ -217,6 +242,17 @@ static void test_failures(void)
                    FACET_CONFIG_DIAGNOSTIC_SCHEMA);
     expect_failure("[facet]\nversion = 1\nversion = 1\n",
                    FACET_CONFIG_DIAGNOSTIC_DUPLICATE);
+    expect_failure("[facet]\nversion=1\n"
+                   "[[users]]\nname='root'\npassword_sha256='ABCDEF'\nadmin=true\n",
+                   FACET_CONFIG_DIAGNOSTIC_SCHEMA);
+    expect_failure("[facet]\nversion=1\n"
+                   "[[users]]\nname='not-root'\npassword_sha256='" ZERO_HASH
+                   "'\nadmin=true\n",
+                   FACET_CONFIG_DIAGNOSTIC_SCHEMA);
+    expect_failure("[facet]\nversion=1\n"
+                   "[[users]]\nname='root'\npassword_sha256='" ZERO_HASH
+                   "'\nadmin=true\n",
+                   FACET_CONFIG_DIAGNOSTIC_SCHEMA);
     expect_failure("[facet]\nversion = 1\n" ROOT_USER_CONFIG
                    "[[domains]]\nid=0\nname='a'\npersonality='native'\n"
                    "domain_manager='local'\ninitrd='a.initrd'\n"
@@ -247,6 +283,18 @@ static void test_failures(void)
         "domain_manager='none'\ninitrd='b.initrd'\nlogging_sinks=[{name='d',level='info'}]\n"
         "terminals=[{terminal='s.t',view='native',initial_process='/FacetOS/FacetLogin'}]\n";
     expect_failure(duplicate_terminal, FACET_CONFIG_DIAGNOSTIC_DUPLICATE);
+    static const char duplicate_user[] =
+        "[facet]\nversion=1\n"
+        "[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
+        ROOT_USER_CONFIG
+        "[[seats]]\nname='s'\ntype='serial'\nterminals=['t']\n"
+        "[[domains]]\nid=0\nname='n'\npersonality='native'\n"
+        "domain_manager='local'\ninitrd='n.initrd'\n"
+        "users=[{name='root',password_sha256='" ZERO_HASH
+        "',admin=false}]\n"
+        "logging_sinks=[{name='d',level='info'}]\n"
+        "terminals=[{terminal='s.t',view='native',initial_process='/x'}]\n";
+    expect_failure(duplicate_user, FACET_CONFIG_DIAGNOSTIC_DUPLICATE);
     static const char native_pid1[] =
         "[facet]\nversion=1\n[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
         ROOT_USER_CONFIG
@@ -281,6 +329,7 @@ int main(void)
     test_utf8_and_quoted_keys();
     test_posix_terminal_mapping();
     test_user_shell_overrides();
+    test_domain_user_merge();
     test_failures();
     puts("config tests passed");
     return 0;
