@@ -6,6 +6,7 @@
 #include <facetos/dominit0/kmalloc.h>
 #include <facetos/dominit0/kpanic.h>
 #include <facetos/dominit0/platform/api.h>
+#include <facetos/dominit0/auth.h>
 #include <facetos/dominit0/terminal.h>
 #include <facetos/initrd.h>
 
@@ -149,6 +150,9 @@ void main(int argc, char **argv, char **envp) {
 
      if (dominit0_terminal_initialize(dominit0_config_get_system()) != 0)
           kpanic("Unable to initialise configured terminals!");
+
+     if (dominit0_auth_initialize(dominit0_config_get_system()) != 0)
+          kpanic("Unable to initialise configured authentication!");
 
      if (fallback)
           klog(LOG_WARN,

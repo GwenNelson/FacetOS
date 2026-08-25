@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define DOMINIT0_EXTRA_BINDINGS_MAX 8
+#define DOMINIT0_EXTRA_BINDINGS_MAX 16
 
 typedef struct ProcessBindingEntry {
     char *name;
