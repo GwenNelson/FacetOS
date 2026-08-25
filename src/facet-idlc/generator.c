@@ -60,8 +60,13 @@ static void emit_array_type(FILE *file, const char *type,
     if (end != NULL) *end = '\0';
     if (is_array_type(element_name))
         emit_array_type(file, element_name, seen, seen_count);
-    fprintf(file, "typedef struct %s {\n    %s *data;\n    size_t count;\n"
-            "} %s;\n\n", array_name, c_type(element_name), array_name);
+    /* Array types are shared ABI vocabulary.  Several generated interface
+     * headers may be included by one C file, so make the declaration global
+     * rather than redefining FacetArray_u8 for every interface. */
+    fprintf(file, "#ifndef FACETOS_ARRAY_TYPE_%s\n#define FACETOS_ARRAY_TYPE_%s\n"
+            "typedef struct %s {\n    %s *data;\n    size_t count;\n"
+            "} %s;\n#endif\n\n", array_name, array_name, array_name,
+            c_type(element_name), array_name);
 }
 
 static const char *meta_type(const char *type)
@@ -145,42 +150,12 @@ static const char *meta_type_for(const FacetIdlInterface *definition,
     return meta_type(type);
 }
 
-static void emit_array_metadata_forward(FILE *file, const char *type,
-                                        char seen[][FACET_IDL_MAX_NAME * 2],
-                                        size_t *seen_count)
-{
-    if (!is_array_type(type)) return;
-    char name[FACET_IDL_MAX_NAME * 2];
-    snprintf(name, sizeof(name), "%s", c_type(type));
-    for (size_t i = 0; i < *seen_count; i++)
-        if (strcmp(seen[i], name) == 0) return;
-    if (*seen_count >= FACET_IDL_MAX_TYPES) return;
-    snprintf(seen[(*seen_count)++], FACET_IDL_MAX_NAME * 2, "%s", name);
-    fprintf(file, "static const FacetTypeMeta %s_TypeMeta;\n", name);
-    char element[FACET_IDL_MAX_NAME * 2];
-    snprintf(element, sizeof(element), "%s", array_element_type(type));
-    char *end = strrchr(element, '>');
-    if (end != NULL) *end = '\0';
-    emit_array_metadata_forward(file, element, seen, seen_count);
-}
-
 static void emit_type_metadata(FILE *file,
                                const FacetIdlInterface *definition)
 {
-    char forward_arrays[FACET_IDL_MAX_TYPES][FACET_IDL_MAX_NAME * 2];
-    size_t forward_array_count = 0;
-    for (size_t i = 0; i < definition->type_count; i++)
-        for (size_t j = 0; j < definition->types[i].field_count; j++)
-            emit_array_metadata_forward(file, definition->types[i].fields[j].type,
-                                        forward_arrays, &forward_array_count);
-    for (size_t i = 0; i < definition->property_count; i++)
-        emit_array_metadata_forward(file, definition->properties[i].type,
-                                    forward_arrays, &forward_array_count);
-    for (size_t i = 0; i < definition->method_count; i++)
-        for (size_t j = 0; j < definition->methods[i].parameter_count; j++)
-            emit_array_metadata_forward(file, definition->methods[i].parameters[j].type,
-                                        forward_arrays, &forward_array_count);
-    if (forward_array_count != 0) fprintf(file, "\n");
+    /* Direct array element types do not need a forward declaration.  Keeping
+     * declarations header-local caused duplicate static declarations when
+     * IByteReader and IByteWriter were included together. */
     char seen_arrays[FACET_IDL_MAX_TYPES][FACET_IDL_MAX_NAME * 2];
     size_t seen_array_count = 0;
     #define EMIT_ARRAY_META(array_type) do { \
@@ -198,11 +173,13 @@ static void emit_type_metadata(FILE *file,
         char *array_end = strrchr(element_name, '>'); \
         if (array_end != NULL) *array_end = '\0'; \
         const char *element_symbol = type_meta_symbol(element_name); \
-        fprintf(file, "static const FacetTypeMeta %s_TypeMeta = {\n" \
+        fprintf(file, "#ifndef FACETOS_ARRAY_META_%s\n#define FACETOS_ARRAY_META_%s\n" \
+                "static const FacetTypeMeta %s_TypeMeta = {\n" \
                 "    .kind = FACET_TYPE_ARRAY, .name = \"%s\",\n" \
                 "    .size = sizeof(%s), .element_kind = %s,\n" \
-                "    .element_type = %s,\n};\n\n", array_name, array_name, \
-                    c_type(element_name), type_kind_for(definition, element_name), \
+                "    .element_type = %s,\n};\n#endif\n\n", array_name, array_name, \
+                    array_name, array_name, c_type(element_name), \
+                    type_kind_for(definition, element_name), \
                 element_symbol == NULL ? "NULL" : element_symbol); \
     } while (0)
     for (size_t i = 0; i < definition->type_count; i++) {
