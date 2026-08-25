@@ -34,6 +34,12 @@ PlatformConfigSourceStatus platform_get_config_source(
 PlatformConfigSourceStatus platform_get_boot_module(
     const char *name, PlatformConfigSource *source);
 
+/* Platform terminal primitives.  The portable terminal service owns stream
+ * policy; these calls only access the selected hardware endpoint. */
+int platform_serial_initialize(void);
+int platform_serial_read_byte(uint8_t *byte);
+int platform_serial_write(const uint8_t *data, size_t size);
+
 /* Starts one configured domain and returns platform-owned runtime state.
  * A NULL result means the domain could not be started. */
 void *platform_start_domain(CurrentDomain *current);

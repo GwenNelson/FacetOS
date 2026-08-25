@@ -37,6 +37,7 @@ extern seL4_BootInfo* platform_sel4_bi;
 static simple_t sel4_simple;
 static allocman_t *sel4_allocman;
 static vka_t sel4_vka;
+static seL4_CPtr serial_ioport_cap = seL4_CapNull;
 
 static vspace_t sel4_loader_vspace;
 static vspace_t sel4_vspace;
@@ -680,8 +681,66 @@ void platform_init(void) {
      if (facet_sel4_platform_init(&facet_config) != FACET_OK)
          kpanic("Unable to initialise libfacet seL4 platform!");
 
+     if (platform_serial_initialize() != 0)
+          klog(LOG_WARN, "COM1 terminal backend is unavailable\n");
+
 
      klog(LOG_INFO,"seL4 platform ready\n");
+}
+
+int platform_serial_initialize(void)
+{
+    if (serial_ioport_cap != seL4_CapNull)
+        return 0;
+    cspacepath_t path;
+    if (vka_cspace_alloc_path(&sel4_vka, &path) != 0)
+        return -1;
+    if (simple_get_IOPort_cap(&sel4_simple, 0x3f8, 0x3ff, path.root,
+                              path.capPtr, path.capDepth) != seL4_NoError) {
+        vka_cspace_free_path(&sel4_vka, path);
+        return -1;
+    }
+    serial_ioport_cap = path.capPtr;
+    /* 115200 8N1, FIFO enabled, interrupts disabled for polling bring-up. */
+    (void)seL4_X86_IOPort_Out8(serial_ioport_cap, 0x3f9, 0x00);
+    (void)seL4_X86_IOPort_Out8(serial_ioport_cap, 0x3fb, 0x80);
+    (void)seL4_X86_IOPort_Out8(serial_ioport_cap, 0x3f8, 0x01);
+    (void)seL4_X86_IOPort_Out8(serial_ioport_cap, 0x3f9, 0x00);
+    (void)seL4_X86_IOPort_Out8(serial_ioport_cap, 0x3fb, 0x03);
+    (void)seL4_X86_IOPort_Out8(serial_ioport_cap, 0x3fa, 0xc7);
+    (void)seL4_X86_IOPort_Out8(serial_ioport_cap, 0x3fc, 0x0b);
+    return 0;
+}
+
+int platform_serial_read_byte(uint8_t *byte)
+{
+    if (byte == NULL || serial_ioport_cap == seL4_CapNull)
+        return -1;
+    seL4_X86_IOPort_In8_t status = seL4_X86_IOPort_In8(serial_ioport_cap, 0x3fd);
+    if (status.error != seL4_NoError || (status.result & 1u) == 0)
+        return 1;
+    seL4_X86_IOPort_In8_t value = seL4_X86_IOPort_In8(serial_ioport_cap, 0x3f8);
+    if (value.error != seL4_NoError) return -1;
+    *byte = value.result;
+    return 0;
+}
+
+int platform_serial_write(const uint8_t *data, size_t size)
+{
+    if ((data == NULL && size != 0) || serial_ioport_cap == seL4_CapNull)
+        return -1;
+    for (size_t i = 0; i < size; i++) {
+        unsigned spins = 1000000;
+        while (spins-- != 0) {
+            seL4_X86_IOPort_In8_t status = seL4_X86_IOPort_In8(serial_ioport_cap, 0x3fd);
+            if (status.error != seL4_NoError) return -1;
+            if ((status.result & 0x20u) != 0) break;
+        }
+        if (spins == 0) return -1;
+        if (seL4_X86_IOPort_Out8(serial_ioport_cap, 0x3f8, data[i]) != seL4_NoError)
+            return -1;
+    }
+    return 0;
 }
 
 PlatformConfigSourceStatus
