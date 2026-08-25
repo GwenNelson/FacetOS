@@ -295,6 +295,21 @@ static void test_failures(void)
         "logging_sinks=[{name='d',level='info'}]\n"
         "terminals=[{terminal='s.t',view='native',initial_process='/x'}]\n";
     expect_failure(duplicate_user, FACET_CONFIG_DIAGNOSTIC_DUPLICATE);
+    static const char duplicate_initrd[] =
+        "[facet]\nversion=1\n"
+        "[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
+        ROOT_USER_CONFIG
+        "[[seats]]\nname='a'\ntype='serial'\nterminals=['t']\n"
+        "[[seats]]\nname='b'\ntype='local'\nterminals=['t']\n"
+        "[[domains]]\nid=0\nname='a'\npersonality='native'\n"
+        "domain_manager='local'\ninitrd='same.initrd'\n"
+        "logging_sinks=[{name='d',level='info'}]\n"
+        "terminals=[{terminal='a.t',view='native',initial_process='/x'}]\n"
+        "[[domains]]\nid=1\nname='b'\npersonality='native'\n"
+        "domain_manager='none'\ninitrd='same.initrd'\n"
+        "logging_sinks=[{name='d',level='info'}]\n"
+        "terminals=[{terminal='b.t',view='native',initial_process='/x'}]\n";
+    expect_failure(duplicate_initrd, FACET_CONFIG_DIAGNOSTIC_DUPLICATE);
     static const char native_pid1[] =
         "[facet]\nversion=1\n[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
         ROOT_USER_CONFIG
