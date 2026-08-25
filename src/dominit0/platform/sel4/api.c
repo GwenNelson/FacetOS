@@ -504,6 +504,12 @@ load_and_start_domain(sel4utils_process_t *process,
         klog(LOG_ERROR, "load_and_start_domain(): invalid ELF image\n");
         return -1;
     }
+    for (size_t i = 0; i < elf_getNumProgramHeaders(&elf); i++) {
+        if (elf_getProgramHeaderType(&elf, i) != PT_INTERP) continue;
+        klog(LOG_ERROR,
+             "load_and_start_domain(): dynamically linked ELF is unsupported\n");
+        return -1;
+    }
 
     uintptr_t sysinfo = sel4utils_elf_get_vsyscall(&elf);
     sel4utils_process_config_t config =
