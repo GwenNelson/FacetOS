@@ -20,6 +20,13 @@ int main(void)
     assert(parsed.domain_count == 0);
     assert(system.domain_count == 2);
     assert(system.root_index == 0);
+    assert(system.current_domains != NULL);
+    assert(system.current_domains[0] != NULL);
+    assert(system.current_domains[1] != NULL);
+    assert(system.current_domains[0]->config == &system.domains[0].domain);
+    assert(system.current_domains[1]->config == &system.domains[1].domain);
+    assert(system.current_domains[0]->platform_state == NULL);
+    assert(system.current_domains[1]->platform_state == NULL);
 
     Dominit0DomainConfigObject *root = &system.domains[0];
     uint64_t id = UINT64_MAX;

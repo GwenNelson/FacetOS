@@ -13,11 +13,21 @@ typedef struct Dominit0DomainConfigObject {
     FacetHandle console_handle;
 } Dominit0DomainConfigObject;
 
+/* Runtime state for one configured domain.
+ *
+ * This deliberately contains no platform-specific type.  The platform owns
+ * and interprets platform_state after platform_start_domain() succeeds. */
+typedef struct CurrentDomain {
+    IDomainConfig *config;
+    void *platform_state;
+} CurrentDomain;
+
 typedef struct Dominit0SystemConfig {
     FacetSystemConfig parsed;
     size_t domain_count;
     size_t root_index;
     Dominit0DomainConfigObject *domains;
+    CurrentDomain **current_domains;
 } Dominit0SystemConfig;
 
 /* Takes ownership of parsed on success and clears it. */

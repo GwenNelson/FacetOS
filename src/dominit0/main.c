@@ -59,6 +59,28 @@ static void log_prepared_configuration(const Dominit0SystemConfig *system,
      }
 }
 
+static void launch_configured_domains(Dominit0SystemConfig *system)
+{
+     for (size_t i = 0; i < system->domain_count; i++) {
+          CurrentDomain *current = system->current_domains[i];
+          IDomainConfig *config = current->config;
+          uint64_t domain_id = UINT64_MAX;
+          FacetString domain_name = {0};
+
+          current->platform_state = platform_start_domain(config);
+          if (current->platform_state != NULL)
+               continue;
+
+          if (config->getdomain_id(config->self, &domain_id) != FACET_OK ||
+              config->getdomain_name(config->self, &domain_name) != FACET_OK) {
+               klog(LOG_ERROR, "Unable to start configured domain %zu\n", i);
+               continue;
+          }
+          klog(LOG_ERROR, "Unable to start configured domain %llu (%s)\n",
+               (unsigned long long)domain_id, domain_name.data);
+     }
+}
+
 void main(int argc, char **argv, char **envp) {
      platform_init_early();
      klog_init_early(platform_get_early_logging_sink());
@@ -100,10 +122,7 @@ void main(int argc, char **argv, char **envp) {
 
      log_prepared_configuration(dominit0_config_get_system(), fallback);
 
-     /* Configuration objects are intentionally not exported here. The
-      * current child launch remains unchanged until IDomainEnvironment is
-      * implemented by hand. */
-     platform_start_initial_domain();
+     launch_configured_domains(dominit0_config_get_system());
 
      #ifdef DEBUG
         test_kmalloc();

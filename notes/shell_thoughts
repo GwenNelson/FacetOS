@@ -1,66 +1,1546 @@
-For a native domain, we need a login shell, that'd be provided by something called FacetLogin in /FacetOS/FacetLogin
+# FacetOS Domain Startup, Terminal, Identity, and Authentication Specification
 
-This requires grabbing an IAuth object passed to the domain (which then passes it to the login process).
+## 1. Scope
 
-How IAuth works internally isn't nailed down yet - for now it'll allow any username other than root.
+This document defines the initial FacetOS model for:
 
-The user "root", password "facet" is obviously the typical root user - at least for now by default
+* seats and terminals;
+* domain terminal assignment;
+* native and POSIX domain personalities;
+* native and POSIX terminal views;
+* initial process startup;
+* pure POSIX PID 1 startup;
+* authentication sources;
+* principals and human users;
+* authentication results;
+* domain-local session creation;
+* initial login flow.
 
-IAuthService objects provide something like:
-	authenticate(username, credential_type, credential_subtype, credential_blob, IPrincipal principal, IHumanUser user)
-		principal is an out field identifying the principal via an IPrincipal object
-		user is an out field for the IHumanUser
+The design intentionally separates:
 
-ISecurityManager is created by dominit, it's passed only to the login process
-	It has a method
-		CreateSession(IPrincipal p)
+```text
+physical/system resources
+        ↓
+FacetOS resource identity
+        ↓
+domain assignment
+        ↓
+personality-specific presentation
+        ↓
+process/session
+```
 
-	That returns an ISession which is read-only, and gets passed to the shell
-	ISession objects contain a read-only reference to the IPrincipal and have a method for spawning a new process
+A domain-local representation of a resource must not be assumed to reveal the underlying implementation of that resource.
 
-For a standard password login, credential_blob is just a string containing the password or password hash
+---
 
-credential_type is just an enum for now - and for now it contains only "Password"
+# 2. Example `facet.toml`
 
-credential_subtype is also an enum, but the intention is to have one enum for each type of credential blob
+```toml id="wt8hn7"
+[facet]
+version = 1
 
-for now, just one for passwords, with different hash/PBKDF functions
 
-IPrincipal has only getID() and getName() - it's intended for identifying ANY process, entity or agent that interacts with the system
+# ===========================================================================
+# Logging sinks
+# ===========================================================================
 
-System resources with permissions or ACLs etc name principals by ID
+[[logging_sinks]]
+name = "debug"
+type = "platform.sel4.debug"
+required = true
 
+
+# ===========================================================================
+# Authentication sources
+#
+# Authentication sources provide IAuthService.
+#
+# Domains consume authentication sources by name and do not need to know
+# how the authentication provider is implemented.
+# ===========================================================================
+
+[[authentication_sources]]
+name = "system"
+provider_domain = 0
+type = "local"
+required = true
+
+
+# ===========================================================================
+# Seats
+#
+# Seats describe system-side terminal inventory.
+#
+# Terminal names in this namespace may carry system-side meaning.
+# In particular, ttyS# denotes a serial console.
+# ===========================================================================
+
+[[seats]]
+name = "seat0"
+type = "serial"
+terminals = [
+    "ttyS0"
+]
+
+[[seats]]
+name = "seat1"
+type = "local"
+terminals = [
+    "tty1",
+    "tty2",
+    "tty3",
+    "tty4",
+    "tty5"
+]
+
+
+# ===========================================================================
+# Domain 0: system
+#
+# Native domain.
+#
+# Its assigned serial console receives a native FacetOS view and starts
+# FacetLogin directly.
+# ===========================================================================
+
+[[domains]]
+id = 0
+name = "system"
+personality = "native"
+domain_manager = "local"
+authentication_source = "system"
+
+logging_sinks = [
+    { name = "debug", level = "debug" }
+]
+
+terminals = [
+    {
+        terminal = "seat0.ttyS0",
+        view = "native",
+        initial_process = "/FacetOS/FacetLogin"
+    }
+]
+
+
+# ===========================================================================
+# Domain 1: mixed native domain
+#
+# The domain itself uses the native personality.
+#
+# tty1 receives a native FacetOS login environment.
+#
+# tty2 receives a POSIX compatibility view and starts /bin/login.
+#
+# Both remain terminal/process environments inside the same native domain.
+# ===========================================================================
+
+[[domains]]
+id = 1
+name = "example-child"
+personality = "native"
+domain_manager = "none"
+authentication_source = "system"
+
+logging_sinks = [
+    { name = "debug", level = "info" }
+]
+
+terminals = [
+    {
+        terminal = "seat1.tty1",
+        view = "native",
+        initial_process = "/FacetOS/FacetLogin"
+    },
+    {
+        terminal = "seat1.tty2",
+        view = "posix",
+        initial_process = "/bin/login"
+    }
+]
+
+
+# ===========================================================================
+# Domain 2: pure POSIX domain
+#
+# FacetOS constructs a POSIX environment for the entire domain.
+#
+# There is no FacetOS-managed per-terminal initial process.
+#
+# Each assigned FacetOS terminal is explicitly mapped to a domain-local
+# POSIX device name.
+#
+# Domain-local device names DO NOT describe the underlying hardware.
+#
+# For example, /dev/ttyS0 below is backed by seat1.tty5. The name ttyS0 has
+# serial semantics inside this POSIX environment only because the domain
+# chooses to present it under that name. seat1.tty5 itself is not serial.
+#
+# FacetOS starts exactly one initial process: PID 1.
+# Everything after that is POSIX userspace policy.
+# ===========================================================================
+
+[[domains]]
+id = 2
+name = "posix-example"
+personality = "posix"
+domain_manager = "none"
+authentication_source = "system"
+
+pid1 = "/sbin/init"
+
+logging_sinks = [
+    { name = "debug", level = "info" }
+]
+
+terminals = [
+    { device = "tty1",  terminal = "seat1.tty3" },
+    { device = "tty2",  terminal = "seat1.tty4" },
+    { device = "ttyS0", terminal = "seat1.tty5" }
+]
+```
+
+---
+
+# 3. Seats and System-Side Terminals
+
+A seat represents a collection of related system-side interactive resources.
+
+For v1, the configuration explicitly describes its terminals:
+
+```toml id="sawmdg"
+[[seats]]
+name = "seat1"
+type = "local"
+terminals = [
+    "tty1",
+    "tty2",
+    "tty3",
+    "tty4",
+    "tty5"
+]
+```
+
+A system-side terminal is identified using:
+
+```text id="a2lv9h"
+<seat>.<terminal>
+```
+
+For example:
+
+```text id="7usjkn"
+seat0.ttyS0
+seat1.tty1
+seat1.tty5
+```
+
+These names belong to the FacetOS system namespace.
+
+They are not domain-local device names.
+
+## 3.1 System-side naming semantics
+
+Outside domains, conventional FacetOS terminal names may describe the underlying terminal class.
+
+In particular:
+
+```text id="i1esvk"
+ttyS#
+```
+
+means a serial console.
+
+Therefore:
+
+```text id="y9ctao"
+seat0.ttyS0
+```
+
+is a system-side serial console.
+
+This rule applies to the system-side seat/terminal inventory.
+
+It does not apply to names chosen by a domain personality.
+
+---
+
+# 4. Domain Personalities
+
+FacetOS initially defines two domain personalities:
+
+```text id="sm6xkt"
+native
+posix
+```
+
+A personality defines the fundamental execution environment presented to processes within that domain.
+
+Personality is distinct from the view attached to an individual terminal.
+
+---
+
+# 5. Native Domains
+
+A native domain is declared using:
+
+```toml id="ibzvml"
+personality = "native"
+```
+
+FacetOS directly manages the initial process associated with each assigned terminal.
+
+Each terminal assignment therefore specifies:
+
+```text id="qx5d5i"
+terminal
+view
+initial_process
+```
+
+For example:
+
+```toml id="at0qt9"
+{
+    terminal = "seat1.tty1",
+    view = "native",
+    initial_process = "/FacetOS/FacetLogin"
+}
+```
+
+or:
+
+```toml id="9m4uob"
+{
+    terminal = "seat1.tty2",
+    view = "posix",
+    initial_process = "/bin/login"
+}
+```
+
+---
+
+# 6. Terminal Views
+
+The terminal `view` controls the environment presented to the process initially attached to that terminal.
+
+Initially:
+
+```text id="9q2p2j"
+native
+posix
+```
+
+This does not change the personality of the containing domain.
+
+Thus Domain 1 is:
+
+```text id="vzcw1e"
+Domain 1
+personality = native
+
+    seat1.tty1
+        |
+        +-- native view
+        |
+        `-- /FacetOS/FacetLogin
+
+    seat1.tty2
+        |
+        +-- POSIX view
+        |
+        `-- /bin/login
+```
+
+Both terminal processes remain part of Domain 1.
+
+A POSIX terminal view is a compatibility environment within an otherwise native domain.
+
+---
+
+# 7. Pure POSIX Domains
+
+A pure POSIX domain is declared using:
+
+```toml id="5v0cmt"
+personality = "posix"
+```
+
+Its startup model differs fundamentally from a native domain.
+
+FacetOS does not launch one initial process for every terminal.
+
+Instead:
+
+1. FacetOS creates the domain.
+2. The POSIX personality receives the domain's assigned resources.
+3. Assigned Facet terminals are mapped into the domain-local POSIX namespace.
+4. FacetOS starts one configured executable as PID 1.
+5. PID 1 becomes responsible for POSIX userspace startup.
+
+The configuration therefore contains:
+
+```toml id="pcwyeb"
+pid1 = "/sbin/init"
+```
+
+rather than per-terminal `initial_process` fields.
+
+Conceptually:
+
+```text id="oq19mf"
+dominit
+   |
+   +-- create Domain 2
+   |
+   +-- create POSIX environment
+   |
+   +-- map terminals
+   |
+   +-- supply other assigned resources
+   |
+   `-- start /sbin/init
+             PID 1
+               |
+               v
+         POSIX userspace
+```
+
+FacetOS does not require PID 1 to behave like any particular Unix init system.
+
+---
+
+# 8. Pure POSIX Terminal Mapping
+
+Pure POSIX terminal assignments contain two independent names:
+
+```text id="i7df8u"
+device
+terminal
+```
+
+For example:
+
+```toml id="ekbl8q"
+{ device = "ttyS0", terminal = "seat1.tty5" }
+```
+
+means:
+
+```text id="o74mb4"
+Domain-local POSIX device: /dev/ttyS0
+
+Underlying FacetOS terminal: seat1.tty5
+```
+
+For the example Domain 2:
+
+```text id="otv22w"
+FacetOS terminal       Domain-local POSIX device
+
+seat1.tty3       ────► /dev/tty1
+seat1.tty4       ────► /dev/tty2
+seat1.tty5       ────► /dev/ttyS0
+```
+
+The two namespaces are independent.
+
+The mapping must always be explicit.
+
+---
+
+# 9. Hardware Meaning Stops at the Domain Boundary
+
+This distinction is fundamental.
+
+## Outside domains
+
+System-side terminal names may carry hardware meaning.
+
+Specifically:
+
+```text id="rjgf8v"
+ttyS# = serial console
+```
+
+Thus:
+
+```text id="dyp8pq"
+seat0.ttyS0
+```
+
+really is a serial console.
+
+## Inside domains
+
+Domain-local names are logical names belonging to that domain's personality.
+
+They do not imply anything about physical hardware.
+
+Therefore:
+
+```text id="fvd9re"
+/dev/ttyS0 -> seat1.tty5
+```
+
+is completely valid.
+
+`seat1.tty5` is not a serial console merely because Domain 2 calls it `ttyS0`.
+
+Likewise this could be valid:
+
+```text id="i5l7bl"
+/dev/tty7 -> seat0.ttyS0
+```
+
+The underlying FacetOS terminal remains serial, while the POSIX domain chooses to call it `tty7`.
+
+Therefore:
+
+> System-side names describe FacetOS resources.
+>
+> Domain-local names describe the personality's presentation of those resources.
+>
+> Hardware properties must never be inferred backwards from a domain-local name.
+
+---
+
+# 10. POSIX PID 1 Responsibilities
+
+FacetOS starts only the configured PID 1 in a pure POSIX domain.
+
+For Domain 2:
+
+```text id="wuhy69"
+/sbin/init
+```
+
+is started as PID 1.
+
+PID 1 may subsequently choose to launch:
+
+```text id="j6fb4u"
+getty
+/bin/login
+shells
+daemons
+service managers
+network services
+```
+
+For example:
+
+```text id="8j0fb3"
+PID 1
+  |
+  +-- getty /dev/tty1
+  |      |
+  |      `-- /bin/login
+  |
+  +-- getty /dev/tty2
+  |      |
+  |      `-- /bin/login
+  |
+  `-- getty /dev/ttyS0
+         |
+         `-- /bin/login
+```
+
+This behaviour is not part of the FacetOS domain-startup contract.
+
+A POSIX domain may choose not to run any interactive login service at all.
+
+---
+
+# 11. Authentication Sources
+
+Authentication is represented as a service.
+
+It is not intrinsically owned by FacetLogin or by the POSIX personality.
+
+A configured authentication source provides:
+
+```text id="e9f7aj"
+IAuthService
+```
+
+Example:
+
+```toml id="7b84hq"
+[[authentication_sources]]
+name = "system"
+provider_domain = 0
+type = "local"
+required = true
+```
+
+Domains request authentication sources by name:
+
+```toml id="r1z76k"
+authentication_source = "system"
+```
+
+Dominit resolves that relationship and supplies the appropriate authentication capability.
+
+Consumers use `IAuthService`.
+
+They do not need to know where or how it is implemented.
+
+---
+
+# 12. Authentication Delegation
+
+A domain may manage its own authentication or consume authentication supplied by another domain.
+
+Conceptually:
+
+```text id="6c6y84"
+Domain 0
+   |
+   +-- authentication implementation
+   |
+   `-- IAuthService
+          |
+          +----------► Domain 0
+          |
+          +----------► Domain 1
+          |
+          `----------► Domain 2
+```
+
+In the example, Domain 0 provides the `system` authentication source and all three domains consume it.
+
+This means they share an authentication authority.
+
+It does not mean they share authorization policy.
+
+---
+
+# 13. Authentication vs Authorization
+
+Authentication answers:
+
+> Who is this?
+
+Authorization/session construction answers:
+
+> What authority does this authenticated identity receive in this domain?
+
+These must remain separate.
+
+Thus:
+
+```text id="63dkx9"
+              IAuthService
+                   |
+                   | authenticate
+                   v
+       IAuthenticatedPrincipal
+                   |
+          +--------+--------+
+          |                 |
+          v                 v
+ Domain 0 security    Domain 1 security
+      policy               policy
+          |                 |
+          v                 v
+    ISession A         ISession B
+```
+
+The same authenticated principal may receive different capabilities in different domains.
+
+Trusting an authentication provider must not implicitly delegate the receiving domain's authorization policy.
+
+---
+
+# 14. IPrincipal
+
+`IPrincipal` represents an identity recognised by the FacetOS security model.
+
+A principal need not represent a human.
+
+Potential examples include:
+
+```text id="rb40kk"
+human
+service
+device
+agent
+remote identity
+```
+
+The initial interface should remain small:
+
+```text id="qug4qe"
+IPrincipal
+
+    GetID()
+    GetName()
+```
+
+The ID is the stable principal identity.
+
+A UUID is appropriate for this purpose.
+
+## Security rule
+
+Possession of an `IPrincipal` is not authority to act as that principal.
+
+It must therefore be safe for ordinary code to hold references to principals for purposes such as:
+
+```text id="2ml9rp"
+ownership
+metadata
+display
+auditing
+ACL entries
+```
+
+without thereby acquiring the principal's filesystem/session authority.
+
+---
+
+# 15. IHumanUser
+
+A principal representing a human may additionally expose:
+
+```text id="bttkjv"
+IHumanUser
+```
+
+This follows the FacetOS object/interface model:
+
+```text id="o1a3br"
+Human principal object
+    |
+    +-- IPrincipal
+    +-- IHumanUser
+    `-- IPronouns
+```
+
+`IHumanUser` initially contains:
+
+```text id="jj5rg6"
+FullName
+Pronouns
+HomePath
+DefaultShell
+```
+
+`HomePath` and `DefaultShell` remain strings for v1.
+
+Do not prematurely replace them with PolyFS object IDs, capabilities, executable objects, or other speculative abstractions.
+
+---
+
+# 16. IPronouns
+
+`IPronouns` stores the forms needed for basic English-language pronoun handling.
+
+It contains:
+
+```text id="o4wqzp"
+Subject
+Object
+PossessiveDeterminer
+PossessivePronoun
+Reflexive
+ShortForm
+```
+
+The grammatical forms take an agreement parameter.
+
+Define:
+
+```c id="4ppx79"
+enum IPronouns_GrammaticalNumber {
+    PRONOUN_AGREEMENT_SINGULAR = 1,
+    PRONOUN_AGREEMENT_PLURAL   = 2,
+};
+```
+
+Grammatical agreement does not necessarily describe the number of people represented.
+
+Singular `they`, for example, may use plural grammatical agreement.
+
+Conceptually:
+
+```text id="cy22bk"
+GetSubject(agreement)
+SetSubject(agreement, value)
+
+GetObject(agreement)
+SetObject(agreement, value)
+
+GetPossessiveDeterminer(agreement)
+SetPossessiveDeterminer(agreement, value)
+
+GetPossessivePronoun(agreement)
+SetPossessivePronoun(agreement, value)
+
+GetReflexive(agreement)
+SetReflexive(agreement, value)
+
+GetShortForm()
+SetShortForm(value)
+```
+
+Example:
+
+```text id="evp8wz"
+subject                = she
+object                 = her
+possessive determiner  = her
+possessive pronoun     = hers
+reflexive              = herself
+short form             = she/her/hers
+```
+
+---
+
+# 17. IAuthService
+
+`IAuthService` performs authentication.
+
+Conceptually:
+
+```text id="a34ih7"
+Authenticate(
+    username,
+    credential_type,
+    credential_subtype,
+    credential_blob
+)
+    -> IAuthenticatedPrincipal
+```
+
+The precise IDL form must follow existing FacetOS conventions.
+
+Credentials consist of:
+
+```text id="8m0hax"
+credential type
+credential subtype
+opaque credential blob
+```
+
+Initially, the only required broad credential type is:
+
+```text id="4ydh5i"
+Password
+```
+
+Additional credential types must not be invented until needed.
+
+Password subtypes similarly belong to their own subtype namespace.
+
+The credential blob is interpreted according to its type and subtype.
+
+---
+
+# 18. IAuthenticatedPrincipal
+
+Successful authentication returns an:
+
+```text id="fzswfr"
+IAuthenticatedPrincipal
+```
+
+This is distinct from `IPrincipal`.
+
+Its minimum operation is:
+
+```text id="9ir74b"
+GetPrincipal() -> IPrincipal
+```
+
+Semantically:
+
+```text id="7h22nu"
+IPrincipal
+    "this identity exists"
+
+IAuthenticatedPrincipal
+    "a trusted authentication authority has
+     successfully authenticated this identity"
+```
+
+`IAuthenticatedPrincipal` is therefore security-sensitive.
+
+It must not be forgeable merely by obtaining an `IPrincipal`.
+
+Authentication provenance must remain sufficient for the receiving security authority to determine whether the result came from an authentication source it trusts.
+
+The exact low-level provenance mechanism is not defined here.
+
+Do not invent signed bearer tokens or another cryptographic protocol unless they become necessary.
+
+---
+
+# 19. ISecurityManager
+
+Each domain capable of creating authenticated sessions has an:
+
+```text id="x4p20g"
+ISecurityManager
+```
+
+This represents domain-local authorization/session policy.
+
+Its core operation is:
+
+```text id="v91p9r"
+CreateSession(
+    IAuthenticatedPrincipal authentication
+)
+    -> ISession
+```
+
+The security manager must accept authentication results only from authentication sources trusted/configured for that domain.
+
+The security manager decides what capabilities the resulting session receives.
+
+Thus the authentication source establishes identity while the security manager establishes authority.
+
+---
+
+# 20. ISession
+
+`ISession` represents one particular authenticated security context.
+
+A principal may have multiple sessions.
+
+For example:
+
+```text id="bqet2b"
+               Gwen principal
+                    |
+            +-------+-------+
+            |               |
+            v               v
+        Session A       Session B
+            |               |
+        local tty         remote
+            |               |
+       broad access     restricted
+```
+
+Both sessions represent the same principal but may possess different capabilities.
+
+Initially, `ISession` should expose:
+
+```text id="abukrs"
+GetPrincipal()
+```
+
+and eventually the process-spawning operation required to start programs inside that session.
+
+The exact process-spawning API should follow the FacetOS process model rather than being invented solely for `ISession`.
+
+---
+
+# 21. Native FacetLogin
+
+FacetLogin is the native interactive login program:
+
+```text id="f9sf8j"
+/FacetOS/FacetLogin
+```
+
+It receives the capabilities required for login, conceptually:
+
+```text id="20aq3a"
+IVirtualTerminal
+IAuthService
+ISecurityManager
+```
+
+The flow is:
+
+```text id="74o5xg"
+FacetLogin
+    |
+    | collect username/credentials
+    v
+IAuthService::Authenticate(...)
+    |
+    v
+IAuthenticatedPrincipal
+    |
+    +-- GetPrincipal()
+    |       |
+    |       v
+    |   IPrincipal
+    |       |
+    |       +-- query IHumanUser
+    |
+    v
+ISecurityManager::CreateSession(...)
+    |
+    v
+ISession
+    |
+    v
+user's DefaultShell
+```
+
+FacetLogin does not itself determine filesystem authority or other domain policy.
+
+That belongs to `ISecurityManager`.
+
+---
+
+# 22. Native Domain with POSIX Login View
+
+Domain 1 demonstrates a different case:
+
+```toml id="r1esq8"
+{
+    terminal = "seat1.tty2",
+    view = "posix",
+    initial_process = "/bin/login"
+}
+```
+
+The domain itself remains native.
+
+The POSIX view provides the compatibility environment required by `/bin/login`.
+
+Conceptually:
+
+```text id="9i5du6"
+/bin/login
+     |
+     v
+POSIX authentication compatibility
+     |
+     v
+IAuthService
+     |
+     v
+IAuthenticatedPrincipal
+     |
+     v
+ISecurityManager
+     |
+     v
+ISession
+     |
+     v
+POSIX session representation
+```
+
+POSIX concepts such as:
+
+```text id="o9p2km"
+uid
+gid
+home
+shell
+process credentials
+```
+
+belong to the POSIX compatibility layer.
+
+They must not be added to `IPrincipal` merely because POSIX requires them.
+
+---
+
+# 23. Authentication in a Pure POSIX Domain
+
+A pure POSIX domain receives access to its configured authentication source, but FacetOS itself starts only PID 1.
+
+Thus Domain 2 begins approximately as:
+
+```text id="6ffu38"
+Domain 2
+
+/dev/tty1
+/dev/tty2
+/dev/ttyS0
+authentication integration
+other assigned resources
+
+        |
+        v
+
+/sbin/init
+PID 1
+```
+
+What happens next is controlled by POSIX userspace.
+
+For example:
+
+```text id="r7x8sw"
+/sbin/init
+    |
+    +-- getty
+    |      |
+    |      `-- /bin/login
+    |
+    +-- getty
+    |      |
+    |      `-- /bin/login
+    |
+    `-- services
+```
+
+When POSIX userspace requests authentication, the POSIX personality may bridge the expected POSIX authentication API onto the configured `IAuthService`.
+
+FacetOS does not require `/bin/login` to exist.
+
+FacetOS does not automatically create gettys.
+
+FacetOS does not dictate how PID 1 manages interactive users.
+
+---
+
+# 24. Initial Bootstrap Authentication
+
+The initial authentication implementation may be deliberately minimal for development.
+
+For bootstrap/testing:
+
+* arbitrary non-`root` usernames may use placeholder behaviour;
+* a `root` principal exists;
+* the provisional root password may be `facet`.
+
+This is development scaffolding, not the permanent security design.
+
+Do not build a large account-management or cryptographic password framework merely to support this bootstrap state.
+
+---
+
+# 25. Configuration Validation
+
+## 25.1 Global requirements
+
+Configuration must contain:
+
+* domain ID 0;
+* at least one seat;
+* at least one logging sink.
+
+IDs and names required to be unique must be validated before materialisation.
+
+References must be resolved before domain construction.
+
+---
+
+## 25.2 Seat validation
+
+Seat names must be unique.
+
+Terminal names must be unique within a seat.
+
+A terminal reference:
+
+```text id="sjixrb"
+seat1.tty3
+```
+
+must resolve to both:
+
+```text id="4k86fi"
+seat1
+tty3
+```
+
+in the configured inventory.
+
+System-side `ttyS#` semantics remain meaningful.
+
+---
+
+## 25.3 Domain validation
+
+Domain IDs must be unique.
+
+Domain 0 must exist.
+
+Every domain must have:
+
+* at least one logging sink;
+* at least one assigned terminal;
+* valid logging-sink references;
+* valid terminal references;
+* a valid authentication-source reference where authentication is configured.
+
+Terminal assignment must obey system exclusivity rules.
+
+---
+
+## 25.4 Native-domain validation
+
+For:
+
+```toml id="0sr6na"
+personality = "native"
+```
+
+every terminal assignment must contain:
+
+```text id="9j2a4c"
+terminal
+view
+initial_process
+```
+
+`view` must identify a supported terminal view.
+
+Initially:
+
+```text id="nl5p8l"
+native
+posix
+```
+
+A native domain must not specify domain-level `pid1`.
+
+---
+
+## 25.5 POSIX-domain validation
+
+For:
+
+```toml id="u95smm"
+personality = "posix"
+```
+
+`pid1` is mandatory.
+
+Every terminal mapping must contain:
+
+```text id="m5j6ya"
+device
+terminal
+```
+
+The system-side terminal reference must resolve.
+
+Domain-local `device` names must be unique within the domain.
+
+The validator must not infer hardware type from `device`.
+
+The validator must not infer `device` from the system-side terminal name.
+
+Therefore this is valid:
+
+```toml id="v84hjo"
+{ device = "ttyS0", terminal = "seat1.tty5" }
+```
+
+and must not be rejected because `seat1.tty5` is not serial.
+
+---
+
+# 26. Configuration Resolution Boundary
+
+The existing configuration implementation boundary must be preserved:
+
+```text id="fkp87f"
+facet.toml bytes
+      |
+      v
+portable parser
+      |
+      v
+resolved typed configuration
+      |
+      v
+dominit0-only materializer
+      |
+      v
+generated interface structs
+      |
+      v
+runtime/domain construction
+```
+
+The seL4-specific adapter supplies only the optional configuration byte span.
+
+The portable configuration layer performs parsing, validation and reference resolution.
+
+It must not construct seL4-specific runtime objects.
+
+The dominit0-only materializer converts already-resolved typed data into the generated structures required by dominit0.
+
+---
+
+# 27. Resolved Terminal Representation
+
+The portable typed configuration must preserve system-side and domain-local identity separately.
+
+For a native terminal assignment, resolved information includes conceptually:
+
+```text id="l5wzct"
+resolved seat
+resolved terminal
+view
+initial process
+```
+
+For a POSIX-domain terminal mapping:
+
+```text id="tyy6yk"
+domain-local device name
+resolved seat
+resolved system terminal
+```
+
+For example:
+
+```toml id="x5pcn9"
+{ device = "ttyS0", terminal = "seat1.tty5" }
+```
+
+must remain conceptually:
+
+```text id="2bymml"
+device_name = "ttyS0"
+
+system_terminal:
+    seat = seat1
+    terminal = tty5
+```
+
+These must never be collapsed into a single inferred name.
+
+---
+
+# 28. Codex Implementation Instructions
+
+This work contains both mechanical implementation work and architectural boundaries reserved for manual design.
+
+Codex should implement only the well-defined portions below.
+
+## 28.1 Before changing code
+
+First inspect the existing tree and identify:
+
+1. current FacetOS IDL conventions;
+2. interface naming conventions;
+3. UUID conventions;
+4. enum conventions;
+5. string representation and bounds;
+6. getter/setter conventions;
+7. interface-return/out-parameter conventions;
+8. error/result conventions;
+9. current configuration parser structures;
+10. portable configuration resolution structures;
+11. dominit0 materialisation;
+12. build integration for generated interfaces;
+13. existing tests for configuration parsing and validation.
+
+Follow existing conventions.
+
+Do not introduce a second architectural style.
+
+---
+
+## 28.2 Configuration work to implement
+
+Implement support for:
+
+### Authentication sources
+
+```toml id="y7ahx5"
+[[authentication_sources]]
+name = "system"
+provider_domain = 0
+type = "local"
+required = true
+```
+
+Resolve domain references.
+
+Validate authentication-source names.
+
+### Domain authentication references
+
+```toml id="a56du6"
+authentication_source = "system"
+```
+
+Resolve these to typed authentication-source configuration.
+
+### Native terminal assignments
+
+Support:
+
+```toml id="m52gtf"
+{
+    terminal = "seat1.tty1",
+    view = "native",
+    initial_process = "/FacetOS/FacetLogin"
+}
+```
+
+and POSIX terminal views:
+
+```toml id="u15m7j"
+{
+    terminal = "seat1.tty2",
+    view = "posix",
+    initial_process = "/bin/login"
+}
+```
+
+### Pure POSIX domain PID 1
+
+Support:
+
+```toml id="iyd6h8"
+pid1 = "/sbin/init"
+```
+
+for POSIX domains.
+
+### Explicit POSIX terminal mappings
+
+Support:
+
+```toml id="19l96h"
+terminals = [
+    { device = "tty1",  terminal = "seat1.tty3" },
+    { device = "tty2",  terminal = "seat1.tty4" },
+    { device = "ttyS0", terminal = "seat1.tty5" }
+]
+```
+
+Preserve domain-local and system-side names separately.
+
+Do not infer one from the other.
+
+---
+
+# 29. Configuration Tests Required
+
+Add focused tests for at least:
+
+* valid native terminal assignment;
+* valid native POSIX-view assignment;
+* valid pure POSIX domain;
+* required PID 1 for POSIX domain;
+* rejection of PID 1 on native domain;
+* invalid seat reference;
+* invalid terminal reference;
+* invalid authentication-source reference;
+* duplicate domain ID;
+* missing domain 0;
+* duplicate terminal assignment where prohibited;
+* duplicate POSIX domain-local device name;
+* valid `ttyS0 -> seat1.tty5` mapping;
+* validation proving that domain-local `ttyS0` is not required to map to a serial terminal;
+* authentication-source provider-domain resolution;
+* existing default/fallback configuration behaviour.
+
+Do not weaken existing tests.
+
+---
+
+# 30. Interface Work
+
+Where not already present, define the minimal IDL required for:
+
+```text id="nky4ae"
+IAuthService
+IAuthenticatedPrincipal
+IPrincipal
+IHumanUser
 IPronouns
-	Just a simple metadata object with get/set accessors for these fields, each field can be singular or plural
-	Subject
-	Object
-	PossessiveDeterminer
-	PossessivePronoun
-	Reflexive
-	ShortForm - this one does NOT take the agreement param
+ISecurityManager
+ISession
+```
 
-	enum IPronouns_GrammaticalNumber {
-		PRONOUN_AGREEMENT_SINGULAR=1,
-		PRONOUN_AGREEMENT_PLURAL=2,
-	}
+Follow existing FacetOS IDL conventions exactly.
 
-	example:
-		IPronouns* gwen = ...
-		gwen->SetSubject(PRONOUN_AGREEMENT_SINGULAR,"her");
-		gwen->SetShortForm("she/her/hers");
+Do not invent new ABI machinery merely to make these interfaces prettier.
 
+If an operation depends on an unresolved architectural decision, implement the well-defined interface subset and leave the unresolved operation for manual design.
 
-IHumanUser has just metadata about an actual person as a user on the system
-Some metadata is part of the actual interface definition, some is an arbitrary key/value store to allow extension without rewriting the ABI
-Metadata part of the interface can be queried or updated via get/set accessors
-	FullName     - make this a string of sane length
-	Pronouns     - FacetOS is woke, oh no - make this an IPronouns
-	HomePath     - make this a string for now
-	DefaultShell - again, make this a string for now
-	
+---
 
+# 31. Explicit Non-Goals for Codex
 
+Do not implement or design:
 
-NOTE FOR CODEX:
-	Please create appropriate IDL files for IAuth, IPrincipal, IHumanUser, IPronouns etc
-	Look at other IDL files first for examples, follow the same conventions
+* FacetLogin itself;
+* the native shell;
+* `/bin/login`;
+* `/sbin/init`;
+* getty;
+* PAM;
+* NSS;
+* UID/GID allocation;
+* POSIX account databases;
+* POSIX `/dev` implementation;
+* the POSIX personality itself;
+* filesystem ACL design;
+* PolyFS redesign;
+* session filesystem capability policy;
+* credential storage;
+* password hashing policy;
+* cryptographic authentication protocols;
+* authentication-result provenance mechanisms;
+* signed bearer authentication tokens;
+* new seL4 security mechanisms;
+* domain-local shell policy;
+* a new process model;
+* a generic property/variant ABI solely for human-user metadata;
+* speculative authentication types;
+* speculative principal subclasses;
+* groups/RBAC;
+* automatic POSIX getty/login startup.
+
+These remain manual architectural work unless separately specified.
+
+---
+
+# 32. Ambiguity Rule
+
+If implementation reaches a point where completing the requested work requires an architectural choice not specified here:
+
+> Do not invent the architecture.
+
+Instead:
+
+1. isolate the unresolved boundary;
+2. leave a concise TODO describing exactly what is missing;
+3. continue implementing independent well-defined portions;
+4. report the unresolved decision at completion.
+
+Do not replace an unresolved architectural question with a speculative abstraction.
+
+---
+
+# 33. Completion Behaviour
+
+Codex must make concrete code changes.
+
+Do not stop merely to explain the implementation plan or announce that implementation is beginning.
+
+After changing the code:
+
+1. run the relevant generator;
+2. run configuration/parser tests;
+3. run relevant interface tests;
+4. run the build;
+5. fix regressions caused by the changes;
+6. distinguish pre-existing failures from new failures.
+
+At completion report:
+
+* files added;
+* files modified;
+* configuration structures added or changed;
+* IDL interfaces/enums added;
+* validation rules implemented;
+* tests added;
+* commands/tests/builds run and their results;
+* unresolved architectural boundaries deliberately left for manual implementation.
+
+The task is complete only after implementation and validation, or after reaching a genuine architectural blocker that prevents further independent work.
+

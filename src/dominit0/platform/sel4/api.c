@@ -48,7 +48,10 @@ static IPageAllocator page_alloc_instance;
 
 static FacetHandle debug_server_handle;
 static seL4_Word next_debug_badge = 1;
-static sel4utils_process_t dominit_process;
+
+typedef struct Sel4DomainState {
+    sel4utils_process_t process;
+} Sel4DomainState;
 
 typedef struct boot_module {
     const void *data;
@@ -500,26 +503,59 @@ platform_get_config_source(PlatformConfigSource *source)
     return PLATFORM_CONFIG_SOURCE_FOUND;
 }
 
-void platform_start_initial_domain(void)
+void *platform_start_domain(IDomainConfig *config)
 {
-     klog(LOG_DEBUG, "platform_start_initial_domain() - locating dominit module\n");
+     if (config == NULL) {
+         klog(LOG_ERROR, "platform_start_domain(): invalid domain config\n");
+         return NULL;
+     }
+
+     Sel4DomainState *state = calloc(1, sizeof(*state));
+     if (state == NULL) {
+         klog(LOG_ERROR, "platform_start_domain(): out of memory\n");
+         return NULL;
+     }
+
+     uint64_t domain_id = UINT64_MAX;
+     FacetString domain_name = {0};
+     if (config->getdomain_id(config->self, &domain_id) != FACET_OK ||
+         config->getdomain_name(config->self, &domain_name) != FACET_OK) {
+         klog(LOG_ERROR, "platform_start_domain(): invalid domain config\n");
+         free(state);
+         return NULL;
+     }
+
+     klog(LOG_DEBUG,
+          "platform_start_domain(): locating dominit module for domain %llu (%s)\n",
+          (unsigned long long)domain_id, domain_name.data);
      boot_module_t dominit_module;
-     if (find_boot_module(platform_sel4_bi, "dominit",
-                          &dominit_module) != 0)
-         kpanic("Unable to find unique dominit boot module!");
+     if (find_boot_module(platform_sel4_bi, "dominit", &dominit_module) != 0) {
+         klog(LOG_ERROR,
+              "platform_start_domain(): unable to find unique dominit boot module\n");
+         free(state);
+         return NULL;
+     }
 
      klog(LOG_INFO,
-          "Starting dominit from %s at %p (%zu bytes)\n",
-          dominit_module.name, dominit_module.data, dominit_module.size);
+          "Starting dominit for domain %llu (%s) from %s at %p (%zu bytes)\n",
+          (unsigned long long)domain_id, domain_name.data, dominit_module.name,
+          dominit_module.data, dominit_module.size);
 
      char *dominit_argv[] = { "dominit" };
-     if (load_and_start_domain(&dominit_process,
+     if (load_and_start_domain(&state->process,
                                dominit_module.data,
                                dominit_module.size,
                                seL4_MaxPrio,
                                1,
-                               dominit_argv) != 0)
-         kpanic("Unable to start dominit!");
+                               dominit_argv) != 0) {
+         klog(LOG_ERROR,
+              "platform_start_domain(): unable to start dominit for domain %llu (%s)\n",
+              (unsigned long long)domain_id, domain_name.data);
+         free(state);
+         return NULL;
+     }
+
+     return state;
 }
 
 void platform_yield(void) {

@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <facetos/interfaces/IDomainConfig.h>
+
 typedef struct ILoggingSink ILoggingSink;
 
 #ifdef FACET_PLATFORM_SEL4
@@ -34,7 +36,9 @@ typedef enum PlatformConfigSourceStatus {
 PlatformConfigSourceStatus platform_get_config_source(
     PlatformConfigSource *source);
 
-void platform_start_initial_domain(void);
+/* Starts one configured domain and returns platform-owned runtime state.
+ * A NULL result means the domain could not be started. */
+void *platform_start_domain(IDomainConfig *config);
 
 void platform_yield(void);	// yields to the microkernel or other tasks
 

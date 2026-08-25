@@ -245,6 +245,26 @@ int dominit0_config_objects_init(Dominit0SystemConfig *system,
             return -1;
         }
     }
+
+    system->current_domains = calloc(system->domain_count,
+                                     sizeof(*system->current_domains));
+    if (system->current_domains == NULL) {
+        set_diagnostic(diagnostic, "domains",
+                       "could not allocate current domain array");
+        dominit0_config_objects_destroy(system);
+        return -1;
+    }
+    for (size_t i = 0; i < system->domain_count; i++) {
+        CurrentDomain *current = calloc(1, sizeof(*current));
+        if (current == NULL) {
+            set_diagnostic(diagnostic, "domains",
+                           "could not allocate current domain state");
+            dominit0_config_objects_destroy(system);
+            return -1;
+        }
+        current->config = &system->domains[i].domain;
+        system->current_domains[i] = current;
+    }
     return 0;
 }
 
@@ -254,7 +274,10 @@ void dominit0_config_objects_destroy(Dominit0SystemConfig *system)
     for (size_t i = 0; i < system->domain_count; i++) {
         free(system->domains[i].logging._sinks.data);
         free(system->domains[i].console._assignments.data);
+        free(system->current_domains == NULL ? NULL :
+             system->current_domains[i]);
     }
+    free(system->current_domains);
     free(system->domains);
     facet_config_destroy(&system->parsed);
     memset(system, 0, sizeof(*system));
