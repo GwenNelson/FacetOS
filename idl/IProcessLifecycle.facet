@@ -1,0 +1,9 @@
+// Private lifecycle channel delegated only to the process it represents.
+// The parent observes liveness through IProcess and cannot obtain this view
+// unless it was explicitly placed in that parent's environment.
+interface IProcessLifecycle {
+    uuid auto;
+    requires IGenericObject;
+
+    method FacetResult notify_exit(in i32 status);
+}

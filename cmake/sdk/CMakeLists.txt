@@ -262,7 +262,7 @@ set(FACET_SHELL_CONTRACT_IDLS
     IPrincipal IHumanUser IPronouns IAuthenticatedPrincipal ISession
     ISecurityManager IAuthService IByteReader IByteWriter ITerminalControl
     ITerminal ISeat IProcessEnvironment IFileStore IFile IDirectory
-    IProcessManager IProcess
+    IProcessManager IProcess IProcessLifecycle
 )
 set(FACET_SHELL_CONTRACT_HEADERS)
 foreach(FACET_SHELL_CONTRACT ${FACET_SHELL_CONTRACT_IDLS})
@@ -364,8 +364,8 @@ target_link_libraries(dominit PRIVATE
 
 add_executable(FacetShell
     "${FACETOS_ROOT}/src/apps/facet_shell.c"
-    "${FACETOS_ROOT}/src/dominit/platform/allocator.c"
-    "${FACETOS_ROOT}/src/dominit/platform/liballoc.c"
+    "${FACETOS_ROOT}/src/apps/platform/allocator.c"
+    "${FACETOS_ROOT}/src/apps/platform/liballoc.c"
     "${FACETOS_ROOT}/src/dominit/platform/sel4/api.c"
 )
 facetos_configure_target(FacetShell)
@@ -385,8 +385,8 @@ target_link_libraries(FacetShell PRIVATE
 
 add_executable(FacetLogin
     "${FACETOS_ROOT}/src/apps/facet_login.c"
-    "${FACETOS_ROOT}/src/dominit/platform/allocator.c"
-    "${FACETOS_ROOT}/src/dominit/platform/liballoc.c"
+    "${FACETOS_ROOT}/src/apps/platform/allocator.c"
+    "${FACETOS_ROOT}/src/apps/platform/liballoc.c"
     "${FACETOS_ROOT}/src/dominit/platform/sel4/api.c"
 )
 facetos_configure_target(FacetLogin)
@@ -402,8 +402,8 @@ target_link_libraries(FacetLogin PRIVATE
 function(add_facet_dummy target message)
     add_executable(${target}
         "${FACETOS_ROOT}/src/apps/facet_dummy.c"
-        "${FACETOS_ROOT}/src/dominit/platform/allocator.c"
-        "${FACETOS_ROOT}/src/dominit/platform/liballoc.c"
+        "${FACETOS_ROOT}/src/apps/platform/allocator.c"
+        "${FACETOS_ROOT}/src/apps/platform/liballoc.c"
         "${FACETOS_ROOT}/src/dominit/platform/sel4/api.c"
     )
     facetos_configure_target(${target})

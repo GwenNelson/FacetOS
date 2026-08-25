@@ -16,7 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../dominit/platform/allocator.h"
+#include "platform/allocator.h"
 
 static FacetResult write_text(IByteWriter *output, const char *text)
 {
@@ -151,9 +151,19 @@ static void login_loop(IByteReader *input, IByteWriter *output,
         free(owned_shell);
         if (result == FACET_OK) {
             (void)write_text(output, "Starting session...\r\n");
-            if (process.platform != NULL) (void)libfacet_handle_release(process);
+            IProcess *launched = libfacet_proxy_from_handle(
+                &IProcess_MetaData, process);
+            bool running = true;
+            while (launched != NULL && running) {
+                if (launched->getrunning(launched->self, &running) != FACET_OK)
+                    break;
+                if (running) (void)platform_yield();
+            }
+            libfacet_free_proxy_client(launched);
+            if (launched == NULL && process.platform != NULL)
+                (void)libfacet_handle_release(process);
             (void)libfacet_handle_release(session);
-            return;
+            continue;
         }
         (void)write_text(output, "Unable to start the configured shell\r\n");
         (void)libfacet_handle_release(session);
@@ -202,7 +212,7 @@ int main(int argc, char **argv)
                                          &IProcessManager_MetaData);
     if (allocator == NULL || input == NULL || output == NULL || auth == NULL ||
         security == NULL || processes == NULL ||
-        dominit_allocator_use_pages(allocator) != 0)
+        facet_app_allocator_use_pages(allocator) != 0)
         return 1;
     uint64_t terminal_index = 0;
     if (argc > 1 && argv[1] != NULL) {

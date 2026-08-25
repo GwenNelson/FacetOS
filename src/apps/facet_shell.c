@@ -8,13 +8,14 @@
 #include <facetos/interfaces/IPageAllocator.h>
 #include <facetos/interfaces/IPrincipal.h>
 #include <facetos/interfaces/IProcessEnvironment.h>
+#include <facetos/interfaces/IProcessLifecycle.h>
 #include <facetos/interfaces/ISession.h>
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "../dominit/platform/allocator.h"
+#include "platform/allocator.h"
 
 static FacetResult write_text(IByteWriter *output, const char *text)
 {
@@ -189,6 +190,7 @@ int main(int argc, char **argv)
 {
     if (libfacet_register_generic_metadata(&IGenericObject_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IProcessEnvironment_MetaData) != FACET_OK ||
+        libfacet_register_interface_metadata(&IProcessLifecycle_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IPageAllocator_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IByteReader_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IByteWriter_MetaData) != FACET_OK ||
@@ -215,14 +217,17 @@ int main(int argc, char **argv)
         {"stdout", &IByteWriter_MetaData, NULL},
         {"files", &IFileStore_MetaData, NULL},
         {"session", &ISession_MetaData, NULL},
+        {"process.lifecycle", &IProcessLifecycle_MetaData, NULL},
     };
     IPageAllocator *allocator = NULL;
     IByteReader *input = NULL;
     IByteWriter *output = NULL;
     IFileStore *files = NULL;
     ISession *session = NULL;
+    IProcessLifecycle *lifecycle = NULL;
     void **objects[] = {(void **)&allocator, (void **)&input, (void **)&output,
-                        (void **)&files, (void **)&session};
+                        (void **)&files, (void **)&session,
+                        (void **)&lifecycle};
     for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); i++) {
         FacetString name = {.data = required[i].name,
                             .length = strlen(required[i].name)};
@@ -232,7 +237,8 @@ int main(int argc, char **argv)
         *objects[i] = libfacet_proxy_from_handle(required[i].metadata, handle);
         if (*objects[i] == NULL) return 1;
     }
-    if (dominit_allocator_use_pages(allocator) != 0) return 1;
+    if (facet_app_allocator_use_pages(allocator) != 0) return 1;
     shell_loop(input, output, files, session);
+    (void)lifecycle->notify_exit(lifecycle->self, 0);
     return 0;
 }

@@ -6,6 +6,7 @@
 #include <facetos/dominit0/terminal.h>
 #include <facetos/initrd.h>
 #include <facetos/interfaces/IProcess.h>
+#include <facetos/interfaces/IProcessLifecycle.h>
 #include <facetos/interfaces/IProcessManager.h>
 #include <facetos/interfaces/ISession.h>
 
@@ -17,8 +18,12 @@ typedef struct ProcessManager ProcessManager;
 
 struct RunningProcess {
     IProcess interface;
+    IProcessLifecycle lifecycle;
     FacetHandle handle;
+    FacetHandle lifecycle_handle;
     void *platform_state;
+    bool running;
+    int32_t exit_status;
     Dominit0ProcessEnvironment *environment;
     RunningProcess *next;
 };
@@ -60,7 +65,27 @@ static FacetResult process_get_interface(void *self, uuid_t iid,
 static FacetResult process_get_running(void *self, bool *running)
 {
     if (running == NULL) return FACET_INVALID_ARGUMENT;
-    *running = ((RunningProcess *)self)->platform_state != NULL;
+    *running = __atomic_load_n(&((RunningProcess *)self)->running,
+                               __ATOMIC_ACQUIRE);
+    return FACET_OK;
+}
+
+static FacetResult lifecycle_get_interface(void *self, uuid_t iid,
+                                           FacetHandle *out)
+{
+    RunningProcess *process = self;
+    if (iid_equal(iid, IID_IGenericObject) ||
+        iid_equal(iid, IID_IProcessLifecycle))
+        return return_handle(process->lifecycle_handle, out);
+    if (out != NULL) *out = (FacetHandle){0};
+    return FACET_NO_INTERFACE;
+}
+
+static FacetResult lifecycle_notify_exit(void *self, int32_t status)
+{
+    RunningProcess *process = self;
+    process->exit_status = status;
+    __atomic_store_n(&process->running, false, __ATOMIC_RELEASE);
     return FACET_OK;
 }
 
@@ -163,6 +188,10 @@ static FacetResult launch_process(ProcessManager *manager,
     process->interface.priv = process;
     process->interface.getInterface = process_get_interface;
     process->interface.getrunning = process_get_running;
+    process->lifecycle.self = process;
+    process->lifecycle.priv = process;
+    process->lifecycle.getInterface = lifecycle_get_interface;
+    process->lifecycle.notify_exit = lifecycle_notify_exit;
     if (libfacet_export_interface(&process->interface, &IProcess_MetaData,
                                   &process->handle) != FACET_OK) {
         dominit0_process_environment_destroy(process->environment);
@@ -170,10 +199,27 @@ static FacetResult launch_process(ProcessManager *manager,
         result = FACET_OUT_OF_MEMORY;
         goto done;
     }
+    if (libfacet_export_interface(&process->lifecycle,
+                                  &IProcessLifecycle_MetaData,
+                                  &process->lifecycle_handle) != FACET_OK ||
+        dominit0_process_environment_bind_named(
+            process->environment, "process.lifecycle", IID_IProcessLifecycle,
+            process->lifecycle_handle) != 0) {
+        if (process->lifecycle_handle.platform != NULL)
+            (void)libfacet_unexport_interface(process->lifecycle_handle);
+        (void)libfacet_unexport_interface(process->handle);
+        dominit0_process_environment_destroy(process->environment);
+        free(process);
+        result = FACET_OUT_OF_MEMORY;
+        goto done;
+    }
+    __atomic_store_n(&process->running, true, __ATOMIC_RELEASE);
     process->platform_state = platform_start_process(
         manager->domain, elf_data, elf_size, (int)argc, argv,
         process->environment);
     if (process->platform_state == NULL) {
+        __atomic_store_n(&process->running, false, __ATOMIC_RELEASE);
+        (void)libfacet_unexport_interface(process->lifecycle_handle);
         (void)libfacet_unexport_interface(process->handle);
         dominit0_process_environment_destroy(process->environment);
         free(process);
@@ -289,6 +335,8 @@ void dominit0_process_managers_destroy(void)
         while (manager->processes != NULL) {
             RunningProcess *process = manager->processes;
             manager->processes = process->next;
+            if (process->lifecycle_handle.platform != NULL)
+                (void)libfacet_unexport_interface(process->lifecycle_handle);
             if (process->handle.platform != NULL)
                 (void)libfacet_unexport_interface(process->handle);
             dominit0_process_environment_destroy(process->environment);
