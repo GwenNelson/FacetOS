@@ -1,0 +1,7 @@
+// Read-only identity and liveness view of a launched process.
+interface IProcess {
+    uuid auto;
+    requires IGenericObject;
+
+    property bool running read;
+}

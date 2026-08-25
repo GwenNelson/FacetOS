@@ -384,3 +384,13 @@ FacetHandle dominit0_environment_root_handle(
 {
     return environment == NULL ? (FacetHandle){0} : environment->environment_handle;
 }
+
+FacetResult dominit0_environment_resolve_named(
+    Dominit0DomainEnvironment *environment, const char *name,
+    uuid_t *primary_iid, FacetHandle *handle)
+{
+    if (environment == NULL || name == NULL)
+        return FACET_INVALID_ARGUMENT;
+    FacetString facet_name = {.data = name, .length = strlen(name)};
+    return process_binding(environment, &facet_name, primary_iid, handle);
+}

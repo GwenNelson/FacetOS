@@ -15,3 +15,7 @@ void facet_initrd_destroy(FacetInitrd *initrd);
 /* Exporting is deliberately separate from parsing, keeping CPIO validation
  * independent of the selected RPC platform. */
 FacetResult facet_initrd_export(FacetInitrd *initrd, FacetHandle *store);
+
+/* Trusted loader-side lookup.  The returned bytes remain owned by initrd. */
+FacetResult facet_initrd_find_file(FacetInitrd *initrd, const char *path,
+                                  const uint8_t **data, size_t *size);

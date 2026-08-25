@@ -262,7 +262,7 @@ set(FACET_SHELL_CONTRACT_IDLS
     IPrincipal IHumanUser IPronouns IAuthenticatedPrincipal ISession
     ISecurityManager IAuthService IByteReader IByteWriter ITerminalControl
     ITerminal ISeat IProcessEnvironment IFileStore IFile IDirectory
-    IProcessManager
+    IProcessManager IProcess
 )
 set(FACET_SHELL_CONTRACT_HEADERS)
 foreach(FACET_SHELL_CONTRACT ${FACET_SHELL_CONTRACT_IDLS})
@@ -355,6 +355,27 @@ add_dependencies(dominit facet-idl-shell-contracts-generated)
 # TLS, and the IPC-buffer pointer; dominit supplies its own bump allocator,
 # while muslc contributes the freestanding standard headers/runtime support.
 target_link_libraries(dominit PRIVATE
+    facet_common
+    facet-platform-sel4-client
+    sel4runtime
+    sel4
+    muslc
+)
+
+add_executable(FacetShell
+    "${FACETOS_ROOT}/src/apps/facet_shell.c"
+    "${FACETOS_ROOT}/src/dominit/platform/allocator.c"
+    "${FACETOS_ROOT}/src/dominit/platform/liballoc.c"
+    "${FACETOS_ROOT}/src/dominit/platform/sel4/api.c"
+)
+facetos_configure_target(FacetShell)
+target_include_directories(FacetShell BEFORE PRIVATE
+    "${FACET_GENERATED_INCLUDE}"
+)
+add_dependencies(FacetShell facet-idl-page-allocator-generated)
+add_dependencies(FacetShell facet-idl-environment-generated)
+add_dependencies(FacetShell facet-idl-shell-contracts-generated)
+target_link_libraries(FacetShell PRIVATE
     facet_common
     facet-platform-sel4-client
     sel4runtime

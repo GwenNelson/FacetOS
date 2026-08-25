@@ -28,6 +28,7 @@ SEL4_ENV := PATH="$(VENV)/bin:$(PATH)"
 SDK_KERNEL     := $(SDK_BUILD)/kernel/kernel.elf
 FACET_DOMINIT0 := $(SDK_BUILD)/dominit0
 FACET_DOMINIT  := $(SDK_BUILD)/dominit
+FACET_SHELL    := $(SDK_BUILD)/FacetShell
 FACET_CONFIG_FILE := $(ROOT)/config/facet.toml
 INITRD_SYSTEM := $(ROOT)/build/initrd/system.initrd
 INITRD_CHILD := $(ROOT)/build/initrd/child.initrd
@@ -166,6 +167,7 @@ endif
 	test \
 	test-config \
 	test-sha256 \
+	test-initrd \
 	test-klog \
 	test-logging-setup
 
@@ -330,6 +332,7 @@ FACET_CONFIG_OBJECTS_TEST := $(FACET_CONFIG_BUILD)/config-objects-test
 FACET_KLOG_TEST := $(FACET_CONFIG_BUILD)/klog-test
 FACET_LOGGING_SETUP_TEST := $(FACET_CONFIG_BUILD)/logging-setup-test
 FACET_SHA256_TEST := $(FACET_CONFIG_BUILD)/sha256-test
+FACET_INITRD_TEST := $(FACET_CONFIG_BUILD)/initrd-test
 
 $(FACET_GENERATED_IGENERIC): $(FACET_IDLC) $(ROOT)/idl/IGenericObject.facet
 	@mkdir -p $(FACET_GENERATED_INTERFACE_DIR)
@@ -389,6 +392,20 @@ $(FACET_SHA256_TEST): $(ROOT)/tests/sha256_test.c \
 test-sha256: $(FACET_SHA256_TEST)
 	$(FACET_SHA256_TEST)
 
+$(FACET_INITRD_TEST): $(ROOT)/tests/initrd_test.c \
+		$(ROOT)/src/dominit0/initrd.c $(ROOT)/include/facetos/initrd.h \
+		$(FACET_IDLC)
+	@mkdir -p $(dir $@)
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) facet-idl-shell-contracts-generated
+	$(CC) -std=gnu11 -O2 -ffunction-sections -fdata-sections \
+		-Wall -Wextra -Werror -I$(FACET_GENERATED_INCLUDE) -I$(ROOT)/include \
+		$(ROOT)/libfacet/src/common/runtime.c \
+		$(ROOT)/src/dominit0/initrd.c $(ROOT)/tests/initrd_test.c \
+		-Wl,--gc-sections -o $@
+
+test-initrd: $(FACET_INITRD_TEST)
+	$(FACET_INITRD_TEST)
+
 $(FACET_KLOG_TEST): $(ROOT)/tests/klog_test.c \
 		$(ROOT)/src/dominit0/klog.c $(ROOT)/src/dominit0/klock.c \
 		$(ROOT)/include/facetos/dominit0/klog.h \
@@ -420,7 +437,7 @@ test-logging-setup: $(FACET_LOGGING_SETUP_TEST)
 	$(FACET_LOGGING_SETUP_TEST) optional
 	$(FACET_LOGGING_SETUP_TEST) required
 
-test: test-config test-sha256 test-klog test-logging-setup
+test: test-config test-sha256 test-initrd test-klog test-logging-setup
 
 
 #
@@ -487,6 +504,9 @@ kernel: configure
 dominit: facet-idlc libfacet-common configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) dominit
 
+$(FACET_SHELL): facet-idlc libfacet-common configure
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) FacetShell
+
 
 dominit0: klibc facet-idlc libfacet-common facet-config configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) dominit0 dominit
@@ -504,11 +524,14 @@ libfacet: facet-idlc libfacet-common libfacet-platform-sel4
 
 # Build everything needed to boot FacetOS.
 build: klibc facet-config configure libfacet $(INITRD_SYSTEM) $(INITRD_CHILD)
-	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf dominit0 dominit
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf dominit0 dominit FacetShell
 
-$(INITRD_SYSTEM): $(ROOT)/initrd/system/README
+$(INITRD_SYSTEM): $(ROOT)/initrd/system/README $(FACET_SHELL)
 	mkdir -p $(dir $@)
-	cd $(ROOT)/initrd/system && find . -print | sort | cpio --quiet -o -H newc > $@
+	mkdir -p $(ROOT)/build/initrd/system-root/FacetOS
+	cp $(ROOT)/initrd/system/README $(ROOT)/build/initrd/system-root/README
+	cp $(FACET_SHELL) $(ROOT)/build/initrd/system-root/FacetOS/FacetShell
+	cd $(ROOT)/build/initrd/system-root && find . -print | sort | cpio --quiet -o -H newc > $@
 
 $(INITRD_CHILD): $(ROOT)/initrd/child/README
 	mkdir -p $(dir $@)

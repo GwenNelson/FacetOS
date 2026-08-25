@@ -44,6 +44,11 @@ int platform_serial_write(const uint8_t *data, size_t size);
  * A NULL result means the domain could not be started. */
 void *platform_start_domain(CurrentDomain *current);
 
+typedef struct Dominit0ProcessEnvironment Dominit0ProcessEnvironment;
+void *platform_start_process(CurrentDomain *domain, const void *elf_data,
+                             size_t elf_size, int argc, char *argv[],
+                             Dominit0ProcessEnvironment *environment);
+
 void platform_yield(void);	// yields to the microkernel or other tasks
 
 void platform_debug_print(char* str); // prints a debug string

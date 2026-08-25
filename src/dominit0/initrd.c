@@ -315,6 +315,21 @@ FacetResult facet_initrd_export(FacetInitrd *initrd, FacetHandle *store)
     return return_handle(initrd->store_handle, store);
 }
 
+FacetResult facet_initrd_find_file(FacetInitrd *initrd, const char *path,
+                                  const uint8_t **data, size_t *size)
+{
+    if (initrd == NULL || path == NULL || data == NULL || size == NULL)
+        return FACET_INVALID_ARGUMENT;
+    *data = NULL;
+    *size = 0;
+    FacetString name = {.data = path, .length = strlen(path)};
+    InitrdEntry *entry = find_entry(initrd, &name, false);
+    if (entry == NULL) return FACET_NOT_FOUND;
+    *data = entry->data;
+    *size = entry->size;
+    return FACET_OK;
+}
+
 void facet_initrd_destroy(FacetInitrd *initrd)
 {
     if (initrd == NULL) return;

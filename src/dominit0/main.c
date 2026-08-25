@@ -8,6 +8,7 @@
 #include <facetos/dominit0/platform/api.h>
 #include <facetos/dominit0/auth.h>
 #include <facetos/dominit0/terminal.h>
+#include <facetos/dominit0/process.h>
 #include <facetos/initrd.h>
 
 #ifdef DEBUG
@@ -93,6 +94,14 @@ static void launch_configured_domains(Dominit0SystemConfig *system)
                     current->initrd == NULL ? "failed" : "ok", store_result, bind_result);
                facet_initrd_destroy(current->initrd);
                current->initrd = NULL;
+               continue;
+          }
+
+          if (parsed->domain_manager == FACET_CONFIG_DOMAIN_MANAGER_LOCAL &&
+              dominit0_process_manager_initialize(current) != 0) {
+               klog(LOG_ERROR,
+                    "Unable to initialize process manager for domain %llu\n",
+                    (unsigned long long)parsed->id);
                continue;
           }
 

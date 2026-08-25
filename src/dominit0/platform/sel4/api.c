@@ -72,6 +72,12 @@ typedef struct Sel4DomainState {
     Dominit0DomainEnvironment *environment;
 } Sel4DomainState;
 
+typedef struct Sel4ProgramState {
+    sel4utils_process_t process;
+    Sel4ChildPageAllocator page_allocator;
+    Dominit0ProcessEnvironment *environment;
+} Sel4ProgramState;
+
 static bool
 iid_equal(uuid_t left, uuid_t right)
 {
@@ -166,9 +172,8 @@ child_page_allocator_free(void *self, uint64_t count, uint64_t base)
 }
 
 static void
-child_page_allocator_destroy(Sel4DomainState *state)
+child_page_allocator_destroy(Sel4ChildPageAllocator *allocator)
 {
-    Sel4ChildPageAllocator *allocator = &state->page_allocator;
     while (allocator->allocations != NULL) {
         Sel4ChildPageAllocation *record = allocator->allocations;
         allocator->allocations = record->next;
@@ -225,22 +230,22 @@ child_page_allocator_prepare(sel4utils_process_t *process, void *context,
     if (libfacet_export_interface(&allocator->interface,
                                   &IPageAllocator_MetaData,
                                   &allocator->exported_handle) != FACET_OK) {
-        child_page_allocator_destroy(state);
+        child_page_allocator_destroy(allocator);
         return -1;
     }
     if (child_page_allocator_self_test(allocator) != 0) {
-        child_page_allocator_destroy(state);
+        child_page_allocator_destroy(allocator);
         return -1;
     }
     if (dominit0_environment_bind_page_allocator(
             state->environment, allocator->exported_handle) != 0) {
-        child_page_allocator_destroy(state);
+        child_page_allocator_destroy(allocator);
         return -1;
     }
     *out_bootstrap_handle =
         dominit0_environment_root_handle(state->environment);
     if (!handle_is_bound(*out_bootstrap_handle)) {
-        child_page_allocator_destroy(state);
+        child_page_allocator_destroy(allocator);
         return -1;
     }
     return 0;
@@ -250,7 +255,44 @@ static void
 child_page_allocator_cleanup(void *context)
 {
     if (context != NULL)
-        child_page_allocator_destroy(context);
+        child_page_allocator_destroy(&((Sel4DomainState *)context)->page_allocator);
+}
+
+static int
+program_page_allocator_prepare(sel4utils_process_t *process, void *context,
+                               FacetHandle *out_bootstrap_handle)
+{
+    Sel4ProgramState *state = context;
+    if (process == NULL || state == NULL || out_bootstrap_handle == NULL ||
+        process != &state->process || state->environment == NULL)
+        return -1;
+    *out_bootstrap_handle = (FacetHandle){0};
+    Sel4ChildPageAllocator *allocator = &state->page_allocator;
+    allocator->process = process;
+    allocator->interface.self = allocator;
+    allocator->interface.priv = allocator;
+    allocator->interface.getInterface = child_page_allocator_get_interface;
+    allocator->interface.get_page_size = child_page_allocator_get_page_size;
+    allocator->interface.alloc = child_page_allocator_alloc;
+    allocator->interface.free = child_page_allocator_free;
+    if (libfacet_export_interface(&allocator->interface,
+                                  &IPageAllocator_MetaData,
+                                  &allocator->exported_handle) != FACET_OK ||
+        child_page_allocator_self_test(allocator) != 0 ||
+        dominit0_process_environment_bind_page_allocator(
+            state->environment, allocator->exported_handle) != 0) {
+        child_page_allocator_destroy(allocator);
+        return -1;
+    }
+    *out_bootstrap_handle =
+        dominit0_process_environment_root_handle(state->environment);
+    return handle_is_bound(*out_bootstrap_handle) ? 0 : -1;
+}
+
+static void program_page_allocator_cleanup(void *context)
+{
+    if (context != NULL)
+        child_page_allocator_destroy(&((Sel4ProgramState *)context)->page_allocator);
 }
 
 typedef struct boot_module {
@@ -846,6 +888,26 @@ void *platform_start_domain(CurrentDomain *current)
           (unsigned long long)domain_id, domain_name.data);
 
      return state;
+}
+
+void *platform_start_process(CurrentDomain *domain, const void *elf_data,
+                             size_t elf_size, int argc, char *argv[],
+                             Dominit0ProcessEnvironment *environment)
+{
+    if (domain == NULL || elf_data == NULL || elf_size == 0 || argc < 1 ||
+        argv == NULL || environment == NULL)
+        return NULL;
+    Sel4ProgramState *state = calloc(1, sizeof(*state));
+    if (state == NULL) return NULL;
+    state->environment = environment;
+    if (load_and_start_domain(&state->process, elf_data, elf_size,
+                              seL4_MaxPrio, argc, argv,
+                              program_page_allocator_prepare,
+                              program_page_allocator_cleanup, state) != 0) {
+        free(state);
+        return NULL;
+    }
+    return state;
 }
 
 void platform_yield(void) {

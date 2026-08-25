@@ -10,6 +10,8 @@
 #include <facetos/interfaces/ISecurityManager.h>
 #include <facetos/interfaces/ISession.h>
 #include <facetos/interfaces/IPrincipal.h>
+#include <facetos/interfaces/IProcess.h>
+#include <facetos/interfaces/IProcessManager.h>
 #include <facetos/interfaces/IByteReader.h>
 #include <facetos/interfaces/IByteWriter.h>
 
@@ -83,7 +85,8 @@ static void clear_secret(char *buffer, size_t capacity)
 }
 
 static void serial_login(IByteReader *input, IByteWriter *output,
-                         IAuthService *auth, ISecurityManager *security)
+                         IAuthService *auth, ISecurityManager *security,
+                         IProcessManager *processes)
 {
     char username[128];
     char password[256];
@@ -113,7 +116,26 @@ static void serial_login(IByteReader *input, IByteWriter *output,
             (void)stream_write(output, "Login incorrect\r\n");
             continue;
         }
-        (void)stream_write(output, "Authenticated session ready; shell launch is not implemented yet.\r\n");
+        FacetString shell = {
+            .data = "/FacetOS/FacetShell",
+            .length = sizeof("/FacetOS/FacetShell") - 1,
+        };
+        FacetString shell_argument = shell;
+        FacetArray_string shell_arguments = {
+            .data = &shell_argument,
+            .count = 1,
+        };
+        FacetHandle process = {0};
+        result = processes == NULL ? FACET_NO_INTERFACE :
+            processes->launch(processes->self, &shell, &shell_arguments,
+                              session, &process);
+        if (result == FACET_OK) {
+            (void)stream_write(output, "Starting FacetShell...\r\n");
+            if (process.platform != NULL) (void)libfacet_handle_release(process);
+            if (session.platform != NULL) (void)libfacet_handle_release(session);
+            return;
+        }
+        (void)stream_write(output, "Unable to start the configured shell\r\n");
         if (session.platform != NULL) (void)libfacet_handle_release(session);
     }
 }
@@ -131,6 +153,8 @@ int main(int argc, char **argv)
         libfacet_register_interface_metadata(&ISecurityManager_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&ISession_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IPrincipal_MetaData) != FACET_OK ||
+        libfacet_register_interface_metadata(&IProcess_MetaData) != FACET_OK ||
+        libfacet_register_interface_metadata(&IProcessManager_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IByteReader_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IByteWriter_MetaData) != FACET_OK)
         return 1;
@@ -223,11 +247,19 @@ int main(int argc, char **argv)
     FacetHandle auth_handle = {0}, security_handle = {0};
     IAuthService *auth_service = NULL;
     ISecurityManager *security_manager = NULL;
+    IProcessManager *process_manager = NULL;
     if (process_environment->resolve(process_environment->self, &auth_name, &auth_handle) == FACET_OK &&
         process_environment->resolve(process_environment->self, &security_name, &security_handle) == FACET_OK) {
         auth_service = libfacet_proxy_from_handle(&IAuthService_MetaData, auth_handle);
         security_manager = libfacet_proxy_from_handle(&ISecurityManager_MetaData, security_handle);
     }
+    FacetString processes_name = { .data = "processes", .length = 9 };
+    FacetHandle processes_handle = {0};
+    if (process_environment->resolve(process_environment->self, &processes_name,
+                                     &processes_handle) == FACET_OK)
+        process_manager = libfacet_proxy_from_handle(&IProcessManager_MetaData,
+                                                     processes_handle);
+
     /* A terminal is delegated only to domains that own one. */
     FacetString stdin_name = { .data = "stdin", .length = 5 };
     FacetString stdout_name = { .data = "stdout", .length = 6 };
@@ -247,7 +279,7 @@ int main(int argc, char **argv)
     if (stdin_stream != NULL && stdout_stream != NULL &&
         auth_service != NULL && security_manager != NULL)
         serial_login(stdin_stream, stdout_stream, auth_service,
-                     security_manager);
+                     security_manager, process_manager);
     else if (stdin_stream != NULL || stdout_stream != NULL)
         child_log(logger, "terminal login bindings incomplete");
 
@@ -255,6 +287,7 @@ int main(int argc, char **argv)
     libfacet_free_proxy_client(stdout_stream);
     libfacet_free_proxy_client(auth_service);
     libfacet_free_proxy_client(security_manager);
+    libfacet_free_proxy_client(process_manager);
 
     libfacet_free_proxy_client(environment);
     libfacet_free_proxy_client(process_environment);
