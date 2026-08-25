@@ -8,7 +8,8 @@
 typedef struct FacetInitrd FacetInitrd;
 
 /* Parses a read-only newc CPIO image.  The input storage must outlive the
- * returned object.  Paths exposed by the resulting store are absolute. */
+ * returned object.  Directory objects expose canonical absolute paths; store
+ * operations resolve relative paths from root. */
 FacetInitrd *facet_initrd_create(const void *data, size_t size);
 void facet_initrd_destroy(FacetInitrd *initrd);
 

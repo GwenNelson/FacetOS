@@ -1,4 +1,6 @@
 // Read-mostly filesystem namespace delegated to one process or domain.
+// Relative paths supplied here are resolved from the store root. Directory
+// handles provide directory-relative traversal.
 interface IFileStore {
     uuid auto;
     requires IGenericObject;

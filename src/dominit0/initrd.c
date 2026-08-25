@@ -12,6 +12,7 @@
 
 #define CPIO_HEADER_SIZE 110u
 #define CPIO_MAX_ENTRIES 1024u
+#define FACET_PATH_MAX 4096u
 
 typedef struct InitrdEntry InitrdEntry;
 
@@ -59,6 +60,12 @@ static FacetResult directory_get_interface(void *self, uuid_t iid, FacetHandle *
 static FacetResult directory_list(void *self, uint64_t cursor, uint32_t maximum,
                                   FacetArray_Entry *entries, uint64_t *next,
                                   bool *end);
+static FacetResult directory_get_path(void *self, FacetString *path);
+static FacetResult directory_open_file(void *self, const FacetString *path,
+                                       FacetHandle *out);
+static FacetResult directory_open_directory(void *self,
+                                            const FacetString *path,
+                                            FacetHandle *out);
 
 static size_t align4(size_t value)
 {
@@ -105,19 +112,94 @@ static char *canonical_path(const uint8_t *name, size_t length)
     return result;
 }
 
-static InitrdEntry *find_entry(FacetInitrd *initrd, const FacetString *path,
+static InitrdEntry *find_entry(FacetInitrd *initrd, const char *path,
                                bool directory)
 {
-    if (initrd == NULL || path == NULL || path->data == NULL ||
-        path->length == 0 || path->length > 4096 || path->data[0] != '/')
+    if (initrd == NULL || path == NULL || path[0] != '/')
         return NULL;
+    size_t length = strlen(path);
     for (size_t i = 0; i < initrd->entry_count; i++) {
         InitrdEntry *entry = &initrd->entries[i];
-        if (entry->directory == directory && strlen(entry->path) == path->length &&
-            memcmp(entry->path, path->data, path->length) == 0)
+        if (entry->directory == directory && strlen(entry->path) == length &&
+            memcmp(entry->path, path, length) == 0)
             return entry;
     }
     return NULL;
+}
+
+static bool path_requires_directory(const FacetString *path)
+{
+    if (path->data[path->length - 1] == '/') return true;
+    size_t start = path->length;
+    while (start != 0 && path->data[start - 1] != '/') start--;
+    size_t length = path->length - start;
+    return (length == 1 && path->data[start] == '.') ||
+           (length == 2 && path->data[start] == '.' &&
+            path->data[start + 1] == '.');
+}
+
+/* Resolve a caller path against a canonical absolute directory. The result is
+ * canonical, absolute, root-clamped, and owned by the caller. */
+static FacetResult resolve_path(const char *base, const FacetString *path,
+                                char **resolved, bool *requires_directory)
+{
+    if (resolved == NULL || requires_directory == NULL)
+        return FACET_INVALID_ARGUMENT;
+    *resolved = NULL;
+    *requires_directory = false;
+    if (base == NULL || base[0] != '/' || path == NULL || path->data == NULL ||
+        path->length == 0 || path->length > FACET_PATH_MAX ||
+        memchr(path->data, '\0', path->length) != NULL)
+        return FACET_INVALID_ARGUMENT;
+
+    char *output = malloc(FACET_PATH_MAX + 1u);
+    if (output == NULL) return FACET_OUT_OF_MEMORY;
+    size_t output_length;
+    if (path->data[0] == '/') {
+        output[0] = '/';
+        output_length = 1;
+    } else {
+        output_length = strlen(base);
+        if (output_length == 0 || output_length > FACET_PATH_MAX) {
+            free(output);
+            return FACET_INVALID_ARGUMENT;
+        }
+        memcpy(output, base, output_length);
+    }
+
+    for (size_t offset = 0; offset < path->length;) {
+        while (offset < path->length && path->data[offset] == '/') offset++;
+        size_t component = offset;
+        while (offset < path->length && path->data[offset] != '/') offset++;
+        size_t component_length = offset - component;
+        if (component_length == 0 ||
+            (component_length == 1 && path->data[component] == '.'))
+            continue;
+        if (component_length == 2 && path->data[component] == '.' &&
+            path->data[component + 1] == '.') {
+            if (output_length > 1) {
+                while (output_length > 1 && output[output_length - 1] != '/')
+                    output_length--;
+                if (output_length > 1) output_length--;
+            }
+            continue;
+        }
+        size_t separator = output_length == 1 ? 0 : 1;
+        if (output_length + separator > FACET_PATH_MAX ||
+            component_length >
+                FACET_PATH_MAX - (output_length + separator)) {
+            free(output);
+            return FACET_INVALID_ARGUMENT;
+        }
+        if (separator != 0) output[output_length++] = '/';
+        memcpy(output + output_length, path->data + component,
+               component_length);
+        output_length += component_length;
+    }
+    output[output_length] = '\0';
+    *requires_directory = path_requires_directory(path);
+    *resolved = output;
+    return FACET_OK;
 }
 
 static FacetResult store_get_interface(void *self, uuid_t iid, FacetHandle *out)
@@ -131,7 +213,16 @@ static FacetResult store_get_interface(void *self, uuid_t iid, FacetHandle *out)
 
 static FacetResult store_open_file(void *self, const FacetString *path, FacetHandle *out)
 {
-    InitrdEntry *entry = find_entry(self, path, false);
+    if (out == NULL) return FACET_INVALID_ARGUMENT;
+    *out = (FacetHandle){0};
+    char *resolved = NULL;
+    bool requires_directory = false;
+    FacetResult result = resolve_path("/", path, &resolved,
+                                      &requires_directory);
+    if (result != FACET_OK) return result;
+    InitrdEntry *entry = requires_directory ? NULL :
+        find_entry(self, resolved, false);
+    free(resolved);
     if (entry == NULL) return FACET_NOT_FOUND;
     if (entry->file_handle.platform == NULL) {
         entry->file.self = entry; entry->file.priv = self;
@@ -147,12 +238,24 @@ static FacetResult store_open_file(void *self, const FacetString *path, FacetHan
 static FacetResult store_open_directory(void *self, const FacetString *path,
                                         FacetHandle *out)
 {
-    InitrdEntry *entry = find_entry(self, path, true);
+    if (out == NULL) return FACET_INVALID_ARGUMENT;
+    *out = (FacetHandle){0};
+    char *resolved = NULL;
+    bool requires_directory = false;
+    FacetResult result = resolve_path("/", path, &resolved,
+                                      &requires_directory);
+    (void)requires_directory;
+    if (result != FACET_OK) return result;
+    InitrdEntry *entry = find_entry(self, resolved, true);
+    free(resolved);
     if (entry == NULL) return FACET_NOT_FOUND;
     if (entry->directory_handle.platform == NULL) {
         entry->directory_interface.self = entry; entry->directory_interface.priv = self;
         entry->directory_interface.getInterface = directory_get_interface;
         entry->directory_interface.list = directory_list;
+        entry->directory_interface.getpath = directory_get_path;
+        entry->directory_interface.open_file = directory_open_file;
+        entry->directory_interface.open_directory = directory_open_directory;
         if (libfacet_export_interface(&entry->directory_interface, &IDirectory_MetaData,
                                       &entry->directory_handle) != FACET_OK)
             return FACET_OUT_OF_MEMORY;
@@ -208,12 +311,68 @@ static FacetResult directory_get_interface(void *self, uuid_t iid, FacetHandle *
     return FACET_NO_INTERFACE;
 }
 
+static FacetResult directory_get_path(void *self, FacetString *path)
+{
+    if (self == NULL || path == NULL) return FACET_INVALID_ARGUMENT;
+    InitrdEntry *entry = self;
+    path->data = entry->path;
+    path->length = strlen(entry->path);
+    return FACET_OK;
+}
+
+static FacetResult directory_open_file(void *self, const FacetString *path,
+                                       FacetHandle *out)
+{
+    if (self == NULL || out == NULL) return FACET_INVALID_ARGUMENT;
+    *out = (FacetHandle){0};
+    InitrdEntry *directory = self;
+    FacetInitrd *initrd = directory->directory_interface.priv;
+    char *resolved = NULL;
+    bool requires_directory = false;
+    FacetResult result = resolve_path(directory->path, path, &resolved,
+                                      &requires_directory);
+    if (result != FACET_OK) return result;
+    FacetString absolute = {.data = resolved, .length = strlen(resolved)};
+    result = requires_directory ? FACET_NOT_FOUND :
+        store_open_file(initrd, &absolute, out);
+    free(resolved);
+    return result;
+}
+
+static FacetResult directory_open_directory(void *self,
+                                            const FacetString *path,
+                                            FacetHandle *out)
+{
+    if (self == NULL || out == NULL) return FACET_INVALID_ARGUMENT;
+    *out = (FacetHandle){0};
+    InitrdEntry *directory = self;
+    FacetInitrd *initrd = directory->directory_interface.priv;
+    char *resolved = NULL;
+    bool requires_directory = false;
+    FacetResult result = resolve_path(directory->path, path, &resolved,
+                                      &requires_directory);
+    (void)requires_directory;
+    if (result != FACET_OK) return result;
+    FacetString absolute = {.data = resolved, .length = strlen(resolved)};
+    result = store_open_directory(initrd, &absolute, out);
+    free(resolved);
+    return result;
+}
+
 static bool immediate_child(const char *directory, const char *path, const char **name)
 {
-    size_t prefix = strcmp(directory, "/") == 0 ? 1 : strlen(directory) + 1;
-    if (strcmp(directory, "/") != 0 && strncmp(path, directory, prefix - 1) != 0)
-        return false;
-    if (strncmp(path, directory, prefix) != 0 || path[prefix] == '\0') return false;
+    size_t prefix;
+    if (strcmp(directory, "/") == 0) {
+        if (path[0] != '/' || path[1] == '\0') return false;
+        prefix = 1;
+    } else {
+        size_t directory_length = strlen(directory);
+        if (strncmp(path, directory, directory_length) != 0 ||
+            path[directory_length] != '/' ||
+            path[directory_length + 1] == '\0')
+            return false;
+        prefix = directory_length + 1;
+    }
     *name = path + prefix;
     return strchr(*name, '/') == NULL;
 }
@@ -323,7 +482,10 @@ FacetResult facet_initrd_find_file(FacetInitrd *initrd, const char *path,
     *data = NULL;
     *size = 0;
     FacetString name = {.data = path, .length = strlen(path)};
-    InitrdEntry *entry = find_entry(initrd, &name, false);
+    if (name.length == 0 || name.length > FACET_PATH_MAX || name.data[0] != '/' ||
+        memchr(name.data, '\0', name.length) != NULL)
+        return FACET_NOT_FOUND;
+    InitrdEntry *entry = find_entry(initrd, path, false);
     if (entry == NULL) return FACET_NOT_FOUND;
     *data = entry->data;
     *size = entry->size;

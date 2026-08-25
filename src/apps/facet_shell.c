@@ -93,17 +93,56 @@ static void command_whoami(ISession *session, IByteWriter *output)
     libfacet_free_proxy_client(principal);
 }
 
-static void command_ls(IFileStore *files, IByteWriter *output, const char *path)
+static FacetResult directory_path(IDirectory *directory, FacetString *path)
 {
-    FacetString directory_name = {.data = path, .length = strlen(path)};
-    FacetHandle directory_handle = {0};
-    if (files->open_directory(files->self, &directory_name,
-                              &directory_handle) != FACET_OK) {
-        (void)write_text(output, "ls: directory not found\r\n");
-        return;
+    *path = (FacetString){0};
+    return directory == NULL ? FACET_INVALID_HANDLE :
+        directory->getpath(directory->self, path);
+}
+
+static IDirectory *open_directory(IDirectory *cwd, const char *path)
+{
+    FacetString name = {.data = path, .length = strlen(path)};
+    FacetHandle handle = {0};
+    if (cwd == NULL ||
+        cwd->open_directory(cwd->self, &name, &handle) != FACET_OK)
+        return NULL;
+    return libfacet_proxy_from_handle(&IDirectory_MetaData, handle);
+}
+
+static void command_pwd(IDirectory *cwd, IByteWriter *output)
+{
+    FacetString path = {0};
+    if (directory_path(cwd, &path) != FACET_OK) return;
+    (void)write_string(output, path);
+    (void)write_text(output, "\r\n");
+    free((void *)(uintptr_t)path.data);
+}
+
+static void write_prompt(IDirectory *cwd, IByteWriter *output)
+{
+    FacetString path = {0};
+    if (directory_path(cwd, &path) == FACET_OK) {
+        (void)write_string(output, path);
+        free((void *)(uintptr_t)path.data);
+    } else {
+        (void)write_text(output, "?");
     }
-    IDirectory *directory = libfacet_proxy_from_handle(&IDirectory_MetaData,
-                                                       directory_handle);
+    (void)write_text(output, "> ");
+}
+
+static void command_ls(IDirectory *cwd, IByteWriter *output, const char *path)
+{
+    IDirectory *opened = NULL;
+    IDirectory *directory = cwd;
+    if (path != NULL) {
+        opened = open_directory(cwd, path);
+        if (opened == NULL) {
+            (void)write_text(output, "ls: directory not found\r\n");
+            return;
+        }
+        directory = opened;
+    }
     uint64_t cursor = 0;
     bool end = false;
     while (directory != NULL && !end) {
@@ -123,14 +162,14 @@ static void command_ls(IFileStore *files, IByteWriter *output, const char *path)
         if (next == cursor && !end) break;
         cursor = next;
     }
-    libfacet_free_proxy_client(directory);
+    libfacet_free_proxy_client(opened);
 }
 
-static void command_cat(IFileStore *files, IByteWriter *output, const char *path)
+static void command_cat(IDirectory *cwd, IByteWriter *output, const char *path)
 {
     FacetString file_name = {.data = path, .length = strlen(path)};
     FacetHandle file_handle = {0};
-    if (files->open_file(files->self, &file_name, &file_handle) != FACET_OK) {
+    if (cwd->open_file(cwd->self, &file_name, &file_handle) != FACET_OK) {
         (void)write_text(output, "cat: file not found\r\n");
         return;
     }
@@ -156,34 +195,60 @@ static void command_cat(IFileStore *files, IByteWriter *output, const char *path
     libfacet_free_proxy_client(file);
 }
 
+static void command_cd(IDirectory **cwd, IByteWriter *output, const char *path)
+{
+    IDirectory *replacement = open_directory(*cwd, path);
+    if (replacement == NULL) {
+        (void)write_text(output, "cd: directory not found\r\n");
+        return;
+    }
+    libfacet_free_proxy_client(*cwd);
+    *cwd = replacement;
+}
+
 static void shell_loop(IByteReader *input, IByteWriter *output,
                        IFileStore *files, ISession *session)
 {
     char line[512];
+    FacetString root_name = {.data = "/", .length = 1};
+    FacetHandle root_handle = {0};
+    if (files->open_directory(files->self, &root_name, &root_handle) != FACET_OK) {
+        (void)write_text(output, "FacetShell: unable to open root directory\r\n");
+        return;
+    }
+    IDirectory *cwd = libfacet_proxy_from_handle(&IDirectory_MetaData,
+                                                 root_handle);
+    if (cwd == NULL) return;
     (void)write_text(output, "FacetShell ready. Type help for commands.\r\n");
     for (;;) {
-        (void)write_text(output, "/> ");
-        if (read_line(input, output, line, sizeof(line)) != FACET_OK) return;
+        write_prompt(cwd, output);
+        if (read_line(input, output, line, sizeof(line)) != FACET_OK) break;
         char *argument = strchr(line, ' ');
         if (argument != NULL) {
             *argument++ = '\0';
             while (*argument == ' ') argument++;
         }
         if (strcmp(line, "help") == 0)
-            (void)write_text(output, "help whoami pwd ls [path] cat <path> exit\r\n");
+            (void)write_text(output,
+                "help whoami pwd ls [path] cat <path> cd [path] exit\r\n");
         else if (strcmp(line, "whoami") == 0)
             command_whoami(session, output);
         else if (strcmp(line, "pwd") == 0)
-            (void)write_text(output, "/\r\n");
+            command_pwd(cwd, output);
         else if (strcmp(line, "ls") == 0)
-            command_ls(files, output, argument != NULL && *argument ? argument : "/");
+            command_ls(cwd, output,
+                       argument != NULL && *argument ? argument : NULL);
         else if (strcmp(line, "cat") == 0 && argument != NULL && *argument)
-            command_cat(files, output, argument);
+            command_cat(cwd, output, argument);
+        else if (strcmp(line, "cd") == 0)
+            command_cd(&cwd, output,
+                       argument != NULL && *argument ? argument : "/");
         else if (strcmp(line, "exit") == 0)
-            return;
+            break;
         else if (*line != '\0')
             (void)write_text(output, "Unknown command\r\n");
     }
+    libfacet_free_proxy_client(cwd);
 }
 
 int main(int argc, char **argv)

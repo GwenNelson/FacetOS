@@ -125,6 +125,149 @@ static Archive valid_archive(void)
     return archive;
 }
 
+static FacetString facet_string(const char *value)
+{
+    return (FacetString){.data = value, .length = strlen(value)};
+}
+
+static IDirectory *store_directory(IFileStore *store, const char *path)
+{
+    FacetString name = facet_string(path);
+    FacetHandle handle = {0};
+    assert(store->open_directory(store->self, &name, &handle) == FACET_OK);
+    IDirectory *directory = libfacet_new_proxy_client(&IDirectory_MetaData,
+                                                       handle);
+    assert(directory != NULL);
+    return directory;
+}
+
+static IDirectory *child_directory(IDirectory *base, const char *path)
+{
+    FacetString name = facet_string(path);
+    FacetHandle handle = {0};
+    assert(base->open_directory(base->self, &name, &handle) == FACET_OK);
+    IDirectory *directory = libfacet_new_proxy_client(&IDirectory_MetaData,
+                                                       handle);
+    assert(directory != NULL);
+    return directory;
+}
+
+static IFile *child_file(IDirectory *base, const char *path)
+{
+    FacetString name = facet_string(path);
+    FacetHandle handle = {0};
+    assert(base->open_file(base->self, &name, &handle) == FACET_OK);
+    IFile *file = libfacet_new_proxy_client(&IFile_MetaData, handle);
+    assert(file != NULL);
+    return file;
+}
+
+static void assert_directory_path(IDirectory *directory, const char *expected)
+{
+    FacetString path = {0};
+    assert(directory->getpath(directory->self, &path) == FACET_OK);
+    assert(path.length == strlen(expected));
+    assert(memcmp(path.data, expected, path.length) == 0);
+    free((void *)(uintptr_t)path.data);
+}
+
+static void test_path_resolution_rpc(IFileStore *store)
+{
+    FacetHandle handle = {0};
+    FacetString name = facet_string("README");
+    assert(store->open_file(store->self, &name, &handle) == FACET_OK);
+    IFile *root_readme = libfacet_new_proxy_client(&IFile_MetaData, handle);
+    assert(root_readme != NULL);
+    libfacet_free_proxy_client(root_readme);
+
+    IDirectory *root_relative_dir = store_directory(store, "dir");
+    assert_directory_path(root_relative_dir, "/dir");
+    libfacet_free_proxy_client(root_relative_dir);
+
+    name = facet_string("./README");
+    handle = (FacetHandle){0};
+    assert(store->open_file(store->self, &name, &handle) == FACET_OK);
+    root_readme = libfacet_new_proxy_client(&IFile_MetaData, handle);
+    assert(root_readme != NULL);
+    libfacet_free_proxy_client(root_readme);
+    name = facet_string("README/");
+    handle = (FacetHandle){0};
+    assert(store->open_file(store->self, &name, &handle) == FACET_NOT_FOUND);
+
+    const char *root_aliases[] = {".", "..", "///", "/dir/.."};
+    for (size_t i = 0; i < sizeof(root_aliases) / sizeof(root_aliases[0]); i++) {
+        IDirectory *root = store_directory(store, root_aliases[i]);
+        assert_directory_path(root, "/");
+        libfacet_free_proxy_client(root);
+    }
+
+    IDirectory *root = store_directory(store, "/");
+    IDirectory *dir = child_directory(root, "dir/");
+    assert_directory_path(dir, "/dir");
+
+    const char *file_aliases[] = {
+        "file", "./file", "../README", "/README", "//dir//file",
+        "../../README"
+    };
+    for (size_t i = 0; i < sizeof(file_aliases) / sizeof(file_aliases[0]); i++) {
+        IFile *file = child_file(dir, file_aliases[i]);
+        libfacet_free_proxy_client(file);
+    }
+
+    IDirectory *same = child_directory(dir, ".");
+    assert_directory_path(same, "/dir");
+    libfacet_free_proxy_client(same);
+    IDirectory *parent = child_directory(dir, "..");
+    assert_directory_path(parent, "/");
+    libfacet_free_proxy_client(parent);
+    IDirectory *absolute = child_directory(dir, "/dir//");
+    assert_directory_path(absolute, "/dir");
+    libfacet_free_proxy_client(absolute);
+
+    const char *directory_required[] = {"file/", "file/.", "file/.."};
+    for (size_t i = 0;
+         i < sizeof(directory_required) / sizeof(directory_required[0]); i++) {
+        name = facet_string(directory_required[i]);
+        handle = (FacetHandle){0};
+        assert(dir->open_file(dir->self, &name, &handle) == FACET_NOT_FOUND);
+        assert(handle.platform == NULL);
+    }
+
+    name = facet_string("README");
+    assert(root->open_directory(root->self, &name, &handle) == FACET_NOT_FOUND);
+    name = facet_string("dir");
+    assert(root->open_file(root->self, &name, &handle) == FACET_NOT_FOUND);
+
+    FacetString empty = {.data = "", .length = 0};
+    assert(root->open_directory(root->self, &empty, &handle) ==
+           FACET_INVALID_ARGUMENT);
+    const char embedded_data[] = {'d', 'i', 'r', '\0', 'x'};
+    FacetString embedded = {.data = embedded_data,
+                            .length = sizeof(embedded_data)};
+    assert(root->open_directory(root->self, &embedded, &handle) ==
+           FACET_INVALID_ARGUMENT);
+
+    char *overlong = malloc(4097);
+    assert(overlong != NULL);
+    memset(overlong, 'a', 4097);
+    FacetString too_long = {.data = overlong, .length = 4097};
+    assert(root->open_directory(root->self, &too_long, &handle) ==
+           FACET_INVALID_ARGUMENT);
+    free(overlong);
+
+    char *overflowing = malloc(4095);
+    assert(overflowing != NULL);
+    memset(overflowing, 'a', 4094);
+    overflowing[4094] = '\0';
+    FacetString overflow_path = {.data = overflowing, .length = 4094};
+    assert(dir->open_directory(dir->self, &overflow_path, &handle) ==
+           FACET_INVALID_ARGUMENT);
+    free(overflowing);
+
+    libfacet_free_proxy_client(dir);
+    libfacet_free_proxy_client(root);
+}
+
 static void test_lookup_and_read_only_rpc(void)
 {
     Archive archive = valid_archive();
@@ -184,7 +327,24 @@ static void test_lookup_and_read_only_rpc(void)
     assert(entries.data[1].type == EntryType_Directory);
     facet_rpc_release_value(FACET_TYPE_ARRAY,
                             &FacetArray_Entry_TypeMeta, &entries);
+
+    IDirectory *nested = store_directory(store, "/dir");
+    entries = (FacetArray_Entry){0};
+    next = 0;
+    end = false;
+    assert(nested->list(nested->self, 0, 16, &entries, &next, &end) ==
+           FACET_OK);
+    assert(end);
+    assert(entries.count == 1);
+    assert(entries.data[0].name.length == strlen("file"));
+    assert(memcmp(entries.data[0].name.data, "file",
+                  entries.data[0].name.length) == 0);
+    assert(entries.data[0].type == EntryType_File);
+    facet_rpc_release_value(FACET_TYPE_ARRAY,
+                            &FacetArray_Entry_TypeMeta, &entries);
+    libfacet_free_proxy_client(nested);
     libfacet_free_proxy_client(directory);
+    test_path_resolution_rpc(store);
     libfacet_free_proxy_client(store);
     facet_initrd_destroy(initrd);
 }

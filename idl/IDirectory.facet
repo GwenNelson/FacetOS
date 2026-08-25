@@ -16,4 +16,12 @@ interface IDirectory {
     method FacetResult list(in u64 cursor, in u32 maximum,
                             out array<Entry> entries, out u64 next_cursor,
                             out bool end);
+
+    // Canonical absolute path for this directory within its store.
+    property string path read;
+
+    // Relative paths are resolved from this directory. Absolute paths are
+    // resolved from the root of the same store.
+    method FacetResult open_file(in string path, out handle file);
+    method FacetResult open_directory(in string path, out handle directory);
 }
