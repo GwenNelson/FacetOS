@@ -850,3 +850,14 @@ IGenericObject *libfacet_proxy_from(uint64_t platform_handle)
     }
     return libfacet_new_proxy_client(generic_metadata, handle);
 }
+
+void *libfacet_proxy_from_handle(const FacetInterfaceMeta *metadata,
+                                 FacetHandle handle)
+{
+    if (metadata == NULL || handle.platform == NULL)
+        return NULL;
+    void *proxy = libfacet_new_proxy_client(metadata, handle);
+    if (proxy == NULL)
+        (void)libfacet_handle_release(handle);
+    return proxy;
+}

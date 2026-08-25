@@ -1,0 +1,9 @@
+// One file within an IFileStore.
+interface IFile {
+    uuid auto;
+    requires IGenericObject;
+
+    method FacetResult get_size(out u64 size);
+    method FacetResult read_at(in u64 offset, in u32 maximum, out array<u8> payload);
+    method FacetResult write_at(in u64 offset, in array<u8> payload, out u32 written);
+}

@@ -86,6 +86,15 @@ typedef struct FacetConfigAuthenticationSource {
     uint32_t _present;
 } FacetConfigAuthenticationSource;
 
+typedef struct FacetConfigUser {
+    char *name;
+    char *password_sha256;
+    bool admin;
+    char *native_shell;
+    char *posix_shell;
+    uint32_t _present;
+} FacetConfigUser;
+
 typedef struct FacetConfigDomainSink {
     char *name;
     FacetConfigLogLevel level;
@@ -110,6 +119,9 @@ typedef struct FacetConfigDomain {
     char *authentication_source;
     size_t authentication_source_index;
     char *pid1;
+    char *initrd;
+    size_t user_count;
+    FacetConfigUser *users;
     size_t logging_sink_count;
     FacetConfigDomainSink *logging_sinks;
     size_t terminal_count;
@@ -123,6 +135,8 @@ typedef struct FacetSystemConfig {
     FacetConfigLoggingSinkDefinition *logging_sinks;
     size_t authentication_source_count;
     FacetConfigAuthenticationSource *authentication_sources;
+    size_t user_count;
+    FacetConfigUser *users;
     size_t seat_count;
     FacetConfigSeatDefinition *seats;
     size_t domain_count;

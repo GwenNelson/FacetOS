@@ -1,0 +1,19 @@
+// Snapshot-style directory traversal.  Cursors are opaque offsets returned by list.
+interface IDirectory {
+    uuid auto;
+    requires IGenericObject;
+
+    enum EntryType : u32 {
+        File = 1;
+        Directory = 2;
+    };
+
+    struct Entry {
+        string name;
+        EntryType type;
+    };
+
+    method FacetResult list(in u64 cursor, in u32 maximum,
+                            out array<Entry> entries, out u64 next_cursor,
+                            out bool end);
+}

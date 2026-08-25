@@ -31,6 +31,8 @@ typedef enum PlatformConfigSourceStatus {
 
 PlatformConfigSourceStatus platform_get_config_source(
     PlatformConfigSource *source);
+PlatformConfigSourceStatus platform_get_boot_module(
+    const char *name, PlatformConfigSource *source);
 
 /* Starts one configured domain and returns platform-owned runtime state.
  * A NULL result means the domain could not be started. */

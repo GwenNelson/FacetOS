@@ -6,4 +6,5 @@ interface IDomainEnvironment {
     property u64 domain_id read;
     property string domain_name read;
     property u32 personality read;
+    property handle domain_config read;
 }

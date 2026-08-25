@@ -5,6 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define ROOT_USER_CONFIG \
+    "[[users]]\n" \
+    "name='root'\n" \
+    "password_sha256='f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59'\n" \
+    "admin=true\n"
+
 static int parse_text(const char *text, FacetSystemConfig *config,
                       FacetConfigDiagnostic *diagnostic)
 {
@@ -23,6 +29,8 @@ static void check_default_shape(const FacetSystemConfig *config)
     assert(config->authentication_source_count == 1);
     assert(strcmp(config->authentication_sources[0].name, "system") == 0);
     assert(config->authentication_sources[0].provider_domain_index == 0);
+    assert(config->user_count == 1);
+    assert(strcmp(config->users[0].name, "root") == 0);
 
     assert(config->seat_count == 2);
     assert(strcmp(config->seats[0].name, "seat0") == 0);
@@ -38,6 +46,7 @@ static void check_default_shape(const FacetSystemConfig *config)
     assert(config->domain_count == 2);
     assert(config->root_index == 0);
     assert(config->domains[0].id == 0);
+    assert(strcmp(config->domains[0].initrd, "system.initrd") == 0);
     assert(strcmp(config->domains[0].name, "system") == 0);
     assert(config->domains[0].domain_manager ==
            FACET_CONFIG_DOMAIN_MANAGER_LOCAL);
@@ -57,6 +66,7 @@ static void check_default_shape(const FacetSystemConfig *config)
     assert(config->domains[0].terminals[1].terminal_index == 0);
 
     assert(config->domains[1].id == 1);
+    assert(strcmp(config->domains[1].initrd, "child.initrd") == 0);
     assert(strcmp(config->domains[1].name, "example-child") == 0);
     assert(config->domains[1].logging_sinks[0].level == FACET_CONFIG_LOG_INFO);
     assert(config->domains[1].terminal_count == 1);
@@ -107,6 +117,7 @@ static void test_utf8_and_quoted_keys(void)
         "name = \"débogage\"\n"
         "type = \"platform.sel4.debug\"\n"
         "required = true\n"
+        ROOT_USER_CONFIG
         "[[seats]]\n"
         "name = \"seat0\"\n"
         "type = \"serial\"\n"
@@ -116,6 +127,7 @@ static void test_utf8_and_quoted_keys(void)
         "name = \"syst\\u00e8me\"\n"
         "personality = \"native\"\n"
         "domain_manager = \"local\"\n"
+        "initrd = \"unicode.initrd\"\n"
         "logging_sinks = [{ name = \"débogage\", level = \"debug\" }]\n"
         "terminals = [{ terminal = \"seat0.ttyS0\", view = \"native\", initial_process = \"/FacetOS/FacetLogin\" }]\n";
     FacetSystemConfig config;
@@ -131,9 +143,11 @@ static void test_posix_terminal_mapping(void)
     static const char text[] =
         "[facet]\nversion=1\n"
         "[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
+        ROOT_USER_CONFIG
         "[[seats]]\nname='seat1'\ntype='local'\nterminals=['tty5']\n"
         "[[domains]]\nid=0\nname='posix'\npersonality='posix'\n"
         "domain_manager='none'\npid1='/sbin/init'\n"
+        "initrd='posix.initrd'\n"
         "logging_sinks=[{name='d',level='info'}]\n"
         "terminals=[{device='ttyS0',terminal='seat1.tty5'}]\n";
     FacetSystemConfig config;
@@ -176,15 +190,15 @@ static void test_failures(void)
                    FACET_CONFIG_DIAGNOSTIC_SCHEMA);
     expect_failure("[facet]\nversion = 1\nversion = 1\n",
                    FACET_CONFIG_DIAGNOSTIC_DUPLICATE);
-    expect_failure("[facet]\nversion = 1\n"
+    expect_failure("[facet]\nversion = 1\n" ROOT_USER_CONFIG
                    "[[domains]]\nid=0\nname='a'\npersonality='native'\n"
-                   "domain_manager='local'\n"
+                   "domain_manager='local'\ninitrd='a.initrd'\n"
                    "logging_sinks=[{name='missing',level='info'}]\n"
                    "terminals=[]\n",
                    FACET_CONFIG_DIAGNOSTIC_UNRESOLVED_REFERENCE);
-    expect_failure("[facet]\nversion = 1\n"
+    expect_failure("[facet]\nversion = 1\n" ROOT_USER_CONFIG
                    "[[domains]]\nid=0\nname='a'\npersonality='native'\n"
-                   "domain_manager='local'\n"
+                   "domain_manager='local'\ninitrd='a.initrd'\n"
                    "logging_sinks=[{name='x',name='x',level='info'}]\n"
                    "terminals=[]\n",
                    FACET_CONFIG_DIAGNOSTIC_DUPLICATE);
@@ -197,32 +211,36 @@ static void test_failures(void)
     static const char duplicate_terminal[] =
         "[facet]\nversion=1\n"
         "[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
+        ROOT_USER_CONFIG
         "[[seats]]\nname='s'\ntype='local'\nterminals=['t']\n"
         "[[domains]]\nid=0\nname='a'\npersonality='native'\n"
-        "domain_manager='local'\nlogging_sinks=[{name='d',level='info'}]\n"
+        "domain_manager='local'\ninitrd='a.initrd'\nlogging_sinks=[{name='d',level='info'}]\n"
         "terminals=[{terminal='s.t',view='native',initial_process='/FacetOS/FacetLogin'}]\n"
         "[[domains]]\nid=1\nname='b'\npersonality='native'\n"
-        "domain_manager='none'\nlogging_sinks=[{name='d',level='info'}]\n"
+        "domain_manager='none'\ninitrd='b.initrd'\nlogging_sinks=[{name='d',level='info'}]\n"
         "terminals=[{terminal='s.t',view='native',initial_process='/FacetOS/FacetLogin'}]\n";
     expect_failure(duplicate_terminal, FACET_CONFIG_DIAGNOSTIC_DUPLICATE);
     static const char native_pid1[] =
         "[facet]\nversion=1\n[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
+        ROOT_USER_CONFIG
         "[[seats]]\nname='s'\ntype='local'\nterminals=['t']\n"
-        "[[domains]]\nid=0\nname='n'\npersonality='native'\ndomain_manager='none'\n"
+        "[[domains]]\nid=0\nname='n'\npersonality='native'\ndomain_manager='none'\ninitrd='n.initrd'\n"
         "pid1='/sbin/init'\nlogging_sinks=[{name='d',level='info'}]\n"
         "terminals=[{terminal='s.t',view='native',initial_process='/x'}]\n";
     expect_failure(native_pid1, FACET_CONFIG_DIAGNOSTIC_SCHEMA);
     static const char posix_missing_pid1[] =
         "[facet]\nversion=1\n[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
+        ROOT_USER_CONFIG
         "[[seats]]\nname='s'\ntype='local'\nterminals=['t']\n"
-        "[[domains]]\nid=0\nname='p'\npersonality='posix'\ndomain_manager='none'\n"
+        "[[domains]]\nid=0\nname='p'\npersonality='posix'\ndomain_manager='none'\ninitrd='p.initrd'\n"
         "logging_sinks=[{name='d',level='info'}]\n"
         "terminals=[{terminal='s.t',device='tty1'}]\n";
     expect_failure(posix_missing_pid1, FACET_CONFIG_DIAGNOSTIC_SCHEMA);
     static const char missing_authentication_source[] =
         "[facet]\nversion=1\n[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
+        ROOT_USER_CONFIG
         "[[seats]]\nname='s'\ntype='local'\nterminals=['t']\n"
-        "[[domains]]\nid=0\nname='n'\npersonality='native'\ndomain_manager='none'\n"
+        "[[domains]]\nid=0\nname='n'\npersonality='native'\ndomain_manager='none'\ninitrd='n.initrd'\n"
         "authentication_source='missing'\nlogging_sinks=[{name='d',level='info'}]\n"
         "terminals=[{terminal='s.t',view='native',initial_process='/x'}]\n";
     expect_failure(missing_authentication_source,

@@ -1,0 +1,8 @@
+// Read-mostly filesystem namespace delegated to one process or domain.
+interface IFileStore {
+    uuid auto;
+    requires IGenericObject;
+
+    method FacetResult open_file(in string path, out handle file);
+    method FacetResult open_directory(in string path, out handle directory);
+}

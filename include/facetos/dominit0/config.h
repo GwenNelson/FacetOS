@@ -46,6 +46,9 @@ int dominit0_domain_config_bind_handles(Dominit0DomainConfigObject *object,
                                         FacetHandle logging_handle,
                                         FacetHandle console_handle);
 
+/* Export immutable configuration views once the platform RPC service exists. */
+int dominit0_config_export_objects(Dominit0SystemConfig *system);
+
 int dominit0_config_initialize(const uint8_t *data, size_t size,
                                bool source_present,
                                FacetConfigDiagnostic *diagnostic);

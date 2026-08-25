@@ -46,6 +46,7 @@ typedef enum SectionKind {
     SECTION_FACET,
     SECTION_LOGGING_SINK,
     SECTION_AUTHENTICATION_SOURCE,
+    SECTION_USER,
     SECTION_SEAT,
     SECTION_DOMAIN,
 } SectionKind;
@@ -84,6 +85,13 @@ enum {
     DOMAIN_TERMINALS = 1u << 5,
     DOMAIN_AUTHENTICATION_SOURCE = 1u << 6,
     DOMAIN_PID1 = 1u << 7,
+    DOMAIN_INITRD = 1u << 8,
+    DOMAIN_USERS = 1u << 9,
+    USER_NAME = 1u << 0,
+    USER_PASSWORD_SHA256 = 1u << 1,
+    USER_ADMIN = 1u << 2,
+    USER_NATIVE_SHELL = 1u << 3,
+    USER_POSIX_SHELL = 1u << 4,
     TERMINAL_REFERENCE = 1u << 0,
     TERMINAL_VIEW = 1u << 1,
     TERMINAL_INITIAL_PROCESS = 1u << 2,
@@ -688,6 +696,15 @@ static int parse_header(Parser *parser)
         parser->config->authentication_source_count++;
         parser->section = SECTION_AUTHENTICATION_SOURCE;
         parser->section_index = count;
+    } else if (array && strcmp(name, "users") == 0) {
+        size_t count = parser->config->user_count;
+        if (grow_array(parser, (void **)&parser->config->users,
+                       count, sizeof(*parser->config->users)) != 0) {
+            free(name); return -1;
+        }
+        parser->config->user_count++;
+        parser->section = SECTION_USER;
+        parser->section_index = count;
     } else if (array && strcmp(name, "seats") == 0) {
         size_t count = parser->config->seat_count;
         if (grow_array(parser, (void **)&parser->config->seats,
@@ -896,6 +913,71 @@ static int domain_terminals_from_array(Parser *parser, Value *value,
     return 0;
 }
 
+static int user_from_table(Parser *parser, const Value *table,
+                           FacetConfigUser *user)
+{
+    if (require_kind(parser, "users", table, VALUE_TABLE, "inline table") != 0)
+        return -1;
+    for (size_t i = 0; i < table->as.table.count; i++) {
+        const ValueEntry *entry = &table->as.table.entries[i];
+        uint32_t bit;
+        char **string_destination = NULL;
+        if (strcmp(entry->key, "name") == 0) {
+            bit = USER_NAME; string_destination = &user->name;
+        } else if (strcmp(entry->key, "password_sha256") == 0) {
+            bit = USER_PASSWORD_SHA256; string_destination = &user->password_sha256;
+        } else if (strcmp(entry->key, "admin") == 0) {
+            bit = USER_ADMIN;
+        } else if (strcmp(entry->key, "native_shell") == 0) {
+            bit = USER_NATIVE_SHELL; string_destination = &user->native_shell;
+        } else if (strcmp(entry->key, "posix_shell") == 0) {
+            bit = USER_POSIX_SHELL; string_destination = &user->posix_shell;
+        } else {
+            return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA,
+                           entry->line, entry->column, entry->key,
+                           "unknown user key");
+        }
+        if ((user->_present & bit) != 0)
+            return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_DUPLICATE,
+                           entry->line, entry->column, entry->key,
+                           "duplicate user key");
+        user->_present |= bit;
+        if (string_destination != NULL) {
+            if (require_kind(parser, entry->key, entry->value,
+                             VALUE_STRING, "string") != 0)
+                return -1;
+            *string_destination = duplicate_bytes(parser, entry->value->as.string,
+                                                  strlen(entry->value->as.string));
+            if (*string_destination == NULL) return -1;
+        } else {
+            if (require_kind(parser, entry->key, entry->value,
+                             VALUE_BOOL, "boolean") != 0)
+                return -1;
+            user->admin = entry->value->as.boolean;
+        }
+    }
+    return 0;
+}
+
+static int domain_users_from_array(Parser *parser, Value *value,
+                                   FacetConfigDomain *domain)
+{
+    if (require_kind(parser, "users", value, VALUE_ARRAY, "array") != 0)
+        return -1;
+    if (value->as.array.count != 0) {
+        domain->users = calloc(value->as.array.count, sizeof(*domain->users));
+        if (domain->users == NULL)
+            return fail(parser, FACET_CONFIG_DIAGNOSTIC_OUT_OF_MEMORY,
+                        "users", "out of memory");
+    }
+    domain->user_count = value->as.array.count;
+    for (size_t i = 0; i < domain->user_count; i++)
+        if (user_from_table(parser, &value->as.array.items[i],
+                            &domain->users[i]) != 0)
+            return -1;
+    return 0;
+}
+
 static int apply_value(Parser *parser, char *key, Value *value,
                        size_t line, size_t column)
 {
@@ -974,6 +1056,33 @@ static int apply_value(Parser *parser, char *key, Value *value,
         source->provider_domain_id = (uint64_t)value->as.integer;
         return 0;
     }
+    if (parser->section == SECTION_USER) {
+        FacetConfigUser *user = &parser->config->users[parser->section_index];
+        uint32_t bit;
+        char **string_destination = NULL;
+        if (strcmp(key, "name") == 0) {
+            bit = USER_NAME; string_destination = &user->name;
+        } else if (strcmp(key, "password_sha256") == 0) {
+            bit = USER_PASSWORD_SHA256; string_destination = &user->password_sha256;
+        } else if (strcmp(key, "admin") == 0) {
+            bit = USER_ADMIN;
+        } else if (strcmp(key, "native_shell") == 0) {
+            bit = USER_NATIVE_SHELL; string_destination = &user->native_shell;
+        } else if (strcmp(key, "posix_shell") == 0) {
+            bit = USER_POSIX_SHELL; string_destination = &user->posix_shell;
+        } else return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA,
+                              line, column, key, "unknown user key");
+        if ((user->_present & bit) != 0)
+            return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_DUPLICATE,
+                           line, column, key, "duplicate user key");
+        user->_present |= bit;
+        if (string_destination != NULL)
+            return take_string(parser, key, value, string_destination);
+        if (require_kind(parser, key, value, VALUE_BOOL, "boolean") != 0)
+            return -1;
+        user->admin = value->as.boolean;
+        return 0;
+    }
     if (parser->section == SECTION_SEAT) {
         FacetConfigSeatDefinition *seat =
             &parser->config->seats[parser->section_index];
@@ -1015,6 +1124,8 @@ static int apply_value(Parser *parser, char *key, Value *value,
         else if (strcmp(key, "authentication_source") == 0)
             bit = DOMAIN_AUTHENTICATION_SOURCE;
         else if (strcmp(key, "pid1") == 0) bit = DOMAIN_PID1;
+        else if (strcmp(key, "initrd") == 0) bit = DOMAIN_INITRD;
+        else if (strcmp(key, "users") == 0) bit = DOMAIN_USERS;
         else return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA,
                             line, column, key, "unknown domain key");
         if (domain->_present & bit)
@@ -1026,10 +1137,14 @@ static int apply_value(Parser *parser, char *key, Value *value,
             return domain_sinks_from_array(parser, value, domain);
         if (bit == DOMAIN_TERMINALS)
             return domain_terminals_from_array(parser, value, domain);
+        if (bit == DOMAIN_USERS)
+            return domain_users_from_array(parser, value, domain);
         if (bit == DOMAIN_AUTHENTICATION_SOURCE)
             return take_string(parser, key, value, &domain->authentication_source);
         if (bit == DOMAIN_PID1)
             return take_string(parser, key, value, &domain->pid1);
+        if (bit == DOMAIN_INITRD)
+            return take_string(parser, key, value, &domain->initrd);
         if (bit == DOMAIN_ID) {
             if (require_kind(parser, key, value, VALUE_INTEGER,
                              "non-negative integer") != 0)
@@ -1068,6 +1183,41 @@ static int apply_value(Parser *parser, char *key, Value *value,
     }
     return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, line, column,
                    key, "assignment appears before a table header");
+}
+
+static void destroy_user(FacetConfigUser *user)
+{
+    free(user->name);
+    free(user->password_sha256);
+    free(user->native_shell);
+    free(user->posix_shell);
+    memset(user, 0, sizeof(*user));
+}
+
+static bool valid_sha256_hex(const char *text)
+{
+    if (text == NULL || strlen(text) != 64) return false;
+    for (size_t i = 0; i < 64; i++)
+        if (!((text[i] >= '0' && text[i] <= '9') ||
+              (text[i] >= 'a' && text[i] <= 'f')))
+            return false;
+    return true;
+}
+
+static int validate_user(Parser *parser, const FacetConfigUser *user,
+                         const char *context)
+{
+    uint32_t required = USER_NAME | USER_PASSWORD_SHA256 | USER_ADMIN;
+    if ((user->_present & required) != required || user->name == NULL ||
+        user->password_sha256 == NULL || user->name[0] == '\0' ||
+        !valid_sha256_hex(user->password_sha256))
+        return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
+                       context, "user requires name, lowercase SHA-256 hash, and admin");
+    if ((user->native_shell != NULL && user->native_shell[0] != '/') ||
+        (user->posix_shell != NULL && user->posix_shell[0] != '/'))
+        return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
+                       user->name, "shell paths must be absolute");
+    return 0;
 }
 
 static int validate_required(Parser *parser)
@@ -1132,6 +1282,25 @@ static int validate_required(Parser *parser)
                                source->name,
                                "duplicate authentication source name");
     }
+    bool root_found = false;
+    for (size_t i = 0; i < parser->config->user_count; i++) {
+        FacetConfigUser *user = &parser->config->users[i];
+        if (validate_user(parser, user, "users") != 0) return -1;
+        for (size_t j = 0; j < i; j++)
+            if (strcmp(user->name, parser->config->users[j].name) == 0)
+                return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_DUPLICATE, 0, 0,
+                               user->name, "duplicate global user");
+        if (strcmp(user->name, "root") == 0) {
+            if (!user->admin || strcmp(user->password_sha256,
+                "f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59") != 0)
+                return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
+                               "root", "root must be admin with the required development hash");
+            root_found = true;
+        }
+    }
+    if (!root_found)
+        return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
+                       "users", "a global root user is required");
     if (parser->config->domain_count == 0)
         return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
                        "domains", "at least one domain is required");
@@ -1139,13 +1308,34 @@ static int validate_required(Parser *parser)
     for (size_t i = 0; i < parser->config->domain_count; i++) {
         FacetConfigDomain *domain = &parser->config->domains[i];
         uint32_t required = DOMAIN_ID | DOMAIN_NAME | DOMAIN_PERSONALITY |
-                            DOMAIN_MANAGER | DOMAIN_SINKS | DOMAIN_TERMINALS;
+                            DOMAIN_MANAGER | DOMAIN_SINKS | DOMAIN_TERMINALS |
+                            DOMAIN_INITRD;
         if ((domain->_present & required) != required)
             return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
                            "domains", "domain is missing a required key");
         if (domain->name[0] == '\0')
             return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
                            "domains.name", "domain name must not be empty");
+        if (domain->initrd == NULL || domain->initrd[0] == '\0' ||
+            strchr(domain->initrd, '/') != NULL)
+            return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
+                           domain->name, "domain initrd must be a multiboot module name");
+        for (size_t j = 0; j < i; j++)
+            if (strcmp(domain->initrd, parser->config->domains[j].initrd) == 0)
+                return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_DUPLICATE, 0, 0,
+                               domain->initrd, "initrd may be assigned to only one domain");
+        for (size_t j = 0; j < domain->user_count; j++) {
+            FacetConfigUser *user = &domain->users[j];
+            if (validate_user(parser, user, domain->name) != 0) return -1;
+            for (size_t k = 0; k < parser->config->user_count; k++)
+                if (strcmp(user->name, parser->config->users[k].name) == 0)
+                    return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_DUPLICATE, 0, 0,
+                                   user->name, "domain user duplicates global user");
+            for (size_t k = 0; k < j; k++)
+                if (strcmp(user->name, domain->users[k].name) == 0)
+                    return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_DUPLICATE, 0, 0,
+                                   user->name, "duplicate domain user");
+        }
         if (domain->personality == FACET_CONFIG_PERSONALITY_VM)
             return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
                            domain->name,
@@ -1384,6 +1574,10 @@ int facet_config_make_fallback(FacetSystemConfig *config,
         "provider_domain = 0\n"
         "type = \"local\"\n"
         "required = true\n"
+        "[[users]]\n"
+        "name = \"root\"\n"
+        "password_sha256 = \"f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59\"\n"
+        "admin = true\n"
         "[[seats]]\n"
         "name = \"seat0\"\n"
         "type = \"serial\"\n"
@@ -1397,6 +1591,7 @@ int facet_config_make_fallback(FacetSystemConfig *config,
         "name = \"system\"\n"
         "personality = \"native\"\n"
         "domain_manager = \"local\"\n"
+        "initrd = \"system.initrd\"\n"
         "authentication_source = \"system\"\n"
         "logging_sinks = [{ name = \"debug\", level = \"debug\" }]\n"
         "terminals = ["
@@ -1407,6 +1602,7 @@ int facet_config_make_fallback(FacetSystemConfig *config,
         "name = \"example-child\"\n"
         "personality = \"native\"\n"
         "domain_manager = \"none\"\n"
+        "initrd = \"child.initrd\"\n"
         "authentication_source = \"system\"\n"
         "logging_sinks = [{ name = \"debug\", level = \"info\" }]\n"
         "terminals = [{ terminal = \"seat1.tty2\", view = \"posix\", initial_process = \"/bin/login\" }]\n";
@@ -1427,6 +1623,9 @@ void facet_config_destroy(FacetSystemConfig *config)
         free(config->authentication_sources[i].type);
     }
     free(config->authentication_sources);
+    for (size_t i = 0; i < config->user_count; i++)
+        destroy_user(&config->users[i]);
+    free(config->users);
     for (size_t i = 0; i < config->seat_count; i++) {
         free(config->seats[i].name);
         for (size_t j = 0; j < config->seats[i].terminal_count; j++)
@@ -1441,6 +1640,10 @@ void facet_config_destroy(FacetSystemConfig *config)
         free(config->domains[i].logging_sinks);
         free(config->domains[i].authentication_source);
         free(config->domains[i].pid1);
+        free(config->domains[i].initrd);
+        for (size_t j = 0; j < config->domains[i].user_count; j++)
+            destroy_user(&config->domains[i].users[j]);
+        free(config->domains[i].users);
         for (size_t j = 0; j < config->domains[i].terminal_count; j++) {
             free(config->domains[i].terminals[j].reference);
             free(config->domains[i].terminals[j].initial_process);

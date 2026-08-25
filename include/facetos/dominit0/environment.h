@@ -9,5 +9,7 @@ void dominit0_environment_destroy(Dominit0SystemConfig *system);
 
 int dominit0_environment_bind_page_allocator(Dominit0DomainEnvironment *environment,
                                               FacetHandle page_allocator);
+int dominit0_environment_bind_file_store(Dominit0DomainEnvironment *environment,
+                                         FacetHandle file_store);
 FacetHandle dominit0_environment_root_handle(
     const Dominit0DomainEnvironment *environment);

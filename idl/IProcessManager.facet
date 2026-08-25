@@ -1,0 +1,9 @@
+// Privileged process construction service.  Callers supply only a path and
+// receive no platform-specific process state.
+interface IProcessManager {
+    uuid auto;
+    requires IGenericObject;
+
+    method FacetResult launch(in string path, in array<string> argv,
+                              in handle environment, out handle process);
+}

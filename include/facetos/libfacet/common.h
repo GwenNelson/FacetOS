@@ -33,6 +33,7 @@ enum {
     FACET_PROTOCOL_ERROR = -8,
     FACET_BUFFER_TOO_SMALL = -9,
     FACET_NOT_SUPPORTED = -10,
+    FACET_NOT_FOUND = -11,
 };
 
 typedef struct FacetHandle {
@@ -241,6 +242,10 @@ FacetResult libfacet_register_interface_metadata(
 );
 
 IGenericObject *libfacet_proxy_from(uint64_t platform_handle);
+
+/* Takes ownership of handle and constructs a client proxy for metadata. */
+void *libfacet_proxy_from_handle(const FacetInterfaceMeta *metadata,
+                                 FacetHandle handle);
 
 #ifdef __cplusplus
 }

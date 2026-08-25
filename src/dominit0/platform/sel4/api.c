@@ -704,6 +704,23 @@ platform_get_config_source(PlatformConfigSource *source)
     return PLATFORM_CONFIG_SOURCE_FOUND;
 }
 
+PlatformConfigSourceStatus
+platform_get_boot_module(const char *name, PlatformConfigSource *source)
+{
+    if (name == NULL || *name == '\0' || source == NULL || platform_sel4_bi == NULL)
+        return PLATFORM_CONFIG_SOURCE_INVALID;
+    source->data = NULL;
+    source->size = 0;
+    boot_module_t module;
+    int result = find_boot_module(platform_sel4_bi, name, &module);
+    if (result == 1) return PLATFORM_CONFIG_SOURCE_ABSENT;
+    if (result == -2) return PLATFORM_CONFIG_SOURCE_DUPLICATE;
+    if (result != 0) return PLATFORM_CONFIG_SOURCE_INVALID;
+    source->data = module.data;
+    source->size = module.size;
+    return PLATFORM_CONFIG_SOURCE_FOUND;
+}
+
 void *platform_start_domain(CurrentDomain *current)
 {
      if (current == NULL || current->config == NULL ||

@@ -12,6 +12,11 @@ provider_domain = 0
 type = "local"
 required = true
 
+[[users]]
+name = "root"
+password_sha256 = "f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59"
+admin = true
+
 [[seats]]
 name = "seat0"
 type = "serial"
@@ -27,6 +32,7 @@ id = 0
 name = "system"
 personality = "native"
 domain_manager = "local"
+initrd = "system.initrd"
 authentication_source = "system"
 logging_sinks = [
     { name = "debug", level = "debug" },
@@ -41,6 +47,7 @@ id = 1
 name = "example-child"
 personality = "native"
 domain_manager = "none"
+initrd = "child.initrd"
 authentication_source = "system"
 logging_sinks = [
     { name = "debug", level = "info" },

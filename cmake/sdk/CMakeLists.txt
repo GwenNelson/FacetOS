@@ -261,7 +261,8 @@ add_custom_target(facet-idl-environment-generated
 set(FACET_SHELL_CONTRACT_IDLS
     IPrincipal IHumanUser IPronouns IAuthenticatedPrincipal ISession
     ISecurityManager IAuthService IByteReader IByteWriter ITerminalControl
-    ITerminal ISeat
+    ITerminal ISeat IProcessEnvironment IFileStore IFile IDirectory
+    IProcessManager
 )
 set(FACET_SHELL_CONTRACT_HEADERS)
 foreach(FACET_SHELL_CONTRACT ${FACET_SHELL_CONTRACT_IDLS})
@@ -348,6 +349,7 @@ target_include_directories(dominit BEFORE PRIVATE
 add_dependencies(dominit facet-idl-debug-generated)
 add_dependencies(dominit facet-idl-page-allocator-generated)
 add_dependencies(dominit facet-idl-environment-generated)
+add_dependencies(dominit facet-idl-shell-contracts-generated)
 
 # `sel4` is CMake's libsel4 target. sel4runtime supplies process startup,
 # TLS, and the IPC-buffer pointer; dominit supplies its own bump allocator,

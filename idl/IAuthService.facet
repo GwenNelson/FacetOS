@@ -1,5 +1,7 @@
-// Credential-bearing authentication is deferred pending provenance design.
 interface IAuthService {
     uuid auto;
     requires IGenericObject;
+
+    method FacetResult authenticate(in string username, in string password,
+                                    out handle authenticated_principal);
 }

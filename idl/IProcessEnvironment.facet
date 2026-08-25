@@ -1,0 +1,16 @@
+// Immutable, process-specific namespace of delegated capabilities.
+interface IProcessEnvironment {
+    uuid auto;
+    requires IGenericObject;
+
+    struct BindingInfo {
+        string name;
+        uuid primary_iid;
+    };
+
+    method FacetResult resolve(in string name, out handle object);
+    method FacetResult resolve_as(in string name, in uuid iid, out handle object);
+    method FacetResult get_primary_iid(in string name, out uuid iid);
+    method FacetResult get_advertised_iids(in string name, out array<uuid> iids);
+    method FacetResult list_bindings(out array<BindingInfo> bindings);
+}
