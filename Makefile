@@ -32,9 +32,12 @@ FACET_SHELL    := $(SDK_BUILD)/FacetShell
 FACET_LOGIN    := $(SDK_BUILD)/FacetLogin
 FACET_DUMMY    := $(SDK_BUILD)/FacetDummy
 FACET_DUMMYSH  := $(SDK_BUILD)/dummysh
+FACET_SEAT_SERIAL := $(SDK_BUILD)/seat-server-serial
+FACET_SEAT_PC := $(SDK_BUILD)/seat-server-pc-console
 FACET_CONFIG_FILE := $(ROOT)/config/facet.toml
 INITRD_SYSTEM := $(ROOT)/build/initrd/system.initrd
 INITRD_CHILD := $(ROOT)/build/initrd/child.initrd
+INITRD_DOMINIT0 := $(ROOT)/build/initrd/dominit0.initrd
 
 #
 # FacetOS klibc.
@@ -434,7 +437,8 @@ $(FACET_TERMINAL_RPC_TEST): $(ROOT)/tests/terminal_rpc_test.c \
 		$(ROOT)/src/config.c $(ROOT)/src/dominit0/config.c \
 		$(ROOT)/src/dominit0/environment.c \
 		$(ROOT)/src/dominit0/process_environment.c \
-		$(ROOT)/src/dominit0/terminal.c $(ROOT)/libfacet/src/common/runtime.c \
+		$(ROOT)/src/dominit0/terminal.c $(ROOT)/src/dominit0/initrd.c \
+		$(ROOT)/libfacet/src/common/runtime.c \
 		$(FACET_IDLC)
 	@mkdir -p $(dir $@)
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) facet-idl-config-generated \
@@ -444,7 +448,8 @@ $(FACET_TERMINAL_RPC_TEST): $(ROOT)/tests/terminal_rpc_test.c \
 		$(ROOT)/libfacet/src/common/runtime.c $(ROOT)/src/config.c \
 		$(ROOT)/src/dominit0/config.c $(ROOT)/src/dominit0/environment.c \
 		$(ROOT)/src/dominit0/process_environment.c \
-		$(ROOT)/src/dominit0/terminal.c $(ROOT)/tests/terminal_rpc_test.c \
+		$(ROOT)/src/dominit0/terminal.c $(ROOT)/src/dominit0/initrd.c \
+		$(ROOT)/tests/terminal_rpc_test.c \
 		-Wl,--gc-sections -o $@
 
 test-terminal-rpc: $(FACET_TERMINAL_RPC_TEST)
@@ -574,8 +579,18 @@ libfacet: facet-idlc libfacet-common libfacet-platform-sel4
 
 
 # Build everything needed to boot FacetOS.
-build: klibc facet-config configure libfacet $(INITRD_SYSTEM) $(INITRD_CHILD)
-	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf dominit0 dominit FacetLogin FacetShell FacetDummy dummysh
+build: klibc facet-config configure libfacet $(INITRD_DOMINIT0) $(INITRD_SYSTEM) $(INITRD_CHILD)
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf dominit0 dominit FacetLogin FacetShell FacetDummy dummysh seat-server-serial seat-server-pc-console
+
+$(FACET_SEAT_SERIAL) $(FACET_SEAT_PC): facet-idlc libfacet-common configure
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) seat-server-serial seat-server-pc-console
+
+$(INITRD_DOMINIT0): $(FACET_SEAT_SERIAL) $(FACET_SEAT_PC)
+	mkdir -p $(dir $@)
+	mkdir -p $(ROOT)/build/initrd/dominit0-root/FacetOS
+	cp $(FACET_SEAT_SERIAL) $(ROOT)/build/initrd/dominit0-root/FacetOS/seat-server-serial
+	cp $(FACET_SEAT_PC) $(ROOT)/build/initrd/dominit0-root/FacetOS/seat-server-pc-console
+	cd $(ROOT)/build/initrd/dominit0-root && find . -print | sort | cpio --quiet -o -H newc > $@
 
 $(INITRD_SYSTEM): $(ROOT)/initrd/system/README $(FACET_LOGIN) $(FACET_SHELL) $(FACET_DUMMY)
 	mkdir -p $(dir $@)
@@ -638,6 +653,9 @@ image: build
 	cp $(FACET_DOMINIT0) $(ISO_ROOT)/boot/dominit0
 	cp $(FACET_DOMINIT) $(ISO_ROOT)/boot/dominit
 	cp $(FACET_CONFIG_FILE) $(ISO_ROOT)/boot/facet.toml
+	cp $(INITRD_DOMINIT0) $(ISO_ROOT)/boot/dominit0.initrd
+	cp $(INITRD_SYSTEM) $(ISO_ROOT)/boot/system.initrd
+	cp $(INITRD_CHILD) $(ISO_ROOT)/boot/child.initrd
 	cp $(ROOT)/boot/grub.cfg $(ISO_ROOT)/boot/grub/grub.cfg
 	grub-mkrescue \
 		-o $(FACETOS_ISO) \
@@ -670,7 +688,7 @@ endif
 QEMU_DIRECT_FLAGS := \
 	-kernel $(BOOTSTUB32) \
 	-append "debug_port=0xe9" \
-	-initrd $(SDK_KERNEL),$(FACET_DOMINIT0),$(FACET_DOMINIT),$(FACET_CONFIG_FILE),$(INITRD_SYSTEM),$(INITRD_CHILD)
+	-initrd $(SDK_KERNEL),$(FACET_DOMINIT0),$(FACET_DOMINIT),$(FACET_CONFIG_FILE),$(INITRD_DOMINIT0),$(INITRD_SYSTEM),$(INITRD_CHILD)
 
 QEMU_ISO_FLAGS := \
 	-cdrom $(FACETOS_ISO)

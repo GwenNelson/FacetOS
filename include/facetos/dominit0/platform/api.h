@@ -6,6 +6,7 @@
 #include <facetos/dominit0/config.h>
 
 typedef struct ILoggingSink ILoggingSink;
+typedef struct CurrentSeat CurrentSeat;
 
 
 void platform_init_early(void); // anything the platform needs IMMEDIATELY, usually a NOP
@@ -34,31 +35,11 @@ PlatformConfigSourceStatus platform_get_config_source(
 PlatformConfigSourceStatus platform_get_boot_module(
     const char *name, PlatformConfigSource *source);
 
-/* Platform terminal primitives.  The portable terminal service owns stream
- * policy; these calls only access the selected hardware endpoint. */
-int platform_serial_initialize(void);
-int platform_serial_read_byte(uint8_t *byte);
-int platform_serial_write(const uint8_t *data, size_t size);
-
-typedef enum PlatformConsoleKeyKind {
-    PLATFORM_CONSOLE_KEY_NONE = 0,
-    PLATFORM_CONSOLE_KEY_BYTE,
-    PLATFORM_CONSOLE_KEY_SWITCH_TERMINAL,
-} PlatformConsoleKeyKind;
-
-typedef struct PlatformConsoleKey {
-    PlatformConsoleKeyKind kind;
-    uint8_t byte;
-    uint8_t terminal_index;
-} PlatformConsoleKey;
-
-int platform_local_console_initialize(void);
-int platform_local_console_present(const uint16_t *cells, size_t count);
-int platform_local_console_poll_key(PlatformConsoleKey *key);
-
 /* Starts one configured domain and returns platform-owned runtime state.
  * A NULL result means the domain could not be started. */
 void *platform_start_domain(CurrentDomain *current);
+void *platform_start_seat(CurrentSeat *seat, const void *elf_data,
+                          size_t elf_size, FacetHandle *out_seat);
 
 typedef struct Dominit0ProcessEnvironment Dominit0ProcessEnvironment;
 void *platform_start_process(CurrentDomain *domain, const void *elf_data,

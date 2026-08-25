@@ -5,6 +5,7 @@
 
 typedef struct Dominit0DomainEnvironment Dominit0DomainEnvironment;
 typedef struct FacetInitrd FacetInitrd;
+typedef struct CurrentSeat CurrentSeat;
 
 typedef struct Dominit0DomainConfigObject {
     IDomainConfig domain;
@@ -33,6 +34,7 @@ typedef struct Dominit0SystemConfig {
     size_t root_index;
     Dominit0DomainConfigObject *domains;
     CurrentDomain **current_domains;
+    CurrentSeat *current_seats;
 } Dominit0SystemConfig;
 
 /* Takes ownership of parsed on success and clears it. */

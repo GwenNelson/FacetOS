@@ -295,6 +295,7 @@ file(GLOB FACET_PLATFORM_SEL4_SRCS CONFIGURE_DEPENDS
 )
 list(REMOVE_ITEM FACET_PLATFORM_SEL4_SRCS
     "${FACETOS_ROOT}/libfacet/src/platform/sel4/client.c"
+    "${FACETOS_ROOT}/libfacet/src/platform/sel4/service.c"
 )
 
 add_library(facet-platform-sel4 STATIC
@@ -304,6 +305,14 @@ add_library(facet-platform-sel4 STATIC
 add_library(facet-platform-sel4-client STATIC
     "${FACETOS_ROOT}/libfacet/src/platform/sel4/client.c"
 )
+
+add_library(facet-platform-sel4-service STATIC
+    "${FACETOS_ROOT}/libfacet/src/platform/sel4/service.c"
+)
+
+facetos_configure_target(facet-platform-sel4-service)
+target_link_libraries(facet-platform-sel4-service PRIVATE
+    facet_common sel4runtime sel4 muslc)
 
 facetos_configure_target(facet-platform-sel4-client)
 
@@ -398,6 +407,28 @@ add_dependencies(FacetLogin facet-idl-environment-generated)
 add_dependencies(FacetLogin facet-idl-shell-contracts-generated)
 target_link_libraries(FacetLogin PRIVATE
     facet_common facet-platform-sel4-client sel4runtime sel4 muslc)
+
+function(add_facet_seat_server target definition)
+    add_executable(${target}
+        "${FACETOS_ROOT}/src/seat/main.c"
+        "${FACETOS_ROOT}/src/seat/platform/sel4.c"
+        "${FACETOS_ROOT}/src/apps/platform/allocator.c"
+        "${FACETOS_ROOT}/src/apps/platform/liballoc.c"
+    )
+    facetos_configure_target(${target})
+    target_include_directories(${target} BEFORE PRIVATE
+        "${FACET_GENERATED_INCLUDE}"
+        "${FACETOS_ROOT}/src/seat"
+    )
+    target_compile_definitions(${target} PRIVATE ${definition}=1)
+    add_dependencies(${target} facet-idl-page-allocator-generated)
+    add_dependencies(${target} facet-idl-shell-contracts-generated)
+    target_link_libraries(${target} PRIVATE
+        facet_common facet-platform-sel4-service sel4runtime sel4 muslc)
+endfunction()
+
+add_facet_seat_server(seat-server-serial FACET_SEAT_SERIAL)
+add_facet_seat_server(seat-server-pc-console FACET_SEAT_PC)
 
 function(add_facet_dummy target message)
     add_executable(${target}

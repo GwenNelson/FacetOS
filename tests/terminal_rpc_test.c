@@ -8,9 +8,12 @@
 #include <facetos/interfaces/IByteReader.h>
 #include <facetos/interfaces/IByteWriter.h>
 #include <facetos/interfaces/IProcessEnvironment.h>
+#include <facetos/interfaces/ITerminal.h>
+#include <facetos/interfaces/ITerminalControl.h>
 #include <facetos/libfacet/platform.h>
 
 #include <assert.h>
+#include <stdbool.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -103,6 +106,20 @@ void klog(enum log_level level, const char *format, ...)
     (void)format;
 }
 
+PlatformConfigSourceStatus platform_get_boot_module(
+    const char *name, PlatformConfigSource *source)
+{
+    (void)name; (void)source;
+    return PLATFORM_CONFIG_SOURCE_ABSENT;
+}
+
+void *platform_start_seat(CurrentSeat *seat, const void *elf_data,
+                          size_t elf_size, FacetHandle *out_seat)
+{
+    (void)seat; (void)elf_data; (void)elf_size; (void)out_seat;
+    return NULL;
+}
+
 FacetResult dominit0_logging_emit(ILoggingConfig *config, uint64_t domain_id,
                                   int32_t level, FacetString component,
                                   FacetString message)
@@ -115,47 +132,140 @@ FacetResult dominit0_logging_emit(ILoggingConfig *config, uint64_t domain_id,
     return FACET_OK;
 }
 
-static bool serial_ready;
-static uint8_t serial_byte;
-static uint8_t serial_written[32];
-static size_t serial_written_count;
-static PlatformConsoleKey local_key;
-static bool local_key_ready;
-static uint16_t presented[80 * 25];
+typedef struct TestStream {
+    IByteReader reader;
+    IByteWriter writer;
+    ITerminalControl control;
+    ITerminal terminal;
+    FacetHandle reader_handle;
+    FacetHandle writer_handle;
+    FacetHandle control_handle;
+    FacetHandle terminal_handle;
+    uint8_t input;
+    bool input_ready;
+    uint8_t written[32];
+    size_t written_count;
+} TestStream;
 
-int platform_serial_initialize(void) { return 0; }
+static TestStream test_streams[3];
 
-int platform_serial_read_byte(uint8_t *byte)
+static FacetResult test_get_reader(void *self, uuid_t iid, FacetHandle *out)
 {
-    if (!serial_ready) return 1;
-    *byte = serial_byte;
-    serial_ready = false;
-    return 0;
+    (void)iid;
+    *out = ((TestStream *)self)->reader_handle;
+    return FACET_OK;
 }
 
-int platform_serial_write(const uint8_t *data, size_t size)
+static FacetResult test_read(void *self, uint32_t maximum, FacetArray_u8 *out)
 {
-    assert(size <= sizeof(serial_written) - serial_written_count);
-    memcpy(serial_written + serial_written_count, data, size);
-    serial_written_count += size;
-    return 0;
+    TestStream *stream = self;
+    static uint8_t returned[3];
+    out->data = NULL;
+    out->count = 0;
+    if (maximum != 0 && stream->input_ready) {
+        size_t index = (size_t)(stream - test_streams);
+        returned[index] = stream->input;
+        out->data = &returned[index];
+        out->count = 1;
+        stream->input_ready = false;
+    }
+    return FACET_OK;
 }
 
-int platform_local_console_initialize(void) { return 0; }
-
-int platform_local_console_present(const uint16_t *cells, size_t count)
+static FacetResult test_get_writer(void *self, uuid_t iid, FacetHandle *out)
 {
-    assert(count == 80 * 25);
-    memcpy(presented, cells, count * sizeof(*cells));
-    return 0;
+    (void)iid;
+    *out = ((TestStream *)self)->writer_handle;
+    return FACET_OK;
 }
 
-int platform_local_console_poll_key(PlatformConsoleKey *key)
+static FacetResult test_write(void *self, const FacetArray_u8 *payload,
+                              uint32_t *written)
 {
-    if (!local_key_ready) return 1;
-    *key = local_key;
-    local_key_ready = false;
-    return 0;
+    TestStream *stream = self;
+    assert(payload->count <= sizeof(stream->written) - stream->written_count);
+    memcpy(stream->written + stream->written_count, payload->data,
+           payload->count);
+    stream->written_count += payload->count;
+    *written = (uint32_t)payload->count;
+    return FACET_OK;
+}
+
+static FacetResult test_get_control(void *self, uuid_t iid, FacetHandle *out)
+{
+    (void)iid;
+    *out = ((TestStream *)self)->control_handle;
+    return FACET_OK;
+}
+
+static FacetResult test_get_terminal(void *self, uuid_t iid, FacetHandle *out)
+{
+    (void)iid;
+    *out = ((TestStream *)self)->terminal_handle;
+    return FACET_OK;
+}
+
+static FacetResult test_terminal_input(void *self, FacetHandle *out)
+{
+    *out = ((TestStream *)self)->reader_handle;
+    return FACET_OK;
+}
+
+static FacetResult test_terminal_output(void *self, FacetHandle *out)
+{
+    *out = ((TestStream *)self)->writer_handle;
+    return FACET_OK;
+}
+
+static FacetResult test_terminal_control(void *self, FacetHandle *out)
+{
+    *out = ((TestStream *)self)->control_handle;
+    return FACET_OK;
+}
+
+static void prepare_stream(TestStream *stream)
+{
+    stream->reader = (IByteReader){stream, stream, test_get_reader, test_read};
+    stream->writer = (IByteWriter){stream, stream, test_get_writer, test_write};
+    stream->control = (ITerminalControl){stream, stream, test_get_control};
+    stream->terminal = (ITerminal){stream, stream, test_get_terminal,
+        test_terminal_input, test_terminal_output, test_terminal_control};
+    assert(libfacet_export_interface(&stream->reader, &IByteReader_MetaData,
+                                     &stream->reader_handle) == FACET_OK);
+    assert(libfacet_export_interface(&stream->writer, &IByteWriter_MetaData,
+                                     &stream->writer_handle) == FACET_OK);
+    assert(libfacet_export_interface(&stream->control,
+                                     &ITerminalControl_MetaData,
+                                     &stream->control_handle) == FACET_OK);
+    assert(libfacet_export_interface(&stream->terminal, &ITerminal_MetaData,
+                                     &stream->terminal_handle) == FACET_OK);
+}
+
+static void prepare_seats(Dominit0SystemConfig *system)
+{
+    system->current_seats = calloc(system->parsed.seat_count,
+                                   sizeof(*system->current_seats));
+    assert(system->current_seats != NULL);
+    for (size_t i = 0; i < system->parsed.seat_count; i++) {
+        CurrentSeat *seat = &system->current_seats[i];
+        seat->config = &system->parsed.seats[i];
+        seat->terminals = calloc(seat->config->terminal_count,
+                                 sizeof(*seat->terminals));
+        assert(seat->terminals != NULL);
+    }
+    for (size_t i = 0; i < 3; i++) prepare_stream(&test_streams[i]);
+    CurrentSeatTerminal *selected[3] = {
+        &system->current_seats[0].terminals[0],
+        &system->current_seats[1].terminals[0],
+        &system->current_seats[1].terminals[1],
+    };
+    for (size_t i = 0; i < 3; i++) {
+        selected[i]->terminal = test_streams[i].terminal_handle;
+        selected[i]->input = test_streams[i].reader_handle;
+        selected[i]->output = test_streams[i].writer_handle;
+        selected[i]->control = test_streams[i].control_handle;
+        selected[i]->usable = true;
+    }
 }
 
 static IProcessEnvironment *make_environment(Dominit0SystemConfig *system,
@@ -203,6 +313,7 @@ int main(void)
     assert(facet_config_make_fallback(&parsed, &diagnostic) == 0);
     assert(dominit0_config_objects_init(&system, &parsed, &diagnostic) == 0);
     assert(dominit0_environment_initialize(&system) == 0);
+    prepare_seats(&system);
     assert(dominit0_terminal_initialize(&system) == 0);
 
     Dominit0ProcessEnvironment *serial_server = NULL;
@@ -212,8 +323,8 @@ int main(void)
                                         &IByteReader_MetaData);
     IByteWriter *serial_output = resolve(serial_environment, "stdout",
                                          &IByteWriter_MetaData);
-    serial_byte = 'x';
-    serial_ready = true;
+    test_streams[0].input = 'x';
+    test_streams[0].input_ready = true;
     FacetArray_u8 bytes = {0};
     assert(serial_input->read_bytes(serial_input->self, 1, &bytes) == FACET_OK);
     assert(bytes.count == 1 && bytes.data[0] == 'x');
@@ -222,8 +333,8 @@ int main(void)
     uint32_t written = 0;
     assert(serial_output->write_bytes(serial_output->self, &output, &written) ==
            FACET_OK);
-    assert(written == 2 && serial_written_count == 2);
-    assert(memcmp(serial_written, "ok", 2) == 0);
+    assert(written == 2 && test_streams[0].written_count == 2);
+    assert(memcmp(test_streams[0].written, "ok", 2) == 0);
     libfacet_free_proxy_client(serial_output);
     libfacet_free_proxy_client(serial_input);
     destroy_environment(serial_environment, serial_server);
@@ -238,10 +349,10 @@ int main(void)
     output = (FacetArray_u8){.data = (uint8_t *)"A", .count = 1};
     assert(tty1_output->write_bytes(tty1_output->self, &output, &written) ==
            FACET_OK);
-    assert((presented[0] & 0xffu) == 'A');
-    local_key = (PlatformConsoleKey){.kind = PLATFORM_CONSOLE_KEY_BYTE,
-                                     .byte = 'z'};
-    local_key_ready = true;
+    assert(test_streams[1].written_count == 1 &&
+           test_streams[1].written[0] == 'A');
+    test_streams[1].input = 'z';
+    test_streams[1].input_ready = true;
     bytes = (FacetArray_u8){0};
     assert(tty1_input->read_bytes(tty1_input->self, 1, &bytes) == FACET_OK);
     assert(bytes.count == 1 && bytes.data[0] == 'z');
@@ -257,14 +368,12 @@ int main(void)
     output = (FacetArray_u8){.data = (uint8_t *)"B", .count = 1};
     assert(tty2_output->write_bytes(tty2_output->self, &output, &written) ==
            FACET_OK);
-    assert((presented[0] & 0xffu) == 'A');
-    local_key = (PlatformConsoleKey){
-        .kind = PLATFORM_CONSOLE_KEY_SWITCH_TERMINAL, .terminal_index = 1};
-    local_key_ready = true;
+    assert(test_streams[1].written_count == 1 &&
+           test_streams[2].written_count == 1 &&
+           test_streams[2].written[0] == 'B');
     bytes = (FacetArray_u8){0};
     assert(tty2_input->read_bytes(tty2_input->self, 1, &bytes) == FACET_OK);
     assert(bytes.count == 0);
-    assert((presented[0] & 0xffu) == 'B');
 
     libfacet_free_proxy_client(tty2_output);
     libfacet_free_proxy_client(tty2_input);
