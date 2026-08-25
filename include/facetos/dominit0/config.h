@@ -4,6 +4,7 @@
 #include <facetos/interfaces/IDomainConfig.h>
 
 typedef struct Dominit0DomainEnvironment Dominit0DomainEnvironment;
+typedef struct FacetInitrd FacetInitrd;
 
 typedef struct Dominit0DomainConfigObject {
     IDomainConfig domain;
@@ -22,6 +23,7 @@ typedef struct Dominit0DomainConfigObject {
 typedef struct CurrentDomain {
     IDomainConfig *config;
     Dominit0DomainEnvironment *environment;
+    FacetInitrd *initrd;
     void *platform_state;
 } CurrentDomain;
 

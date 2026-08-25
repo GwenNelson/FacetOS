@@ -6,6 +6,7 @@
 #include <facetos/dominit0/kmalloc.h>
 #include <facetos/dominit0/kpanic.h>
 #include <facetos/dominit0/platform/api.h>
+#include <facetos/initrd.h>
 
 #ifdef DEBUG
 void test_kmalloc(void) {
@@ -64,9 +65,30 @@ static void launch_configured_domains(Dominit0SystemConfig *system)
 {
      for (size_t i = 0; i < system->domain_count; i++) {
           CurrentDomain *current = system->current_domains[i];
+          const FacetConfigDomain *parsed = &system->parsed.domains[i];
           IDomainConfig *config = current->config;
           uint64_t domain_id = UINT64_MAX;
           FacetString domain_name = {0};
+
+          PlatformConfigSource initrd_source;
+          PlatformConfigSourceStatus initrd_status =
+               platform_get_boot_module(parsed->initrd, &initrd_source);
+          if (initrd_status != PLATFORM_CONFIG_SOURCE_FOUND) {
+               klog(LOG_ERROR, "Unable to locate unique initrd %s for domain %llu\n",
+                    parsed->initrd, (unsigned long long)parsed->id);
+               continue;
+          }
+          current->initrd = facet_initrd_create(initrd_source.data, initrd_source.size);
+          FacetHandle file_store = {0};
+          if (current->initrd == NULL ||
+              facet_initrd_export(current->initrd, &file_store) != FACET_OK ||
+              dominit0_environment_bind_file_store(current->environment, file_store) != 0) {
+               klog(LOG_ERROR, "Unable to prepare initrd %s for domain %llu\n",
+                    parsed->initrd, (unsigned long long)parsed->id);
+               facet_initrd_destroy(current->initrd);
+               current->initrd = NULL;
+               continue;
+          }
 
           current->platform_state = platform_start_domain(current);
           if (current->platform_state != NULL)

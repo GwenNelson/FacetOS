@@ -49,6 +49,17 @@ static FacetResult return_handle(FacetHandle handle, FacetHandle *out)
     return FACET_OK;
 }
 
+static FacetResult file_get_interface(void *self, uuid_t iid, FacetHandle *out);
+static FacetResult file_get_size(void *self, uint64_t *out);
+static FacetResult file_read_at(void *self, uint64_t offset, uint32_t maximum,
+                                FacetArray_u8 *out);
+static FacetResult file_write_at(void *self, uint64_t offset,
+                                 const FacetArray_u8 *data, uint32_t *written);
+static FacetResult directory_get_interface(void *self, uuid_t iid, FacetHandle *out);
+static FacetResult directory_list(void *self, uint64_t cursor, uint32_t maximum,
+                                  FacetArray_Entry *entries, uint64_t *next,
+                                  bool *end);
+
 static size_t align4(size_t value)
 {
     return (value + 3u) & ~((size_t)3u);
@@ -121,14 +132,32 @@ static FacetResult store_get_interface(void *self, uuid_t iid, FacetHandle *out)
 static FacetResult store_open_file(void *self, const FacetString *path, FacetHandle *out)
 {
     InitrdEntry *entry = find_entry(self, path, false);
-    return entry == NULL ? FACET_NOT_FOUND : return_handle(entry->file_handle, out);
+    if (entry == NULL) return FACET_NOT_FOUND;
+    if (entry->file_handle.platform == NULL) {
+        entry->file.self = entry; entry->file.priv = self;
+        entry->file.getInterface = file_get_interface; entry->file.get_size = file_get_size;
+        entry->file.read_at = file_read_at; entry->file.write_at = file_write_at;
+        if (libfacet_export_interface(&entry->file, &IFile_MetaData,
+                                      &entry->file_handle) != FACET_OK)
+            return FACET_OUT_OF_MEMORY;
+    }
+    return return_handle(entry->file_handle, out);
 }
 
 static FacetResult store_open_directory(void *self, const FacetString *path,
                                         FacetHandle *out)
 {
     InitrdEntry *entry = find_entry(self, path, true);
-    return entry == NULL ? FACET_NOT_FOUND : return_handle(entry->directory_handle, out);
+    if (entry == NULL) return FACET_NOT_FOUND;
+    if (entry->directory_handle.platform == NULL) {
+        entry->directory_interface.self = entry; entry->directory_interface.priv = self;
+        entry->directory_interface.getInterface = directory_get_interface;
+        entry->directory_interface.list = directory_list;
+        if (libfacet_export_interface(&entry->directory_interface, &IDirectory_MetaData,
+                                      &entry->directory_handle) != FACET_OK)
+            return FACET_OUT_OF_MEMORY;
+    }
+    return return_handle(entry->directory_handle, out);
 }
 
 static FacetResult file_get_interface(void *self, uuid_t iid, FacetHandle *out)
@@ -244,6 +273,10 @@ FacetInitrd *facet_initrd_create(const void *data, size_t size)
         size_t data_offset = align4(name_offset + name_size);
         if (data_offset > size || file_size > size - data_offset) goto fail;
         if (strcmp((const char *)name, "TRAILER!!!") == 0) break;
+        if (strcmp((const char *)name, ".") == 0) {
+            offset = align4(data_offset + file_size);
+            continue;
+        }
         unsigned kind = (unsigned)(mode & 0170000u);
         if (kind != 0100000u && kind != 0040000u) goto fail;
         if (initrd->entry_count == CPIO_MAX_ENTRIES) goto fail;
@@ -277,22 +310,6 @@ FacetResult facet_initrd_export(FacetInitrd *initrd, FacetHandle *store)
     initrd->store_interface.open_directory = store_open_directory;
     if (libfacet_export_interface(&initrd->store_interface, &IFileStore_MetaData,
                                   &initrd->store_handle) != FACET_OK) return FACET_ERROR;
-    for (size_t i = 0; i < initrd->entry_count; i++) {
-        InitrdEntry *entry = &initrd->entries[i];
-        if (entry->directory) {
-            entry->directory_interface.self = entry; entry->directory_interface.priv = initrd;
-            entry->directory_interface.getInterface = directory_get_interface;
-            entry->directory_interface.list = directory_list;
-            if (libfacet_export_interface(&entry->directory_interface, &IDirectory_MetaData,
-                                          &entry->directory_handle) != FACET_OK) return FACET_ERROR;
-        } else {
-            entry->file.self = entry; entry->file.priv = initrd;
-            entry->file.getInterface = file_get_interface; entry->file.get_size = file_get_size;
-            entry->file.read_at = file_read_at; entry->file.write_at = file_write_at;
-            if (libfacet_export_interface(&entry->file, &IFile_MetaData,
-                                          &entry->file_handle) != FACET_OK) return FACET_ERROR;
-        }
-    }
     return return_handle(initrd->store_handle, store);
 }
 

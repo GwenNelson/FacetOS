@@ -15,9 +15,10 @@ typedef struct FacetSel4Export FacetSel4Export;
 #define FACET_SEL4_FLAG_SHARED_PAYLOAD (1u << 31)
 #define FACET_SEL4_BUFFER_COUNT_SHIFT 24
 #define FACET_SEL4_BUFFER_COUNT_MASK 0x7fu
-#define FACET_SEL4_MAX_ATTACHMENTS \
-    (seL4_MsgMaxExtraCaps < FACET_RPC_MAX_ATTACHMENTS ? \
-     seL4_MsgMaxExtraCaps : FACET_RPC_MAX_ATTACHMENTS)
+/* Each exported server reserves receive slots.  The bootstrap CSpace is small
+ * and every current Facet method transfers at most one object plus, at most,
+ * one bulk frame, so two slots are sufficient during bring-up. */
+#define FACET_SEL4_MAX_ATTACHMENTS 2u
 
 typedef struct FacetSel4BulkState {
     vka_object_t frames[FACET_RPC_MAX_ATTACHMENTS];

@@ -29,6 +29,8 @@ SDK_KERNEL     := $(SDK_BUILD)/kernel/kernel.elf
 FACET_DOMINIT0 := $(SDK_BUILD)/dominit0
 FACET_DOMINIT  := $(SDK_BUILD)/dominit
 FACET_CONFIG_FILE := $(ROOT)/config/facet.toml
+INITRD_SYSTEM := $(ROOT)/build/initrd/system.initrd
+INITRD_CHILD := $(ROOT)/build/initrd/child.initrd
 
 #
 # FacetOS klibc.
@@ -488,8 +490,16 @@ libfacet: facet-idlc libfacet-common libfacet-platform-sel4
 
 
 # Build everything needed to boot FacetOS.
-build: klibc facet-config configure libfacet
+build: klibc facet-config configure libfacet $(INITRD_SYSTEM) $(INITRD_CHILD)
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf dominit0 dominit
+
+$(INITRD_SYSTEM): $(ROOT)/initrd/system/README
+	mkdir -p $(dir $@)
+	cd $(ROOT)/initrd/system && find . -print | sort | cpio --quiet -o -H newc > $@
+
+$(INITRD_CHILD): $(ROOT)/initrd/child/README
+	mkdir -p $(dir $@)
+	cd $(ROOT)/initrd/child && find . -print | sort | cpio --quiet -o -H newc > $@
 
 
 # Keep `make sdk` as a familiar name, but it no longer implies cleaning.
@@ -560,7 +570,7 @@ endif
 
 QEMU_DIRECT_FLAGS := \
 	-kernel $(BOOTSTUB32) \
-	-initrd $(SDK_KERNEL),$(FACET_DOMINIT0),$(FACET_DOMINIT),$(FACET_CONFIG_FILE)
+	-initrd $(SDK_KERNEL),$(FACET_DOMINIT0),$(FACET_DOMINIT),$(FACET_CONFIG_FILE),$(INITRD_SYSTEM),$(INITRD_CHILD)
 
 QEMU_ISO_FLAGS := \
 	-cdrom $(FACETOS_ISO)
@@ -569,13 +579,13 @@ QEMU_ISO_FLAGS := \
 # One command now does the incremental kernel/dominit0/dominit build, incrementally
 # builds bootstub32, and boots the result.
 run: build bootstub32
-	$(QEMU) \
+	timeout 30s $(QEMU) \
 		$(QEMU_FLAGS) \
 		$(QEMU_DIRECT_FLAGS)
 
 
 run-iso: image
-	$(QEMU) \
+	timeout 30s $(QEMU) \
 		$(QEMU_FLAGS) \
 		$(QEMU_ISO_FLAGS)
 

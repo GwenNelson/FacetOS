@@ -226,27 +226,8 @@ int dominit0_config_export_objects(Dominit0SystemConfig *system)
 {
     if (system == NULL || system->domains == NULL)
         return -1;
-    for (size_t i = 0; i < system->domain_count; i++) {
-        /* The current platform service has a deliberately small exported
-         * endpoint budget during bootstrap.  Export the root domain's
-         * effective configuration now; child configuration views are kept
-         * locally until the process-manager export pool is introduced. */
-        if (i != system->root_index)
-            continue;
-        Dominit0DomainConfigObject *object = &system->domains[i];
-        if (object->domain_handle.platform != NULL)
-            continue;
-        FacetHandle domain = {0};
-        if (libfacet_export_interface(&object->domain, &IDomainConfig_MetaData,
-                                      &domain) != FACET_OK) {
-            klog(LOG_ERROR, "could not export domain config %zu\n", i);
-            return -1;
-        }
-        /* The effective configuration is useful at bootstrap now.  Its
-         * nested logger/console object views remain deliberately unbound
-         * until their export lifetime is managed independently. */
-        object->domain_handle = domain;
-    }
+    /* Kept platform-neutral until composite interface dispatch can expose
+     * IDomainConfig without consuming another bootstrap server thread. */
     return 0;
 }
 
