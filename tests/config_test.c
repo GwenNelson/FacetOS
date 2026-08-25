@@ -205,6 +205,28 @@ static void test_failures(void)
         "domain_manager='none'\nlogging_sinks=[{name='d',level='info'}]\n"
         "terminals=[{terminal='s.t',view='native',initial_process='/FacetOS/FacetLogin'}]\n";
     expect_failure(duplicate_terminal, FACET_CONFIG_DIAGNOSTIC_DUPLICATE);
+    static const char native_pid1[] =
+        "[facet]\nversion=1\n[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
+        "[[seats]]\nname='s'\ntype='local'\nterminals=['t']\n"
+        "[[domains]]\nid=0\nname='n'\npersonality='native'\ndomain_manager='none'\n"
+        "pid1='/sbin/init'\nlogging_sinks=[{name='d',level='info'}]\n"
+        "terminals=[{terminal='s.t',view='native',initial_process='/x'}]\n";
+    expect_failure(native_pid1, FACET_CONFIG_DIAGNOSTIC_SCHEMA);
+    static const char posix_missing_pid1[] =
+        "[facet]\nversion=1\n[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
+        "[[seats]]\nname='s'\ntype='local'\nterminals=['t']\n"
+        "[[domains]]\nid=0\nname='p'\npersonality='posix'\ndomain_manager='none'\n"
+        "logging_sinks=[{name='d',level='info'}]\n"
+        "terminals=[{terminal='s.t',device='tty1'}]\n";
+    expect_failure(posix_missing_pid1, FACET_CONFIG_DIAGNOSTIC_SCHEMA);
+    static const char missing_authentication_source[] =
+        "[facet]\nversion=1\n[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
+        "[[seats]]\nname='s'\ntype='local'\nterminals=['t']\n"
+        "[[domains]]\nid=0\nname='n'\npersonality='native'\ndomain_manager='none'\n"
+        "authentication_source='missing'\nlogging_sinks=[{name='d',level='info'}]\n"
+        "terminals=[{terminal='s.t',view='native',initial_process='/x'}]\n";
+    expect_failure(missing_authentication_source,
+                   FACET_CONFIG_DIAGNOSTIC_UNRESOLVED_REFERENCE);
 }
 
 int main(void)
