@@ -246,15 +246,6 @@ static FacetResult logger_flush(void *self)
     return FACET_OK;
 }
 
-int dominit0_config_export_objects(Dominit0SystemConfig *system)
-{
-    if (system == NULL || system->domains == NULL)
-        return -1;
-    /* Kept platform-neutral until composite interface dispatch can expose
-     * IDomainConfig without consuming another bootstrap server thread. */
-    return 0;
-}
-
 int dominit0_environment_initialize(Dominit0SystemConfig *system)
 {
     if (system == NULL || system->domains == NULL ||

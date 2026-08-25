@@ -272,6 +272,14 @@ void dominit0_config_objects_destroy(Dominit0SystemConfig *system)
 {
     if (system == NULL) return;
     for (size_t i = 0; i < system->domain_count; i++) {
+        #ifdef FACET_PLATFORM_SEL4
+        if (system->domains[i].domain_handle.platform != NULL)
+            (void)libfacet_unexport_interface(system->domains[i].domain_handle);
+        if (system->domains[i].logging_handle.platform != NULL)
+            (void)libfacet_unexport_interface(system->domains[i].logging_handle);
+        if (system->domains[i].console_handle.platform != NULL)
+            (void)libfacet_unexport_interface(system->domains[i].console_handle);
+        #endif
         free(system->domains[i].logging._sinks.data);
         free(system->domains[i].console._assignments.data);
         free(system->current_domains == NULL ? NULL :
@@ -281,6 +289,36 @@ void dominit0_config_objects_destroy(Dominit0SystemConfig *system)
     free(system->domains);
     facet_config_destroy(&system->parsed);
     memset(system, 0, sizeof(*system));
+}
+
+int dominit0_config_export_objects(Dominit0SystemConfig *system)
+{
+#ifndef FACET_PLATFORM_SEL4
+    (void)system;
+    return 0;
+#else
+    if (system == NULL || system->domains == NULL)
+        return -1;
+    for (size_t i = 0; i < system->domain_count; i++) {
+        Dominit0DomainConfigObject *object = &system->domains[i];
+        if (object->domain_handle.platform != NULL)
+            continue;
+        FacetHandle logging = {0}, console = {0}, domain = {0};
+        if (libfacet_export_interface(&object->logging, &ILoggingConfig_MetaData,
+                                      &logging) != FACET_OK ||
+            libfacet_export_interface(&object->console, &IDomainConsoleConfig_MetaData,
+                                      &console) != FACET_OK ||
+            libfacet_export_interface(&object->domain, &IDomainConfig_MetaData,
+                                      &domain) != FACET_OK ||
+            dominit0_domain_config_bind_handles(object, domain, logging, console) != 0) {
+            if (domain.platform != NULL) (void)libfacet_unexport_interface(domain);
+            if (console.platform != NULL) (void)libfacet_unexport_interface(console);
+            if (logging.platform != NULL) (void)libfacet_unexport_interface(logging);
+            return -1;
+        }
+    }
+    return 0;
+#endif
 }
 
 int dominit0_domain_config_bind_handles(Dominit0DomainConfigObject *object,

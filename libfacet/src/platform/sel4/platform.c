@@ -22,7 +22,7 @@ typedef struct FacetSel4Export FacetSel4Export;
 /* Facet RPC dispatch is deliberately small and non-recursive.  A full
  * sel4utils 64 KiB server stack for every exported interface prematurely
  * exhausts dominit0 while it is setting up per-domain environments. */
-#define FACET_SEL4_SERVER_STACK_PAGES 8u
+#define FACET_SEL4_SERVER_STACK_PAGES 4u
 
 typedef struct FacetSel4BulkState {
     vka_object_t frames[FACET_RPC_MAX_ATTACHMENTS];
