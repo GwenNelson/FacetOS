@@ -571,10 +571,119 @@ static void test_posix_descriptor_lifetimes(void)
     facet_initrd_destroy(initrd);
 }
 
+static void test_chrooted_posix_synthetic_etc(void)
+{
+    Archive archive = {0};
+    append_entry(&archive, ".", 0040755, NULL, 0);
+    append_entry(&archive, "posix", 0040755, NULL, 0);
+    append_entry(&archive, "posix/bin", 0040755, NULL, 0);
+    append_entry(&archive, "posix/bin/sh", 0100755, "elf", 3);
+    append_entry(&archive, "TRAILER!!!", 0, NULL, 0);
+    FacetInitrd *initrd = facet_initrd_create(archive.bytes, archive.size);
+    assert(initrd != NULL);
+    Dominit0CredentialFileStore *view_store =
+        dominit0_credential_file_store_create(initrd, 1000, 1000, false);
+    assert(view_store != NULL);
+    FacetHandle store_copy = {0};
+    assert(libfacet_handle_clone(
+               dominit0_credential_file_store_handle(view_store),
+               &store_copy) == FACET_OK);
+    IFileStore *store = libfacet_new_proxy_client(&IFileStore_MetaData,
+                                                  store_copy);
+    assert(store != NULL);
+    FacetString backing = facet_string("/posix");
+    FacetHandle cwd = {0};
+    assert(store->open_directory(store->self, &backing, &cwd) == FACET_OK);
+    libfacet_free_proxy_client(store);
+
+    TestStreams streams = {0};
+    streams.reader = (IByteReader){
+        .self = &streams, .priv = &streams,
+        .getInterface = stream_interface, .read_bytes = stream_read,
+    };
+    streams.writer = (IByteWriter){
+        .self = &streams, .priv = &streams,
+        .getInterface = stream_interface, .write_bytes = stream_write,
+    };
+    assert(libfacet_export_interface(&streams.reader, &IByteReader_MetaData,
+                                     &streams.reader_handle) == FACET_OK);
+    assert(libfacet_export_interface(&streams.writer, &IByteWriter_MetaData,
+                                     &streams.writer_handle) == FACET_OK);
+    Dominit0PosixView *view = dominit0_posix_view_create(
+        streams.reader_handle, streams.writer_handle,
+        dominit0_credential_file_store_handle(view_store), cwd);
+    assert(view != NULL);
+    (void)libfacet_handle_release(cwd);
+    FacetHandle posix_copy = {0};
+    assert(libfacet_handle_clone(dominit0_posix_view_handle(view),
+                                 &posix_copy) == FACET_OK);
+    IPOSIXView *posix = libfacet_new_proxy_client(&IPOSIXView_MetaData,
+                                                  posix_copy);
+    assert(posix != NULL);
+
+    int32_t error = -1;
+    FacetArray_string entries = {0};
+    FacetString root = facet_string("/");
+    assert(posix->list_directory(posix->self, &root, &entries, &error) == FACET_OK);
+    assert(error == 0 && entries.count == 2);
+    bool saw_bin = false, saw_etc = false;
+    for (size_t i = 0; i < entries.count; i++) {
+        saw_bin |= entries.data[i].length == 3 &&
+            memcmp(entries.data[i].data, "bin", 3) == 0;
+        saw_etc |= entries.data[i].length == 3 &&
+            memcmp(entries.data[i].data, "etc", 3) == 0;
+    }
+    assert(saw_bin && saw_etc);
+    facet_rpc_release_value(FACET_TYPE_ARRAY, &FacetArray_string_TypeMeta,
+                            &entries);
+
+    FacetString passwd = facet_string("/etc/passwd");
+    int32_t fd = -1;
+    assert(posix->open_fd(posix->self, &passwd, O_RDONLY, 0, &fd, &error) ==
+           FACET_OK);
+    assert(fd >= 3 && error == 0);
+    FacetArray_u8 bytes = {0};
+    int64_t result = -1;
+    assert(posix->read_fd(posix->self, fd, 128, &bytes, &result, &error) ==
+           FACET_OK);
+    assert(error == 0 && result >= 10 && bytes.count >= 10 &&
+           memcmp(bytes.data, "root:x:0:0", 10) == 0);
+    free(bytes.data);
+    int32_t close_result = -1;
+    assert(posix->close_fd(posix->self, fd, &close_result, &error) == FACET_OK);
+    FacetString shadow = facet_string("/etc/shadow");
+    assert(posix->open_fd(posix->self, &shadow, O_RDONLY, 0, &fd, &error) ==
+           FACET_OK);
+    assert(fd == -1 && error == EACCES);
+
+    FacetString etc = facet_string("/etc");
+    assert(posix->change_directory(posix->self, &etc, &error) == FACET_OK &&
+           error == 0);
+    FacetString cwd_path = {0};
+    assert(posix->get_cwd(posix->self, &cwd_path, &error) == FACET_OK &&
+           error == 0 && cwd_path.length == 4 &&
+           memcmp(cwd_path.data, "/etc", 4) == 0);
+    free((void *)(uintptr_t)cwd_path.data);
+    FacetString parent = facet_string("..");
+    assert(posix->change_directory(posix->self, &parent, &error) == FACET_OK &&
+           error == 0);
+    assert(posix->get_cwd(posix->self, &cwd_path, &error) == FACET_OK &&
+           error == 0 && cwd_path.length == 1 && cwd_path.data[0] == '/');
+    free((void *)(uintptr_t)cwd_path.data);
+
+    libfacet_free_proxy_client(posix);
+    dominit0_posix_view_destroy(view);
+    assert(libfacet_unexport_interface(streams.writer_handle) == FACET_OK);
+    assert(libfacet_unexport_interface(streams.reader_handle) == FACET_OK);
+    dominit0_credential_file_store_destroy(view_store);
+    facet_initrd_destroy(initrd);
+}
+
 int main(void)
 {
     test_lookup_and_read_only_rpc();
     test_posix_descriptor_lifetimes();
+    test_chrooted_posix_synthetic_etc();
     test_malformed_archives();
     return 0;
 }
