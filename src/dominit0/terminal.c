@@ -125,7 +125,7 @@ int dominit0_terminal_initialize(Dominit0SystemConfig *system)
     if (system == NULL || system->current_domains == NULL) return -1;
     terminal_system = system;
     if (start_seats(system) != 0) return -1;
-    size_t domain0_usable = 0;
+    size_t usable_assignments = 0;
     for (size_t di = 0; di < system->domain_count; di++) {
         const FacetConfigDomain *domain = &system->parsed.domains[di];
         for (size_t ai = 0; ai < domain->terminal_count; ai++) {
@@ -144,13 +144,13 @@ int dominit0_terminal_initialize(Dominit0SystemConfig *system)
             }
             if (add_assignment(system->current_domains[di], ai, terminal) != 0)
                 return -1;
-            if (domain->id == 0) domain0_usable++;
+            usable_assignments++;
             klog(LOG_INFO, "Assigned terminal %s to domain %llu\n",
                  assignment->reference, (unsigned long long)domain->id);
         }
     }
-    if (domain0_usable == 0) {
-        klog(LOG_ERROR, "Domain 0 has no usable configured terminal\n");
+    if (usable_assignments == 0) {
+        klog(LOG_ERROR, "No configured domain has a usable terminal\n");
         return -1;
     }
     return 0;
