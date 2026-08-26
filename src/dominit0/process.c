@@ -34,6 +34,12 @@ struct RunningProcess {
     uint64_t terminal_index;
     ProcessManager *manager;
     Dominit0ProcessEnvironment *environment;
+    char *restart_path;
+    char **restart_argv;
+    size_t restart_argc;
+    char *restart_posix_root;
+    bool restart_from_posix_view;
+    bool restart_native_capabilities;
     RunningProcess *next;
 };
 
@@ -102,13 +108,7 @@ static FacetResult lifecycle_get_interface(void *self, uuid_t iid,
     return FACET_NO_INTERFACE;
 }
 
-static FacetResult lifecycle_notify_exit(void *self, int32_t status)
-{
-    RunningProcess *process = self;
-    process->exit_status = status;
-    __atomic_store_n(&process->running, false, __ATOMIC_RELEASE);
-    return FACET_OK;
-}
+static FacetResult lifecycle_notify_exit(void *self, int32_t status);
 
 static FacetResult manager_get_interface(void *self, uuid_t iid,
                                          FacetHandle *out)
@@ -360,6 +360,37 @@ static FacetResult launch_process(ProcessManager *manager,
         result = FACET_OUT_OF_MEMORY;
         goto done;
     }
+    if (initial) {
+        process->restart_path = strdup(path_copy);
+        process->restart_argv = calloc(argc, sizeof(*process->restart_argv));
+        process->restart_argc = argc;
+        process->restart_from_posix_view = from_posix_view;
+        process->restart_native_capabilities = native_capabilities;
+        if (posix_root != NULL && posix_root->data != NULL)
+            process->restart_posix_root = copy_string(posix_root);
+        for (size_t i = 0; process->restart_argv != NULL && i < argc; i++)
+            process->restart_argv[i] = strdup(argv[i]);
+        bool restart_valid = process->restart_path != NULL &&
+            process->restart_argv != NULL &&
+            (posix_root == NULL || posix_root->data == NULL ||
+             process->restart_posix_root != NULL);
+        for (size_t i = 0; restart_valid && i < argc; i++)
+            restart_valid = process->restart_argv[i] != NULL;
+        if (!restart_valid) {
+            for (size_t i = 0; i < argc; i++)
+                free(process->restart_argv == NULL ? NULL :
+                     process->restart_argv[i]);
+            free(process->restart_argv);
+            free(process->restart_path);
+            free(process->restart_posix_root);
+            (void)libfacet_unexport_interface(process->lifecycle_handle);
+            (void)libfacet_unexport_interface(process->handle);
+            dominit0_process_environment_destroy(process->environment);
+            free(process);
+            result = FACET_OUT_OF_MEMORY;
+            goto done;
+        }
+    }
     __atomic_store_n(&process->running, true, __ATOMIC_RELEASE);
     process->platform_state = platform_start_process(
         manager->domain, elf_data, elf_size, (int)argc, argv,
@@ -369,6 +400,11 @@ static FacetResult launch_process(ProcessManager *manager,
         (void)libfacet_unexport_interface(process->lifecycle_handle);
         (void)libfacet_unexport_interface(process->handle);
         dominit0_process_environment_destroy(process->environment);
+        for (size_t i = 0; i < process->restart_argc; i++)
+            free(process->restart_argv[i]);
+        free(process->restart_argv);
+        free(process->restart_path);
+        free(process->restart_posix_root);
         free(process);
         result = FACET_ERROR;
         goto done;
@@ -384,6 +420,48 @@ done:
     free(argv);
     free(path_copy);
     return result;
+}
+
+static FacetResult lifecycle_notify_exit(void *self, int32_t status)
+{
+    RunningProcess *process = self;
+    process->exit_status = status;
+    __atomic_store_n(&process->running, false, __ATOMIC_RELEASE);
+    if (process->restart_path == NULL) return FACET_OK;
+
+    FacetString path = {.data = process->restart_path,
+                        .length = strlen(process->restart_path)};
+    FacetString arguments[64];
+    for (size_t i = 0; i < process->restart_argc; i++)
+        arguments[i] = (FacetString){.data = process->restart_argv[i],
+                                     .length = strlen(process->restart_argv[i])};
+    FacetArray_string argv = {.data = arguments,
+                              .count = process->restart_argc};
+    FacetString root = {.data = process->restart_posix_root,
+                        .length = process->restart_posix_root == NULL ? 0 :
+                                  strlen(process->restart_posix_root)};
+    FacetHandle replacement = {0};
+    FacetResult result = launch_process(
+        process->manager, &path, &argv, (FacetHandle){0}, true,
+        process->terminal_index, NULL, (FacetHandle){0}, false,
+        process->restart_from_posix_view,
+        process->restart_native_capabilities,
+        process->restart_posix_root == NULL ? NULL : &root, NULL,
+        &replacement);
+    if (replacement.platform != NULL)
+        (void)libfacet_handle_release(replacement);
+    if (result != FACET_OK)
+        klog(LOG_ERROR, "process manager: unable to restart initial process (%d)\n",
+             (int)result);
+    /* Initial processes have no parent waitpid() call to reap them.  The
+     * replacement has been launched and the exiting child will never use the
+     * RPC result, so it is safe to remove its TCB/VSpace here; libfacet's
+     * eventual reply simply targets a caller which no longer exists. */
+    if (process->platform_state != NULL) {
+        platform_destroy_process(process->platform_state);
+        process->platform_state = NULL;
+    }
+    return FACET_OK;
 }
 
 static FacetResult posix_spawn_process(void *context, const FacetString *path,
@@ -459,6 +537,14 @@ static FacetResult posix_wait_process(void *context, int32_t pid,
         if (__atomic_load_n(&item->running, __ATOMIC_ACQUIRE)) {
             *error = EAGAIN;
             return FACET_OK;
+        }
+        /* notify_exit() runs as an RPC from the child, so destroying the
+         * process there would remove the caller before libfacet can reply.
+         * waitpid() is the first safe synchronization point after that RPC;
+         * reclaim the seL4 process exactly once here. */
+        if (item->platform_state != NULL) {
+            platform_destroy_process(item->platform_state);
+            item->platform_state = NULL;
         }
         *status = item->exit_status;
         return FACET_OK;
@@ -687,6 +773,11 @@ void dominit0_process_managers_destroy(void)
             if (process->handle.platform != NULL)
                 (void)libfacet_unexport_interface(process->handle);
             dominit0_process_environment_destroy(process->environment);
+            for (size_t i = 0; i < process->restart_argc; i++)
+                free(process->restart_argv[i]);
+            free(process->restart_argv);
+            free(process->restart_path);
+            free(process->restart_posix_root);
             free(process);
         }
         if (manager->handle.platform != NULL)

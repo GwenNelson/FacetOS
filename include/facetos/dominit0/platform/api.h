@@ -45,6 +45,9 @@ typedef struct Dominit0ProcessEnvironment Dominit0ProcessEnvironment;
 void *platform_start_process(CurrentDomain *domain, const void *elf_data,
                              size_t elf_size, int argc, char *argv[],
                              Dominit0ProcessEnvironment *environment);
+/* Reclaims a process after its lifecycle notification has completed.  The
+ * caller must not invoke this from inside the exiting process's RPC. */
+void platform_destroy_process(void *platform_state);
 
 void platform_yield(void);	// yields to the microkernel or other tasks
 

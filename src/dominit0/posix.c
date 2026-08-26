@@ -123,7 +123,12 @@ static IDirectory *directory_for_path(Dominit0PosixView *view,
     if (path == NULL || relative == NULL) return NULL;
     FacetHandle handle = view->cwd_handle;
     *relative = *path;
-    if (view->chrooted && path->length != 0 && path->data[0] == '/') {
+    /* Every absolute POSIX path starts at this process's namespace root.
+     * chrooted only controls the logical /posix-to-/ translation used by a
+     * native domain; a pure POSIX domain still has an independent root
+     * capability and must not resolve absolute paths through an inherited
+     * (possibly more privileged) CWD capability. */
+    if (path->length != 0 && path->data[0] == '/') {
         handle = view->root_handle;
         relative->data = path->data + 1;
         relative->length = path->length - 1;
@@ -563,7 +568,7 @@ static FacetResult posix_open(void *self, const FacetString *path,
     IDirectory *cwd = libfacet_proxy_from_handle(&IDirectory_MetaData,
                                                   cwd_copy);
     FacetString relative = *path;
-    if (view->chrooted && path->length != 0 && path->data[0] == '/') {
+    if (path->length != 0 && path->data[0] == '/') {
         libfacet_free_proxy_client(cwd);
         cwd = directory_for_path(view, path, &relative);
     }

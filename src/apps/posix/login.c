@@ -51,7 +51,13 @@ int main(void)
         pid_t pid;
         int status;
         if (posix_spawn(&pid, account->pw_shell, NULL, NULL, argv, NULL) != 0 ||
-            waitpid(pid, &status, 0) != pid)
+            waitpid(pid, &status, 0) != pid) {
             (void)write(1, "Unable to start shell\n", 22);
+            return 1;
+        }
+        /* Login has permanently installed the account credentials.  End this
+         * process after logout so its privileged supervisor can start a fresh
+         * login instead of reusing a demoted authentication process. */
+        return 0;
     }
 }

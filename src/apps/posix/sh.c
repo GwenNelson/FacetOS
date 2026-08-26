@@ -45,7 +45,7 @@ static int parse(char *line, char *words[], size_t capacity, size_t *count)
 }
 int main(void)
 {
-    char command[256], cwd[256];
+    char command[256], cwd[256], program[256];
     for (;;) {
         const char *user = getenv("USER");
         if (getcwd(cwd, sizeof(cwd)) != NULL) { write(1,cwd,strlen(cwd)); write(1," ",1); }
@@ -67,7 +67,17 @@ int main(void)
         if (!strcmp(words[0], "pwd")) { write(1,cwd,strlen(cwd)); write(1,"\n",1); continue; }
         if (!strcmp(words[0], "cd")) { if(count!=2 || chdir(words[1])!=0) write(1,"sh: cd failed\n",14); continue; }
         if (!strcmp(words[0], "echo")) { for(size_t i=1;i<count;i++){if(i>1)write(1," ",1);write(1,words[i],strlen(words[i]));}write(1,"\n",1);continue; }
-        const char *name = !strcmp(words[0],"ls") ? "/bin/ls" : !strcmp(words[0],"cat") ? "/bin/cat" : words[0];
+        const char *name = words[0];
+        if (strchr(name, '/') == NULL) {
+            size_t length = strlen(name);
+            if (length + sizeof("/bin/") > sizeof(program)) {
+                (void)write(1, "sh: command failed\n", 19);
+                continue;
+            }
+            memcpy(program, "/bin/", sizeof("/bin/") - 1);
+            memcpy(program + sizeof("/bin/") - 1, name, length + 1);
+            name = program;
+        }
         char *argv[17];
         argv[0] = (char *)name;
         for(size_t i=1;i<count;i++) argv[i]=words[i];

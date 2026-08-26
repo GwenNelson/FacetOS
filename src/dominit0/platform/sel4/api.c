@@ -1259,6 +1259,15 @@ void *platform_start_process(CurrentDomain *domain, const void *elf_data,
     return state;
 }
 
+void platform_destroy_process(void *platform_state)
+{
+    Sel4ProgramState *state = platform_state;
+    if (state == NULL) return;
+    program_page_allocator_cleanup(state);
+    sel4utils_destroy_process(&state->process, &sel4_vka);
+    free(state);
+}
+
 void platform_yield(void) {
      seL4_Yield();
 }

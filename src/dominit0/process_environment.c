@@ -562,8 +562,33 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
                  environment->owned_session) != 0) goto fail;
     }
     if (cwd.platform != NULL) {
-        failure_stage = "inherit current directory";
-        if (libfacet_handle_clone(cwd, &environment->owned_cwd) != FACET_OK)
+        /* A directory handle carries the authority of the file-store view
+         * which created it.  Login's CWD was opened while login was still
+         * privileged, so handing that handle directly to a demoted child
+         * would let relative paths bypass the child's uid/gid checks.
+         * Preserve the path, but reopen it through this environment's own
+         * credential-scoped store. */
+        failure_stage = "reopen inherited current directory";
+        FacetHandle cwd_copy = {0};
+        IDirectory *source = libfacet_handle_clone(cwd, &cwd_copy) == FACET_OK ?
+            libfacet_proxy_from_handle(&IDirectory_MetaData, cwd_copy) : NULL;
+        FacetString inherited_path = {0};
+        FacetResult path_result = source == NULL ? FACET_INVALID_HANDLE :
+            source->getpath(source->self, &inherited_path);
+        libfacet_free_proxy_client(source);
+        FacetString files_name = {.data = "files", .length = 5};
+        ProcessBinding *files_binding = find_binding(environment, &files_name);
+        FacetHandle files_handle = {0};
+        IFileStore *files = path_result != FACET_OK || files_binding == NULL ||
+            libfacet_handle_clone(files_binding->handle, &files_handle) !=
+                FACET_OK ? NULL :
+            libfacet_proxy_from_handle(&IFileStore_MetaData, files_handle);
+        FacetResult opened = files == NULL ? FACET_INVALID_HANDLE :
+            files->open_directory(files->self, &inherited_path,
+                                  &environment->owned_cwd);
+        libfacet_free_proxy_client(files);
+        free((void *)(uintptr_t)inherited_path.data);
+        if (opened != FACET_OK)
             goto fail;
     } else {
         failure_stage = "open root current directory";

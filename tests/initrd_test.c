@@ -534,6 +534,67 @@ static void test_posix_descriptor_lifetimes(void)
                                      &streams.reader_handle) == FACET_OK);
     assert(libfacet_export_interface(&streams.writer, &IByteWriter_MetaData,
                                      &streams.writer_handle) == FACET_OK);
+
+    /* An absolute path must use the namespace root's credential view, not an
+     * inherited CWD capability.  This models login handing a formerly
+     * privileged CWD to an unprivileged child. */
+    Dominit0CredentialFileStore *restricted_store =
+        dominit0_credential_file_store_create(initrd, 2000, 2000, false);
+    assert(restricted_store != NULL);
+    FacetHandle owner_store_copy = {0};
+    assert(libfacet_handle_clone(
+               dominit0_credential_file_store_handle(view_store),
+               &owner_store_copy) == FACET_OK);
+    IFileStore *owner_files = libfacet_new_proxy_client(
+        &IFileStore_MetaData, owner_store_copy);
+    FacetString private_path = facet_string("/private");
+    FacetHandle privileged_cwd = {0};
+    assert(owner_files != NULL &&
+           owner_files->open_directory(owner_files->self, &private_path,
+                                       &privileged_cwd) == FACET_OK);
+    libfacet_free_proxy_client(owner_files);
+    FacetHandle restricted_store_copy = {0};
+    assert(libfacet_handle_clone(
+               dominit0_credential_file_store_handle(restricted_store),
+               &restricted_store_copy) == FACET_OK);
+    IFileStore *restricted_files = libfacet_new_proxy_client(
+        &IFileStore_MetaData, restricted_store_copy);
+    FacetHandle restricted_root = {0};
+    FacetHandle denied_private = {0};
+    assert(restricted_files != NULL &&
+           restricted_files->open_directory(restricted_files->self,
+                                            &private_path,
+                                            &denied_private) ==
+               FACET_ACCESS_DENIED);
+    assert(restricted_files != NULL &&
+           restricted_files->open_directory(restricted_files->self,
+                                            &root_path,
+                                            &restricted_root) == FACET_OK);
+    libfacet_free_proxy_client(restricted_files);
+    Dominit0PosixView *restricted_view = dominit0_posix_view_create(
+        streams.reader_handle, streams.writer_handle,
+        dominit0_credential_file_store_handle(restricted_store),
+        privileged_cwd);
+    assert(restricted_view != NULL);
+    assert(dominit0_posix_view_set_root(restricted_view, restricted_root) == 0);
+    (void)libfacet_handle_release(privileged_cwd);
+    (void)libfacet_handle_release(restricted_root);
+    FacetHandle restricted_posix_copy = {0};
+    assert(libfacet_handle_clone(dominit0_posix_view_handle(restricted_view),
+                                 &restricted_posix_copy) == FACET_OK);
+    IPOSIXView *restricted_posix = libfacet_new_proxy_client(
+        &IPOSIXView_MetaData, restricted_posix_copy);
+    FacetString private_secret = facet_string("/private/secret");
+    int32_t restricted_fd = -1, restricted_error = 0;
+    assert(restricted_posix != NULL &&
+           restricted_posix->open_fd(restricted_posix->self, &private_secret,
+                                     O_RDONLY, 0, &restricted_fd,
+                                     &restricted_error) == FACET_OK);
+    assert(restricted_fd == -1 && restricted_error == EACCES);
+    libfacet_free_proxy_client(restricted_posix);
+    dominit0_posix_view_destroy(restricted_view);
+    dominit0_credential_file_store_destroy(restricted_store);
+
     Dominit0PosixView *view = dominit0_posix_view_create(
         streams.reader_handle, streams.writer_handle,
         dominit0_credential_file_store_handle(view_store), cwd);
