@@ -159,6 +159,7 @@ static FacetResult launch_process(ProcessManager *manager,
                                   uint64_t terminal_index,
                                   const FacetArray_string *sysv_environment,
                                   FacetHandle cwd_handle,
+                                  bool synthetic_posix_cwd,
                                   bool from_posix_view,
                                   bool native_capabilities,
                                   const FacetString *posix_root,
@@ -279,6 +280,12 @@ static FacetResult launch_process(ProcessManager *manager,
         result = FACET_OUT_OF_MEMORY;
         goto done;
     }
+    /* A synthetic mount has no IDirectory handle of its own.  Establish its
+     * inherited state before starting the child: platform_start_process may
+     * run it immediately, so updating this afterwards races its first ls. */
+    if (synthetic_posix_cwd)
+        dominit0_process_environment_set_posix_synthetic_cwd(
+            process->environment, true);
     if (manager->domain->parsed == NULL ||
         dominit0_process_environment_set_domain_id(process->environment,
             manager->domain->parsed->id) != 0) {
@@ -418,7 +425,7 @@ static FacetResult posix_spawn_process(void *context, const FacetString *path,
     bool newly_authenticated = session.platform != NULL;
     FacetResult result = launch_process(parent->manager, path, arguments,
         session, false, parent->terminal_index,
-        newly_authenticated ? NULL : &inherited_sysv, cwd, true,
+        newly_authenticated ? NULL : &inherited_sysv, cwd, inherited_synthetic_cwd, true,
         dominit0_process_environment_has_native_capabilities(parent->environment),
         namespace_root == NULL ? NULL : &root,
         newly_authenticated ? NULL : parent->environment,
@@ -426,10 +433,6 @@ static FacetResult posix_spawn_process(void *context, const FacetString *path,
     free(sysv);
     if (cwd.platform != NULL) (void)libfacet_handle_release(cwd);
     if (result == FACET_OK) {
-        if (parent->manager->processes != NULL)
-            dominit0_process_environment_set_posix_synthetic_cwd(
-                parent->manager->processes->environment,
-                inherited_synthetic_cwd);
         *pid = parent->manager->processes == NULL ? -1 :
             parent->manager->processes->pid;
         if (process_handle.platform != NULL) (void)libfacet_handle_release(process_handle);
@@ -559,7 +562,7 @@ static FacetResult manager_launch(void *self, const FacetString *path,
     bool native_capabilities = manager->domain->parsed != NULL &&
         manager->domain->parsed->personality == FACET_CONFIG_PERSONALITY_NATIVE;
     result = launch_process(self, path, arguments, session_handle, false,
-                            terminal_index, &sysv_environment, cwd_handle, false,
+                            terminal_index, &sysv_environment, cwd_handle, false, false,
                             native_capabilities,
                             &configured_root,
                             NULL, out);
@@ -603,7 +606,7 @@ static FacetResult manager_launch_initial(void *self, const FacetString *path,
         (void)dominit0_auth_session_for_user(manager->domain->parsed->id, "root", &session);
     FacetResult result = launch_process(self, path, arguments, session, true,
                                         terminal_index, NULL,
-                                        (FacetHandle){0}, from_posix_view,
+                                        (FacetHandle){0}, false, from_posix_view,
                                         native_capabilities,
                                         posix_root, NULL, out);
     if (session.platform != NULL) (void)libfacet_handle_release(session);
@@ -636,7 +639,7 @@ static FacetResult manager_launch_on_terminal(
     bool native_capabilities = manager->domain->parsed != NULL &&
         manager->domain->parsed->personality == FACET_CONFIG_PERSONALITY_NATIVE;
     return launch_process(manager, path, arguments, session_handle, false,
-                          terminal_index, NULL, (FacetHandle){0}, false,
+                          terminal_index, NULL, (FacetHandle){0}, false, false,
                           native_capabilities, &configured_root,
                           NULL, out);
 }

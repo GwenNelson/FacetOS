@@ -309,6 +309,58 @@ static FacetResult posix_list_directory(void *self, const FacetString *path,
         (string_equals(path, "/etc") ||
          (view->cwd_synthetic_etc && string_equals(path, "."))))
         return synthetic_etc_entries(entries);
+    if (view->cwd_synthetic_etc && string_equals(path, "..")) {
+        FacetString root = {.data = ".", .length = 1};
+        IDirectory *directory = proxy_from_borrowed(&IDirectory_MetaData,
+                                                     view->root_handle);
+        FacetHandle handle = {0};
+        FacetResult opened = directory == NULL ? FACET_INVALID_HANDLE :
+            directory->open_directory(directory->self, &root, &handle);
+        libfacet_free_proxy_client(directory);
+        if (opened != FACET_OK) return opened;
+        IDirectory *parent = libfacet_proxy_from_handle(&IDirectory_MetaData,
+                                                        handle);
+        FacetArray_Entry raw = {0}; uint64_t next = 0; bool end = false;
+        FacetResult result = parent == NULL ? FACET_INVALID_HANDLE :
+            parent->list(parent->self, 0, 128, &raw, &next, &end);
+        libfacet_free_proxy_client(parent);
+        if (result != FACET_OK) return result;
+        size_t raw_count = raw.count;
+        bool has_etc = false;
+        for (size_t i = 0; i < raw_count; i++)
+            if (raw.data[i].name.length == 3 &&
+                memcmp(raw.data[i].name.data, "etc", 3) == 0)
+                has_etc = true;
+        size_t count = raw_count + (has_etc ? 0 : 1);
+        FacetString *copy = calloc(count, sizeof(*copy));
+        if (copy == NULL) { facet_rpc_release_value(FACET_TYPE_ARRAY, &FacetArray_Entry_TypeMeta, &raw); return FACET_OUT_OF_MEMORY; }
+        for (size_t i = 0; i < raw_count; i++) {
+            copy[i].data = strdup(raw.data[i].name.data);
+            copy[i].length = raw.data[i].name.length;
+            if (copy[i].data == NULL) {
+                while (i != 0) free((void *)(uintptr_t)copy[--i].data);
+                free(copy);
+                facet_rpc_release_value(FACET_TYPE_ARRAY,
+                                        &FacetArray_Entry_TypeMeta, &raw);
+                return FACET_OUT_OF_MEMORY;
+            }
+        }
+        if (!has_etc) {
+            copy[raw_count].data = strdup("etc");
+            copy[raw_count].length = 3;
+            if (copy[raw_count].data == NULL) {
+                for (size_t i = 0; i < raw_count; i++)
+                    free((void *)(uintptr_t)copy[i].data);
+                free(copy);
+                facet_rpc_release_value(FACET_TYPE_ARRAY,
+                                        &FacetArray_Entry_TypeMeta, &raw);
+                return FACET_OUT_OF_MEMORY;
+            }
+        }
+        facet_rpc_release_value(FACET_TYPE_ARRAY, &FacetArray_Entry_TypeMeta, &raw);
+        entries->data = copy; entries->count = count;
+        return FACET_OK;
+    }
     if (view->cwd_synthetic_etc) { *error = ENOTDIR; return FACET_OK; }
     FacetString relative = {0};
     IDirectory *cwd = directory_for_path(view, path, &relative);
@@ -698,11 +750,9 @@ int dominit0_posix_view_set_root(Dominit0PosixView *view,
     if (view->root_handle.platform != NULL)
         (void)libfacet_handle_release(view->root_handle);
     view->root_handle = copy;
-    FacetHandle cwd = {0};
-    if (libfacet_handle_clone(root_handle, &cwd) != FACET_OK) return -1;
-    if (view->cwd_handle.platform != NULL)
-        (void)libfacet_handle_release(view->cwd_handle);
-    view->cwd_handle = cwd;
+    /* The namespace root and current directory are independent.  Descendant
+     * processes arrive with an inherited cwd; replacing it here made every
+     * external command behave as though it had been launched from '/'. */
     IDirectory *root = proxy_from_borrowed(&IDirectory_MetaData, root_handle);
     FacetString physical = {0};
     FacetResult result = root == NULL ? FACET_INVALID_HANDLE :

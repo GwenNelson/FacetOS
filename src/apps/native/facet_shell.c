@@ -168,17 +168,20 @@ static const char *environment_value(const FacetArray_string *environment,
     return NULL;
 }
 
-static char *resolve_program(IDirectory *cwd, const char *command,
+static char *resolve_program(IDirectory *cwd, IDirectory *root,
+                             const char *command,
                              const char *path)
 {
-    if (strchr(command, '/') != NULL)
-        return file_exists(cwd, command) ? strdup(command) : NULL;
+    if (strchr(command, '/') != NULL) {
+        IDirectory *base = command[0] == '/' ? root : cwd;
+        return file_exists(base, command) ? strdup(command) : NULL;
+    }
     if (path == NULL || *path == '\0') path = "/FacetOS";
     size_t offset = 0;
     while (offset != SIZE_MAX) {
         char *candidate = facet_shell_path_candidate(path, &offset, command);
         if (candidate == NULL) break;
-        if (file_exists(cwd, candidate)) return candidate;
+        if (file_exists(root, candidate)) return candidate;
         free(candidate);
     }
     return NULL;
@@ -186,11 +189,12 @@ static char *resolve_program(IDirectory *cwd, const char *command,
 
 static void execute_program(IProcessManager *processes,
                             IProcessEnvironment *environment,
-                            IDirectory *cwd, IByteWriter *output,
+                            IDirectory *cwd, IDirectory *root,
+                            IByteWriter *output,
                             char *arguments[], size_t count,
                             const char *path)
 {
-    char *program = resolve_program(cwd, arguments[0], path);
+    char *program = resolve_program(cwd, root, arguments[0], path);
     if (program == NULL) {
         (void)write_text(output, "command not found\r\n");
         return;
@@ -259,9 +263,14 @@ static void shell_loop(IByteReader *input, IByteWriter *output,
         (void)write_text(output, "FacetShell: unable to open root directory\r\n");
         return;
     }
-    IDirectory *cwd = libfacet_proxy_from_handle(&IDirectory_MetaData,
-                                                 root_handle);
-    if (cwd == NULL) return;
+    IDirectory *root = libfacet_proxy_from_handle(&IDirectory_MetaData,
+                                                  root_handle);
+    if (root == NULL) return;
+    IDirectory *cwd = open_directory(root, ".");
+    if (cwd == NULL) {
+        libfacet_free_proxy_client(root);
+        return;
+    }
     (void)write_text(output, "FacetShell ready. Type help for commands.\r\n");
     for (;;) {
         write_prompt(cwd, output);
@@ -286,12 +295,13 @@ static void shell_loop(IByteReader *input, IByteWriter *output,
         else if (strcmp(arguments[0], "exit") == 0)
             break;
         else
-            execute_program(processes, environment, cwd, output,
+            execute_program(processes, environment, cwd, root, output,
                             arguments, count, path);
     }
     facet_rpc_release_value(FACET_TYPE_ARRAY, &FacetArray_string_TypeMeta,
                             &sysv_environment);
     libfacet_free_proxy_client(cwd);
+    libfacet_free_proxy_client(root);
 }
 
 int main(int argc, char **argv)

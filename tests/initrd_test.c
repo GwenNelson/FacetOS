@@ -676,6 +676,20 @@ static void test_chrooted_posix_synthetic_etc(void)
     assert(native_shadow_file->read_at(native_shadow_file->self, 0, 128,
                                        &native_bytes) == FACET_ACCESS_DENIED);
     libfacet_free_proxy_client(native_shadow_file);
+    FacetString native_parent = facet_string("..");
+    FacetHandle native_parent_handle = {0};
+    assert(native_etc_dir->open_directory(native_etc_dir->self, &native_parent,
+                                          &native_parent_handle) == FACET_OK);
+    IDirectory *native_parent_dir = libfacet_new_proxy_client(
+        &IDirectory_MetaData, native_parent_handle);
+    FacetString native_parent_path = {0};
+    assert(native_parent_dir != NULL &&
+           native_parent_dir->getpath(native_parent_dir->self,
+                                      &native_parent_path) == FACET_OK);
+    assert(native_parent_path.length == 6 &&
+           memcmp(native_parent_path.data, "/posix", 6) == 0);
+    free((void *)(uintptr_t)native_parent_path.data);
+    libfacet_free_proxy_client(native_parent_dir);
     libfacet_free_proxy_client(native_etc_dir);
     libfacet_free_proxy_client(native_store);
     FacetHandle store_copy = {0};
@@ -765,6 +779,19 @@ static void test_chrooted_posix_synthetic_etc(void)
            memcmp(cwd_path.data, "/etc", 4) == 0);
     free((void *)(uintptr_t)cwd_path.data);
     FacetString parent = facet_string("..");
+    entries = (FacetArray_string){0};
+    assert(posix->list_directory(posix->self, &parent, &entries, &error) ==
+               FACET_OK && error == 0);
+    bool parent_has_bin = false, parent_has_etc = false;
+    for (size_t i = 0; i < entries.count; i++) {
+        parent_has_bin |= entries.data[i].length == 3 &&
+            memcmp(entries.data[i].data, "bin", 3) == 0;
+        parent_has_etc |= entries.data[i].length == 3 &&
+            memcmp(entries.data[i].data, "etc", 3) == 0;
+    }
+    assert(parent_has_bin && parent_has_etc);
+    facet_rpc_release_value(FACET_TYPE_ARRAY, &FacetArray_string_TypeMeta,
+                            &entries);
     assert(posix->change_directory(posix->self, &parent, &error) == FACET_OK &&
            error == 0);
     assert(posix->get_cwd(posix->self, &cwd_path, &error) == FACET_OK &&
@@ -811,7 +838,6 @@ static void test_chrooted_posix_synthetic_etc(void)
     assert(dominit0_posix_view_bind_process_control(
                root_view, NULL, 0, 1, true, unused_spawn, unused_wait,
                NULL) == 0);
-    (void)libfacet_handle_release(root_cwd);
     FacetHandle root_posix_handle = {0};
     assert(libfacet_handle_clone(dominit0_posix_view_handle(root_view),
                                  &root_posix_handle) == FACET_OK);
@@ -837,6 +863,12 @@ static void test_chrooted_posix_synthetic_etc(void)
            error == 0 && cwd_path.length == strlen("/home/root") &&
            memcmp(cwd_path.data, "/home/root", cwd_path.length) == 0);
     free((void *)(uintptr_t)cwd_path.data);
+    assert(dominit0_posix_view_set_root(root_view, root_cwd) == 0);
+    assert(root_posix->get_cwd(root_posix->self, &cwd_path, &error) == FACET_OK &&
+           error == 0 && cwd_path.length == strlen("/home/root") &&
+           memcmp(cwd_path.data, "/home/root", cwd_path.length) == 0);
+    free((void *)(uintptr_t)cwd_path.data);
+    (void)libfacet_handle_release(root_cwd);
     libfacet_free_proxy_client(root_posix);
     dominit0_posix_view_destroy(root_view);
     dominit0_credential_file_store_destroy(root_store);

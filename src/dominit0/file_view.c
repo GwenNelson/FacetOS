@@ -307,15 +307,35 @@ static FacetResult directory_open(void *self, const FacetString *path,
     else { memcpy(candidate, base, base_length); candidate[base_length] = '/';
            memcpy(candidate + base_length + 1, path->data, length); }
     candidate[(absolute ? 0 : base_length + 1) + length] = '\0';
+    /* Credential views must preserve ordinary directory semantics too. */
+    char *scan = candidate, *write = candidate;
+    while (*scan) {
+        while (*scan == '/') scan++;
+        if (!*scan) break;
+        char *part = scan; while (*scan && *scan != '/') scan++;
+        size_t n = (size_t)(scan - part);
+        if (n == 1 && part[0] == '.') continue;
+        if (n == 2 && part[0] == '.' && part[1] == '.') {
+            while (write > candidate + 1 && write[-1] != '/') write--;
+            if (write > candidate + 1) write--;
+            continue;
+        }
+        if (write == candidate || write[-1] != '/') *write++ = '/';
+        for (size_t i = 0; i < n; i++) write[i] = part[i];
+        write += n;
+    }
+    if (write == candidate) *write++ = '/';
+    *write = '\0';
     SyntheticNode synthetic = synthetic_for_path(candidate, directory);
-    free(candidate);
-    if (synthetic != SYNTHETIC_NONE)
+    if (synthetic != SYNTHETIC_NONE) {
+        free(candidate);
         return wrap_node(node->store, NULL, synthetic, directory, out);
-    if (node->synthetic != SYNTHETIC_NONE) return FACET_NOT_FOUND;
+    }
     FacetInitrdNode *opened = NULL;
-    FacetResult result = facet_initrd_open_node(
-        node->store->initrd, facet_initrd_node_path(node->backing), path,
-        directory, &opened);
+    FacetString normalized = {.data = candidate, .length = strlen(candidate)};
+    FacetResult result = facet_initrd_open_node(node->store->initrd, "/",
+                                                &normalized, directory, &opened);
+    free(candidate);
     if (result != FACET_OK) return result;
     result = check_search(node->store, facet_initrd_node_path(opened),
                           directory);
