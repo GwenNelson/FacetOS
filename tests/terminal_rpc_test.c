@@ -258,7 +258,7 @@ static void prepare_seats(Dominit0SystemConfig *system)
     CurrentSeatTerminal *selected[3] = {
         &system->current_seats[0].terminals[0],
         &system->current_seats[1].terminals[0],
-        &system->current_seats[1].terminals[1],
+        &system->current_seats[1].terminals[2],
     };
     for (size_t i = 0; i < 3; i++) {
         selected[i]->terminal = test_streams[i].terminal_handle;

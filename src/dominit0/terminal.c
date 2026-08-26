@@ -169,9 +169,13 @@ int dominit0_terminal_bind_process_environment(
         int result = dominit0_process_environment_bind_terminal(
             environment, binding->input, binding->output, binding->control,
             binding->terminal);
-        if (result == 0)
+        if (result == 0) {
             dominit0_process_environment_set_terminal_index(
                 environment, assignment_index);
+            result = dominit0_process_environment_set_terminal_name(
+                environment,
+                domain->parsed->terminals[assignment_index].reference);
+        }
         return result;
     }
     return -1;

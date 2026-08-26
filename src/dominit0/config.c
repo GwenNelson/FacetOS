@@ -78,6 +78,16 @@ static FacetResult get_domain_name(void *self, FacetString *value)
     return FACET_OK;
 }
 
+static FacetResult get_pid1(void *self, FacetString *value)
+{
+    if (value == NULL) return FACET_INVALID_ARGUMENT;
+    const FacetConfigDomain *source =
+        ((Dominit0DomainConfigObject *)self)->domain.priv;
+    value->data = source != NULL && source->pid1 != NULL ? source->pid1 : "";
+    value->length = strlen(value->data);
+    return FACET_OK;
+}
+
 static FacetResult get_personality(void *self, Personality *value)
 {
     if (value == NULL) return FACET_INVALID_ARGUMENT;
@@ -165,9 +175,13 @@ static int initialize_domain_object(Dominit0DomainConfigObject *object,
     object->domain._domain_name.length = strlen(source->name);
     object->domain._personality = (Personality)source->personality;
     object->domain._domain_manager = (DomainManagerMode)source->domain_manager;
+    /* Keep the parsed source available for properties not retained by IDL's
+     * generated backing fields. */
+    object->domain.priv = (void *)source;
     object->domain.getInterface = domain_get_interface;
     object->domain.getdomain_id = get_domain_id;
     object->domain.getdomain_name = get_domain_name;
+    object->domain.getpid1 = get_pid1;
     object->domain.getpersonality = get_personality;
     object->domain.getlogger_config = get_logger_config;
     object->domain.getconsole_config = get_console_config;

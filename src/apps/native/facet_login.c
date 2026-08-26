@@ -114,7 +114,9 @@ static void login_loop(IByteReader *input, IByteWriter *output,
 {
     char username[128];
     char password[256];
-    (void)write_text(output, "FacetOS native login\r\n");
+    (void)write_text(output, terminal_index == 0 ?
+        "FacetOS native login (domain 0, seat0.ttyS0)\r\n" :
+        "FacetOS native login (domain 0, seat1.tty1)\r\n");
     for (;;) {
         (void)write_text(output, "login: ");
         if (read_line(input, output, username, sizeof(username), true) != FACET_OK)

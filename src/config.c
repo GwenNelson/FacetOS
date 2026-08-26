@@ -1663,6 +1663,7 @@ int facet_config_make_fallback(FacetSystemConfig *config,
         "uid = 0\n"
         "gid = 0\n"
         "home_path = \"/root\"\n"
+        "posix_shell = \"/bin/sh\"\n"
         "[[users]]\n"
         "name = \"user\"\n"
         "password_sha256 = \"f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59\"\n"
@@ -1670,6 +1671,7 @@ int facet_config_make_fallback(FacetSystemConfig *config,
         "uid = 1000\n"
         "gid = 1000\n"
         "home_path = \"/home/user\"\n"
+        "posix_shell = \"/bin/sh\"\n"
         "[[seats]]\n"
         "name = \"seat0\"\n"
         "type = \"serial\"\n"
@@ -1690,16 +1692,18 @@ int facet_config_make_fallback(FacetSystemConfig *config,
         "logging_sinks = [{ name = \"bochs-debug\", level = \"debug\" }]\n"
         "terminals = ["
         "{ terminal = \"seat0.ttyS0\", view = \"native\", initial_process = \"/FacetOS/FacetLogin\" },"
-        "{ terminal = \"seat1.tty1\", view = \"native\", initial_process = \"/FacetOS/FacetLogin\" }]\n"
+        "{ terminal = \"seat1.tty1\", view = \"native\", initial_process = \"/FacetOS/FacetLogin\" },"
+        "{ terminal = \"seat1.tty2\", view = \"posix\", initial_process = \"/bin/login\" }]\n"
         "[[domains]]\n"
         "id = 1\n"
-        "name = \"example-child\"\n"
-        "personality = \"native\"\n"
+        "name = \"posix\"\n"
+        "personality = \"posix\"\n"
         "domain_manager = \"local\"\n"
+        "pid1 = \"/sbin/init\"\n"
         "initrd = \"child.initrd\"\n"
         "authentication_source = \"system\"\n"
         "logging_sinks = [{ name = \"bochs-debug\", level = \"info\" }]\n"
-        "terminals = [{ terminal = \"seat1.tty2\", view = \"posix\", initial_process = \"/bin/login\" }]\n";
+        "terminals = [{ terminal = \"seat1.tty3\", device = \"tty3\" }]\n";
     return facet_config_parse((const uint8_t *)fallback,
                               sizeof(fallback) - 1, config, diagnostic);
 }

@@ -22,6 +22,8 @@ interface IDomainConfig {
 
     property u64 domain_id read;
     property string domain_name read;
+    // Empty for native domains. POSIX dominit uses this as its first process.
+    property string pid1 read;
     property Personality personality read;
     // Object-valued properties are capability attachments on the wire.
     property handle logger_config read;

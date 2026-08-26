@@ -90,6 +90,21 @@ static uint64_t configured_assignment_count(IDomainEnvironment *environment)
     return count;
 }
 
+static FacetResult configured_pid1(IDomainEnvironment *environment,
+                                   FacetString *path)
+{
+    FacetHandle config_handle = {0};
+    if (environment->getdomain_config(environment->self, &config_handle) != FACET_OK)
+        return FACET_INVALID_HANDLE;
+    IDomainConfig *config = libfacet_proxy_from_handle(&IDomainConfig_MetaData,
+                                                       config_handle);
+    FacetResult result = config == NULL ? FACET_INVALID_HANDLE :
+        config->getpid1(config->self, path);
+    libfacet_free_proxy_client(config);
+    return result == FACET_OK && path->data != NULL && path->length != 0 ?
+        FACET_OK : FACET_NOT_FOUND;
+}
+
 int main(int argc, char **argv)
 {
     if (libfacet_register_generic_metadata(&IGenericObject_MetaData) != FACET_OK ||
@@ -124,6 +139,25 @@ int main(int argc, char **argv)
     IProcessManager *processes = resolve(environment, "processes",
                                          &IProcessManager_MetaData);
     if (processes != NULL) {
+        FacetHandle config_handle = {0};
+        IDomainConfig *config = domain->getdomain_config(domain->self,
+                                                           &config_handle) == FACET_OK ?
+            libfacet_proxy_from_handle(&IDomainConfig_MetaData, config_handle) : NULL;
+        Personality personality = Personality_Native;
+        if (config != NULL) (void)config->getpersonality(config->self, &personality);
+        libfacet_free_proxy_client(config);
+        if (personality == Personality_Posix) {
+            FacetString pid1 = {0};
+            FacetHandle process = {0};
+            if (configured_pid1(domain, &pid1) == FACET_OK) {
+                FacetString args[] = {pid1};
+                FacetArray_string argv = {.data = args, .count = 1};
+                if (processes->launch_initial(processes->self, &pid1, &argv, 0,
+                                              &process) == FACET_OK)
+                    child_log(logger, "launched POSIX pid1");
+                if (process.platform != NULL) (void)libfacet_handle_release(process);
+            }
+        } else {
         uint64_t assignment_count = configured_assignment_count(domain);
         for (uint64_t index = 0; index < assignment_count; index++) {
             FacetString initial = {0};
@@ -162,6 +196,7 @@ int main(int argc, char **argv)
                 child_log(logger, "could not launch configured initial process");
             if (process.platform != NULL)
                 (void)libfacet_handle_release(process);
+        }
         }
     } else {
         child_log(logger, "no local process manager configured");

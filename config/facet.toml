@@ -20,6 +20,7 @@ admin = true
 uid = 0
 gid = 0
 home_path = "/root"
+posix_shell = "/bin/sh"
 
 [[users]]
 name = "user"
@@ -28,6 +29,7 @@ admin = false
 uid = 1000
 gid = 1000
 home_path = "/home/user"
+posix_shell = "/bin/sh"
 
 [[seats]]
 name = "seat0"
@@ -54,18 +56,20 @@ logging_sinks = [
 terminals = [
     { terminal = "seat0.ttyS0", view = "native", initial_process = "/FacetOS/FacetLogin" },
     { terminal = "seat1.tty1", view = "native", initial_process = "/FacetOS/FacetLogin" },
+    { terminal = "seat1.tty2", view = "posix", initial_process = "/bin/login" },
 ]
 
 [[domains]]
 id = 1
-name = "example-child"
-personality = "native"
+name = "posix"
+personality = "posix"
 domain_manager = "local"
+pid1 = "/sbin/init"
 initrd = "child.initrd"
 authentication_source = "system"
 logging_sinks = [
     { name = "bochs-debug", level = "info" },
 ]
 terminals = [
-    { terminal = "seat1.tty2", view = "posix", initial_process = "/bin/login" },
+    { terminal = "seat1.tty3", device = "tty3" },
 ]

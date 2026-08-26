@@ -492,12 +492,13 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
                      environment->credential_files)) != 0)
             goto fail;
     }
-    if (session.platform != NULL && profile == DOMINIT0_PROCESS_NATIVE) {
-        failure_stage = "delegate session";
-        if (libfacet_handle_clone(session, &environment->owned_session) != FACET_OK ||
-            bind(environment, "session", IID_ISession,
-                 environment->owned_session) != 0)
+    if (session.platform != NULL) {
+        failure_stage = "retain session";
+        if (libfacet_handle_clone(session, &environment->owned_session) != FACET_OK)
             goto fail;
+        if (profile == DOMINIT0_PROCESS_NATIVE &&
+            bind(environment, "session", IID_ISession,
+                 environment->owned_session) != 0) goto fail;
     }
     if (cwd.platform != NULL) {
         failure_stage = "inherit current directory";
@@ -587,6 +588,17 @@ int dominit0_process_environment_bind_lifecycle(
                 lifecycle);
 }
 
+int dominit0_process_environment_bind_posix_process_control(
+    Dominit0ProcessEnvironment *environment, void *context, uint64_t domain_id, int32_t pid,
+    FacetHandle default_session, Dominit0PosixSpawn spawn, Dominit0PosixWait wait)
+{
+    if (environment == NULL || environment->profile != DOMINIT0_PROCESS_PURE_POSIX)
+        return -1;
+    return dominit0_posix_view_bind_process_control(environment->posix_view,
+                                                    context, domain_id, pid, default_session,
+                                                    spawn, wait);
+}
+
 int dominit0_process_environment_bind_terminal(
     Dominit0ProcessEnvironment *environment, FacetHandle input,
     FacetHandle output, FacetHandle control, FacetHandle terminal)
@@ -614,6 +626,34 @@ void dominit0_process_environment_set_terminal_index(
     Dominit0ProcessEnvironment *environment, uint64_t terminal_index)
 {
     if (environment != NULL) environment->terminal_index = terminal_index;
+}
+
+int dominit0_process_environment_set_terminal_name(
+    Dominit0ProcessEnvironment *environment, const char *terminal_name)
+{
+    if (environment == NULL || terminal_name == NULL || terminal_name[0] == '\0')
+        return -1;
+    size_t name_length = strlen("FACET_TERMINAL=");
+    for (size_t i = 0; i < environment->sysv_environment_count; i++) {
+        char *value = environment->owned_sysv_environment[i];
+        if (strncmp(value, "FACET_TERMINAL=", name_length) != 0) continue;
+        size_t length = name_length + strlen(terminal_name) + 1;
+        char *replacement = malloc(length);
+        if (replacement == NULL) return -1;
+        snprintf(replacement, length, "FACET_TERMINAL=%s", terminal_name);
+        free(value);
+        environment->owned_sysv_environment[i] = replacement;
+        environment->sysv_environment[i].data = replacement;
+        environment->sysv_environment[i].length = length - 1;
+        return 0;
+    }
+    size_t length = name_length + strlen(terminal_name) + 1;
+    char *value = malloc(length);
+    if (value == NULL) return -1;
+    snprintf(value, length, "FACET_TERMINAL=%s", terminal_name);
+    int result = add_sysv_environment(environment, value);
+    free(value);
+    return result;
 }
 
 FacetHandle dominit0_process_environment_root_handle(

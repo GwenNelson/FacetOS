@@ -41,3 +41,15 @@ target_link_libraries(PosixTestPerms PRIVATE
     facet_common facet-app-platform-sel4 libc-posix)
 target_link_options(PosixTestPerms PRIVATE
     "-Wl,-Map,${CMAKE_BINARY_DIR}/PosixTestPerms.map")
+
+add_executable(PosixInit "${CMAKE_CURRENT_LIST_DIR}/crt/start.S" "${CMAKE_CURRENT_LIST_DIR}/crt/start.c" "${FACETOS_ROOT}/src/apps/posix/init.c")
+add_executable(PosixSh "${CMAKE_CURRENT_LIST_DIR}/crt/start.S" "${CMAKE_CURRENT_LIST_DIR}/crt/start.c" "${FACETOS_ROOT}/src/apps/posix/sh.c")
+add_executable(PosixLs "${CMAKE_CURRENT_LIST_DIR}/crt/start.S" "${CMAKE_CURRENT_LIST_DIR}/crt/start.c" "${FACETOS_ROOT}/src/apps/posix/ls.c")
+add_executable(PosixCat "${CMAKE_CURRENT_LIST_DIR}/crt/start.S" "${CMAKE_CURRENT_LIST_DIR}/crt/start.c" "${FACETOS_ROOT}/src/apps/posix/cat.c")
+foreach(program PosixInit PosixSh PosixLs PosixCat)
+    facetos_configure_target(${program})
+    target_include_directories(${program} BEFORE PRIVATE "${FACET_GENERATED_INCLUDE}" "${CMAKE_CURRENT_LIST_DIR}/include")
+    target_include_directories(${program} SYSTEM PRIVATE "${CMAKE_BINARY_DIR}/musllibc/build-temp/stage/include")
+    add_dependencies(${program} facet-idl-shell-contracts-generated)
+    target_link_libraries(${program} PRIVATE facet_common facet-app-platform-sel4 libc-posix)
+endforeach()

@@ -393,6 +393,7 @@ add_library(libc-posix STATIC
     "${FACETOS_ROOT}/src/posix/libc/files.c"
     "${FACETOS_ROOT}/src/posix/libc/stdio.c"
     "${FACETOS_ROOT}/src/posix/libc/exit.c"
+    "${FACETOS_ROOT}/src/posix/libc/process.c"
 )
 set_target_properties(libc-posix PROPERTIES OUTPUT_NAME "c-posix")
 facetos_configure_target(libc-posix)

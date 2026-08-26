@@ -37,6 +37,10 @@ FACET_TEST_PERMS := $(SDK_BUILD)/TestPerms
 FACET_DUMMYSH  := $(SDK_BUILD)/dummysh
 FACET_POSIX_LOGIN := $(SDK_BUILD)/facet-posix/PosixLogin
 FACET_POSIX_TEST_PERMS := $(SDK_BUILD)/facet-posix/PosixTestPerms
+FACET_POSIX_INIT := $(SDK_BUILD)/facet-posix/PosixInit
+FACET_POSIX_SH := $(SDK_BUILD)/facet-posix/PosixSh
+FACET_POSIX_LS := $(SDK_BUILD)/facet-posix/PosixLs
+FACET_POSIX_CAT := $(SDK_BUILD)/facet-posix/PosixCat
 FACET_SEAT_SERIAL := $(SDK_BUILD)/seat-server-serial
 FACET_SEAT_PC := $(SDK_BUILD)/seat-server-pc-console
 FACET_CONFIG_FILE := $(ROOT)/config/facet.toml
@@ -663,7 +667,7 @@ $(INITRD_DOMINIT0): $(FACET_INITRD_TOOL) $(FACET_SEAT_SERIAL) $(FACET_SEAT_PC)
 	$(FACET_INITRD_TOOL) pack $@ $(ROOT)/build/initrd/dominit0-root \
 		--overlay $(FACET_OVERLAY_ROOT)/dominit0
 
-$(INITRD_SYSTEM): $(FACET_INITRD_TOOL) $(shell find $(ROOT)/initrd/system -type f) $(FACET_LOGIN) $(FACET_SHELL) $(FACET_DUMMY) $(FACET_LS) $(FACET_CAT) $(FACET_TEST_PERMS)
+$(INITRD_SYSTEM): $(FACET_INITRD_TOOL) $(shell find $(ROOT)/initrd/system -type f) $(FACET_LOGIN) $(FACET_SHELL) $(FACET_DUMMY) $(FACET_LS) $(FACET_CAT) $(FACET_TEST_PERMS) $(FACET_POSIX_LOGIN) $(FACET_POSIX_SH) $(FACET_POSIX_LS) $(FACET_POSIX_CAT)
 	mkdir -p $(dir $@)
 	rm -rf $(ROOT)/build/initrd/system-root
 	mkdir -p $(ROOT)/build/initrd/system-root/FacetOS
@@ -674,6 +678,11 @@ $(INITRD_SYSTEM): $(FACET_INITRD_TOOL) $(shell find $(ROOT)/initrd/system -type 
 	cp $(FACET_LS) $(ROOT)/build/initrd/system-root/FacetOS/ls
 	cp $(FACET_CAT) $(ROOT)/build/initrd/system-root/FacetOS/cat
 	cp $(FACET_TEST_PERMS) $(ROOT)/build/initrd/system-root/FacetOS/TestPerms
+	mkdir -p $(ROOT)/build/initrd/system-root/bin
+	cp $(FACET_POSIX_LOGIN) $(ROOT)/build/initrd/system-root/bin/login
+	cp $(FACET_POSIX_SH) $(ROOT)/build/initrd/system-root/bin/sh
+	cp $(FACET_POSIX_LS) $(ROOT)/build/initrd/system-root/bin/ls
+	cp $(FACET_POSIX_CAT) $(ROOT)/build/initrd/system-root/bin/cat
 	mkdir -p $(ROOT)/build/initrd/system-root/home/user $(FACET_OVERLAY_ROOT)/system
 	$(FACET_INITRD_TOOL) pack $@ $(ROOT)/build/initrd/system-root \
 		--overlay $(FACET_OVERLAY_ROOT)/system
@@ -685,10 +694,10 @@ $(INITRD_SYSTEM): $(FACET_INITRD_TOOL) $(shell find $(ROOT)/initrd/system -type 
 $(FACET_POSIX_LOGIN): facet-idlc libfacet-common configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) PosixLogin
 
-$(FACET_POSIX_TEST_PERMS): facet-idlc libfacet-common configure
-	$(SEL4_ENV) ninja -C $(SDK_BUILD) PosixTestPerms
+$(FACET_POSIX_TEST_PERMS) $(FACET_POSIX_INIT) $(FACET_POSIX_SH) $(FACET_POSIX_LS) $(FACET_POSIX_CAT): facet-idlc libfacet-common configure
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) PosixTestPerms PosixInit PosixSh PosixLs PosixCat
 
-$(INITRD_CHILD): $(FACET_INITRD_TOOL) $(shell find $(ROOT)/initrd/child -type f) $(FACET_DUMMYSH) $(FACET_POSIX_LOGIN) $(FACET_POSIX_TEST_PERMS)
+$(INITRD_CHILD): $(FACET_INITRD_TOOL) $(shell find $(ROOT)/initrd/child -type f) $(FACET_DUMMYSH) $(FACET_POSIX_LOGIN) $(FACET_POSIX_TEST_PERMS) $(FACET_POSIX_INIT) $(FACET_POSIX_SH) $(FACET_POSIX_LS) $(FACET_POSIX_CAT)
 	mkdir -p $(dir $@)
 	rm -rf $(ROOT)/build/initrd/child-root
 	mkdir -p $(ROOT)/build/initrd/child-root/bin
@@ -696,12 +705,19 @@ $(INITRD_CHILD): $(FACET_INITRD_TOOL) $(shell find $(ROOT)/initrd/child -type f)
 	cp $(FACET_DUMMYSH) $(ROOT)/build/initrd/child-root/bin/dummysh
 	cp $(FACET_POSIX_LOGIN) $(ROOT)/build/initrd/child-root/bin/login
 	cp $(FACET_POSIX_TEST_PERMS) $(ROOT)/build/initrd/child-root/bin/test_perms
+	cp $(FACET_POSIX_SH) $(ROOT)/build/initrd/child-root/bin/sh
+	cp $(FACET_POSIX_LS) $(ROOT)/build/initrd/child-root/bin/ls
+	cp $(FACET_POSIX_CAT) $(ROOT)/build/initrd/child-root/bin/cat
+	mkdir -p $(ROOT)/build/initrd/child-root/sbin
+	cp $(FACET_POSIX_INIT) $(ROOT)/build/initrd/child-root/sbin/init
 	mkdir -p $(ROOT)/build/initrd/child-root/home/user $(FACET_OVERLAY_ROOT)/child
 	$(FACET_INITRD_TOOL) pack $@ $(ROOT)/build/initrd/child-root \
 		--overlay $(FACET_OVERLAY_ROOT)/child
 	$(FACET_INITRD_TOOL) chmod $@ 0600 usr/share/test_data/user-only.txt usr/share/test_data/root-only.txt
 	$(FACET_INITRD_TOOL) chown $@ 1000:1000 home/user usr/share/test_data/user-only.txt
 	$(FACET_INITRD_TOOL) chown $@ 0:0 usr/share/test_data/root-only.txt
+	$(FACET_INITRD_TOOL) chmod $@ 0600 etc/shadow
+	$(FACET_INITRD_TOOL) chown $@ 0:0 etc/passwd etc/shadow etc/fstab
 
 
 # Keep `make sdk` as a familiar name, but it no longer implies cleaning.

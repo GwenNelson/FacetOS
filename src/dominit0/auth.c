@@ -427,6 +427,26 @@ FacetResult dominit0_auth_session_for_user(uint64_t domain_id,
     return FACET_NOT_FOUND;
 }
 
+FacetResult dominit0_authenticate_user(uint64_t domain_id,
+                                       const FacetString *name,
+                                       const FacetString *password,
+                                       FacetHandle *session)
+{
+    if (session == NULL) return FACET_INVALID_ARGUMENT;
+    *session = (FacetHandle){0};
+    for (size_t i = 0; i < authority_count; i++) {
+        AuthAuthority *authority = &authorities[i];
+        if (authority->domain_id != domain_id) continue;
+        FacetHandle authenticated = {0};
+        FacetResult result = authenticate(authority, name, password, &authenticated);
+        if (result != FACET_OK) return result;
+        result = security_create(authority, authenticated, session);
+        (void)libfacet_handle_release(authenticated);
+        return result;
+    }
+    return FACET_NOT_FOUND;
+}
+
 static void destroy_authority(AuthAuthority *authority)
 {
     while (authority->sessions != NULL) {

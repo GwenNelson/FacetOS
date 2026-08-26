@@ -1,6 +1,7 @@
 #pragma once
 
 #include <facetos/dominit0/config.h>
+#include <facetos/dominit0/posix.h>
 #include <facetos/interfaces/IProcessEnvironment.h>
 
 typedef struct Dominit0DomainEnvironment Dominit0DomainEnvironment;
@@ -49,6 +50,11 @@ int dominit0_process_environment_bind_terminal(
     FacetHandle output, FacetHandle control, FacetHandle terminal);
 void dominit0_process_environment_set_terminal_index(
     Dominit0ProcessEnvironment *environment, uint64_t terminal_index);
+int dominit0_process_environment_set_terminal_name(
+    Dominit0ProcessEnvironment *environment, const char *terminal_name);
+int dominit0_process_environment_bind_posix_process_control(
+    Dominit0ProcessEnvironment *environment, void *context, uint64_t domain_id, int32_t pid,
+    FacetHandle default_session, Dominit0PosixSpawn spawn, Dominit0PosixWait wait);
 FacetHandle dominit0_process_environment_root_handle(
     const Dominit0ProcessEnvironment *environment);
 int dominit0_process_environment_get_sysv(

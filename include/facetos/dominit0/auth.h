@@ -12,3 +12,7 @@ void dominit0_auth_destroy(void);
 FacetResult dominit0_auth_session_for_user(uint64_t domain_id,
                                            const char *name,
                                            FacetHandle *session);
+FacetResult dominit0_authenticate_user(uint64_t domain_id,
+                                       const FacetString *name,
+                                       const FacetString *password,
+                                       FacetHandle *session);

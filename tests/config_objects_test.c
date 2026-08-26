@@ -48,20 +48,21 @@ int main(void)
     check_string(sinks.data[0].name, "bochs-debug");
     assert(sinks.data[0].level == LogLevel_Debug);
     assert(root->console.getassignments(root->console.self, &assignments) == FACET_OK);
-    assert(assignments.count == 2);
+    assert(assignments.count == 3);
     check_string(assignments.data[0].seat, "seat0");
     check_string(assignments.data[0].terminal, "ttyS0");
     check_string(assignments.data[0].view, "native");
     check_string(assignments.data[0].initial_process, "/FacetOS/FacetLogin");
     check_string(assignments.data[1].seat, "seat1");
     check_string(assignments.data[1].terminal, "tty1");
+    check_string(assignments.data[2].terminal, "tty2");
 
     Dominit0DomainConfigObject *child = &system.domains[1];
     assert(child->console.getassignments(child->console.self,
                                          &assignments) == FACET_OK);
     assert(assignments.count == 1);
     check_string(assignments.data[0].seat, "seat1");
-    check_string(assignments.data[0].terminal, "tty2");
+    check_string(assignments.data[0].terminal, "tty3");
 
     FacetHandle result = {0};
     assert(root->domain.getlogger_config(root->domain.self, &result) ==

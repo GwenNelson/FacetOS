@@ -17,4 +17,23 @@ interface IPOSIXView {
     method FacetResult allocate_pages(in u64 count, out local_ptr pages);
     method FacetResult free_pages(in u64 count, in u64 base);
     method FacetResult exit_process(in i32 status);
+    // FacetOS POSIX-view extensions. They deliberately keep all native
+    // authority behind this per-process translation object.
+    method FacetResult get_domain_id(out u64 domain_id);
+    method FacetResult get_pid(out i32 pid);
+    method FacetResult get_cwd(out string path, out i32 error);
+    method FacetResult change_directory(in string path, out i32 error);
+    method FacetResult list_directory(in string path, out array<string> entries,
+                                     out i32 error);
+    method FacetResult authenticate(in string username, in string password,
+                                   out handle session, out i32 error);
+    method FacetResult spawn_process(in string path, in array<string> argv,
+                                    in handle session, out i32 pid,
+                                    out i32 error);
+    // Starts a child under the caller's inherited session.  This is separate
+    // from spawn_process because a null capability cannot cross the seL4 IPC
+    // capability-transfer boundary.
+    method FacetResult spawn_inherited(in string path, in array<string> argv,
+                                      out i32 pid, out i32 error);
+    method FacetResult wait_process(in i32 pid, out i32 status, out i32 error);
 }

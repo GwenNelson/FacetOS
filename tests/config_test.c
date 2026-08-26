@@ -68,7 +68,7 @@ static void check_default_shape(const FacetSystemConfig *config)
     assert(config->domains[0].logging_sink_count == 1);
     assert(config->domains[0].logging_sinks[0].sink_definition_index == 0);
     assert(config->domains[0].logging_sinks[0].level == FACET_CONFIG_LOG_DEBUG);
-    assert(config->domains[0].terminal_count == 2);
+    assert(config->domains[0].terminal_count == 3);
     assert(strcmp(config->domains[0].authentication_source, "system") == 0);
     assert(config->domains[0].authentication_source_index == 0);
     assert(config->domains[0].terminals[0].view ==
@@ -84,15 +84,13 @@ static void check_default_shape(const FacetSystemConfig *config)
     assert(config->domains[1].domain_manager ==
            FACET_CONFIG_DOMAIN_MANAGER_LOCAL);
     assert(strcmp(config->domains[1].initrd, "child.initrd") == 0);
-    assert(strcmp(config->domains[1].name, "example-child") == 0);
+    assert(strcmp(config->domains[1].name, "posix") == 0);
     assert(config->domains[1].logging_sinks[0].level == FACET_CONFIG_LOG_INFO);
     assert(config->domains[1].terminal_count == 1);
-    assert(config->domains[1].terminals[0].view ==
-           FACET_CONFIG_TERMINAL_VIEW_POSIX);
-    assert(strcmp(config->domains[1].terminals[0].initial_process,
-                  "/bin/login") == 0);
+    assert(config->domains[1].personality == FACET_CONFIG_PERSONALITY_POSIX);
+    assert(strcmp(config->domains[1].pid1, "/sbin/init") == 0);
     assert(config->domains[1].terminals[0].seat_index == 1);
-    assert(config->domains[1].terminals[0].terminal_index == 1);
+    assert(config->domains[1].terminals[0].terminal_index == 2);
 }
 
 static void test_fallback(void)
