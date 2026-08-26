@@ -53,17 +53,29 @@ int main(void)
         (void)write(1, user != NULL && !strcmp(user,"root") ? "# " : "$ ", 2);
         (void)line(command, sizeof(command));
         char *words[16]; size_t count=0;
-        if (parse(command, words, 16, &count) != 0) { write(1,"sh: unsupported or invalid syntax\n",33); continue; }
+        if (parse(command, words, 16, &count) != 0) {
+            static const char message[] = "sh: unsupported or invalid syntax\n";
+            (void)write(1, message, sizeof(message) - 1);
+            continue;
+        }
         if (count==0) continue;
         if (!strcmp(words[0], "exit")) return 0;
-        if (!strcmp(words[0], "help")) { static const char text[]="help echo pwd cd exit ls cat\n"; write(1,text,sizeof(text)-1); continue; }
+        if (!strcmp(words[0], "help")) {
+            static const char text[]="help echo pwd cd exit ls cat\n";
+            (void)write(1,text,sizeof(text)-1);
+            continue;
+        }
         if (!strcmp(words[0], "pwd")) { write(1,cwd,strlen(cwd)); write(1,"\n",1); continue; }
         if (!strcmp(words[0], "cd")) { if(count!=2 || chdir(words[1])!=0) write(1,"sh: cd failed\n",14); continue; }
         if (!strcmp(words[0], "echo")) { for(size_t i=1;i<count;i++){if(i>1)write(1," ",1);write(1,words[i],strlen(words[i]));}write(1,"\n",1);continue; }
         const char *name = !strcmp(words[0],"ls") ? "/bin/ls" : !strcmp(words[0],"cat") ? "/bin/cat" : words[0];
         FacetString values[16]; for(size_t i=0;i<count;i++){ const char *value=i==0?name:words[i]; values[i]=(FacetString){.data=value,.length=strlen(value)}; }
         FacetString p=values[0]; FacetArray_string av={.data=values,.count=count}; int32_t pid=-1,e=0,status=0;
-        if (view->spawn_inherited(view->self,&p,&av,&pid,&e)!=FACET_OK || e) { write(1,"sh: command failed\n",19); continue; }
+        if (view->spawn_inherited(view->self,&p,&av,&pid,&e)!=FACET_OK || e) {
+            static const char message[] = "sh: command failed\n";
+            (void)write(1, message, sizeof(message) - 1);
+            continue;
+        }
         while (view->wait_process(view->self,pid,&status,&e)==FACET_OK && e) facet_posix_yield();
     }
 }
