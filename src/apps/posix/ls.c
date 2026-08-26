@@ -8,8 +8,12 @@ static int list(const char *path)
     FacetString p = {.data = path, .length = strlen(path)};
     FacetArray_string entries = {0}; int32_t error = 0;
     IPOSIXView *view = facet_posix_view();
-    if (!view || view->list_directory(view->self, &p, &entries, &error) != FACET_OK || error)
+    if (!view || view->list_directory(view->self, &p, &entries, &error) != FACET_OK || error) {
+        (void)write(2, "ls: cannot access ", 18);
+        (void)write(2, path, strlen(path));
+        (void)write(2, "\n", 1);
         return 1;
+    }
     for (size_t i = 0; i < entries.count; i++) {
         (void)write(1, entries.data[i].data, entries.data[i].length);
         (void)write(1, "\n", 1);
