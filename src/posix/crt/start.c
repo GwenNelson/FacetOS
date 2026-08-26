@@ -1,5 +1,6 @@
 #include <facet_posix_runtime.h>
 
+#include <facetos/libc.h>
 #include <facetos/interfaces/IGenericObject.h>
 #include <facetos/interfaces/IPOSIXView.h>
 #include <facetos/libfacet/platform/sel4/client.h>
@@ -16,25 +17,16 @@ IPOSIXView *facet_posix_view(void)
     return posix_view;
 }
 
-static int parse_word(const char *text, uint64_t *out)
+static int lookup_auxv(const auxv_t *auxv, uintptr_t type, uint64_t *out)
 {
-    if (text == NULL || out == NULL || *text == '\0') return -1;
-    uint64_t value = 0;
-    while (*text != '\0') {
-        if (*text < '0' || *text > '9' ||
-            value > (UINT64_MAX - (uint64_t)(*text - '0')) / 10)
-            return -1;
-        value = value * 10 + (uint64_t)(*text++ - '0');
+    if (auxv == NULL || out == NULL) return -1;
+    for (const auxv_t *entry = auxv; entry->a_type != AT_NULL; entry++) {
+        if ((uintptr_t)entry->a_type == type) {
+            *out = (uint64_t)(uintptr_t)entry->a_un.a_val;
+            return 0;
+        }
     }
-    *out = value;
-    return 0;
-}
-
-static void consume_bootstrap(int *argc, char **argv)
-{
-    for (int i = 1; i + 4 < *argc; i++) argv[i] = argv[i + 4];
-    *argc -= 4;
-    argv[*argc] = NULL;
+    return -1;
 }
 
 __attribute__((noreturn)) void facet_posix_start(const void *stack)
@@ -48,11 +40,13 @@ __attribute__((noreturn)) void facet_posix_start(const void *stack)
     __sel4runtime_load_env((int)argc_word, (const char *const *)argv,
                            (const char *const *)envp, auxv);
 
-    uint64_t endpoint, cnode, receive_slot, depth;
-    if (argc_word < 5 || parse_word(argv[1], &endpoint) != 0 ||
-        parse_word(argv[2], &cnode) != 0 ||
-        parse_word(argv[3], &receive_slot) != 0 ||
-        parse_word(argv[4], &depth) != 0 ||
+    uint64_t abi_version, endpoint, cnode, receive_slot, depth;
+    if (lookup_auxv(auxv, AT_FACET_ABI_VERSION, &abi_version) != 0 ||
+        abi_version != FACETOS_STARTUP_ABI_VERSION ||
+        lookup_auxv(auxv, AT_FACET_ROOT_OBJECT, &endpoint) != 0 ||
+        lookup_auxv(auxv, AT_FACET_RECEIVE_CNODE, &cnode) != 0 ||
+        lookup_auxv(auxv, AT_FACET_RECEIVE_SLOT, &receive_slot) != 0 ||
+        lookup_auxv(auxv, AT_FACET_RECEIVE_DEPTH, &depth) != 0 ||
         libfacet_register_generic_metadata(&IGenericObject_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IPOSIXView_MetaData) != FACET_OK ||
         facet_sel4_client_init(cnode, receive_slot, depth) != FACET_OK)
@@ -61,9 +55,7 @@ __attribute__((noreturn)) void facet_posix_start(const void *stack)
     if (root == NULL) goto stopped;
     posix_view = libfacet_proxy_client_get_interface(root, IID_IPOSIXView);
     if (posix_view == NULL) goto stopped;
-    int argc = (int)argc_word;
-    consume_bootstrap(&argc, argv);
-    (void)main(argc, (const char *const *)argv,
+    (void)main((int)argc_word, (const char *const *)argv,
                (const char *const *)envp);
 stopped:
     for (;;) seL4_Yield();

@@ -4,6 +4,7 @@
 #include <facetos/interfaces/IFile.h>
 #include <facetos/interfaces/IFileStore.h>
 #include <facetos/interfaces/IGenericObject.h>
+#include <facetos/interfaces/IUnixMetadata.h>
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -21,10 +22,15 @@ struct InitrdEntry {
     const uint8_t *data;
     size_t size;
     bool directory;
+    uint32_t mode;
+    uint32_t uid;
+    uint32_t gid;
     IFile file;
     IDirectory directory_interface;
+    IUnixMetadata unix_metadata;
     FacetHandle file_handle;
     FacetHandle directory_handle;
+    FacetHandle unix_metadata_handle;
 };
 
 struct FacetInitrd {
@@ -52,6 +58,7 @@ static FacetResult return_handle(FacetHandle handle, FacetHandle *out)
 
 static FacetResult file_get_interface(void *self, uuid_t iid, FacetHandle *out);
 static FacetResult file_get_size(void *self, uint64_t *out);
+static FacetResult file_get_path(void *self, FacetString *out);
 static FacetResult file_read_at(void *self, uint64_t offset, uint32_t maximum,
                                 FacetArray_u8 *out);
 static FacetResult file_write_at(void *self, uint64_t offset,
@@ -66,6 +73,27 @@ static FacetResult directory_open_file(void *self, const FacetString *path,
 static FacetResult directory_open_directory(void *self,
                                             const FacetString *path,
                                             FacetHandle *out);
+static FacetResult metadata_get_interface(void *self, uuid_t iid,
+                                          FacetHandle *out);
+static FacetResult metadata_get_mode(void *self, uint32_t *out);
+static FacetResult metadata_get_uid(void *self, uint32_t *out);
+static FacetResult metadata_get_gid(void *self, uint32_t *out);
+
+static FacetResult ensure_metadata_exported(InitrdEntry *entry)
+{
+    if (entry->unix_metadata_handle.platform != NULL) return FACET_OK;
+    entry->unix_metadata = (IUnixMetadata){
+        .self = entry,
+        .priv = entry,
+        .getInterface = metadata_get_interface,
+        .getmode = metadata_get_mode,
+        .getuid = metadata_get_uid,
+        .getgid = metadata_get_gid,
+    };
+    return libfacet_export_interface(&entry->unix_metadata,
+                                     &IUnixMetadata_MetaData,
+                                     &entry->unix_metadata_handle);
+}
 
 static size_t align4(size_t value)
 {
@@ -228,6 +256,7 @@ static FacetResult store_open_file(void *self, const FacetString *path, FacetHan
         entry->file.self = entry; entry->file.priv = self;
         entry->file.getInterface = file_get_interface; entry->file.get_size = file_get_size;
         entry->file.read_at = file_read_at; entry->file.write_at = file_write_at;
+        entry->file.getpath = file_get_path;
         if (libfacet_export_interface(&entry->file, &IFile_MetaData,
                                       &entry->file_handle) != FACET_OK)
             return FACET_OUT_OF_MEMORY;
@@ -268,8 +297,22 @@ static FacetResult file_get_interface(void *self, uuid_t iid, FacetHandle *out)
     InitrdEntry *entry = self;
     if (iid_equal(iid, IID_IGenericObject) || iid_equal(iid, IID_IFile))
         return return_handle(entry->file_handle, out);
+    if (iid_equal(iid, IID_IUnixMetadata)) {
+        FacetResult result = ensure_metadata_exported(entry);
+        return result == FACET_OK
+            ? return_handle(entry->unix_metadata_handle, out) : result;
+    }
     if (out != NULL) *out = (FacetHandle){0};
     return FACET_NO_INTERFACE;
+}
+
+static FacetResult file_get_path(void *self, FacetString *out)
+{
+    if (self == NULL || out == NULL) return FACET_INVALID_ARGUMENT;
+    InitrdEntry *entry = self;
+    out->data = entry->path;
+    out->length = strlen(entry->path);
+    return FACET_OK;
 }
 
 static FacetResult file_get_size(void *self, uint64_t *out)
@@ -307,8 +350,44 @@ static FacetResult directory_get_interface(void *self, uuid_t iid, FacetHandle *
     InitrdEntry *entry = self;
     if (iid_equal(iid, IID_IGenericObject) || iid_equal(iid, IID_IDirectory))
         return return_handle(entry->directory_handle, out);
+    if (iid_equal(iid, IID_IUnixMetadata)) {
+        FacetResult result = ensure_metadata_exported(entry);
+        return result == FACET_OK
+            ? return_handle(entry->unix_metadata_handle, out) : result;
+    }
     if (out != NULL) *out = (FacetHandle){0};
     return FACET_NO_INTERFACE;
+}
+
+static FacetResult metadata_get_interface(void *self, uuid_t iid,
+                                          FacetHandle *out)
+{
+    InitrdEntry *entry = self;
+    if (iid_equal(iid, IID_IGenericObject) || iid_equal(iid, IID_IUnixMetadata))
+        return return_handle(entry->unix_metadata_handle, out);
+    if (out != NULL) *out = (FacetHandle){0};
+    return FACET_NO_INTERFACE;
+}
+
+static FacetResult metadata_get_mode(void *self, uint32_t *out)
+{
+    if (out == NULL) return FACET_INVALID_ARGUMENT;
+    *out = ((InitrdEntry *)self)->mode;
+    return FACET_OK;
+}
+
+static FacetResult metadata_get_uid(void *self, uint32_t *out)
+{
+    if (out == NULL) return FACET_INVALID_ARGUMENT;
+    *out = ((InitrdEntry *)self)->uid;
+    return FACET_OK;
+}
+
+static FacetResult metadata_get_gid(void *self, uint32_t *out)
+{
+    if (out == NULL) return FACET_INVALID_ARGUMENT;
+    *out = ((InitrdEntry *)self)->gid;
+    return FACET_OK;
 }
 
 static FacetResult directory_get_path(void *self, FacetString *path)
@@ -416,13 +495,16 @@ FacetInitrd *facet_initrd_create(const void *data, size_t size)
     if (initrd->entries[0].path == NULL) goto fail;
     strcpy(initrd->entries[0].path, "/");
     initrd->entries[0].directory = true;
+    initrd->entries[0].mode = 0040755u;
     initrd->entry_count = 1;
     size_t offset = 0;
     while (offset + CPIO_HEADER_SIZE <= size) {
         const uint8_t *header = initrd->data + offset;
         if (memcmp(header, "070701", 6) != 0 && memcmp(header, "070702", 6) != 0) goto fail;
-        size_t mode, file_size, name_size;
+        size_t mode, uid, gid, file_size, name_size;
         if (hex_field(header + 14, 8, &mode) != 0 ||
+            hex_field(header + 22, 8, &uid) != 0 ||
+            hex_field(header + 30, 8, &gid) != 0 ||
             hex_field(header + 54, 8, &file_size) != 0 ||
             hex_field(header + 94, 8, &name_size) != 0 || name_size == 0) goto fail;
         size_t name_offset = offset + CPIO_HEADER_SIZE;
@@ -451,6 +533,9 @@ FacetInitrd *facet_initrd_create(const void *data, size_t size)
         memset(entry, 0, sizeof(*entry));
         entry->path = path; entry->data = initrd->data + data_offset;
         entry->size = file_size; entry->directory = kind == 0040000u;
+        entry->mode = (uint32_t)mode;
+        entry->uid = (uint32_t)uid;
+        entry->gid = (uint32_t)gid;
         offset = align4(data_offset + file_size);
     }
     return initrd;
@@ -501,6 +586,8 @@ void facet_initrd_destroy(FacetInitrd *initrd)
             (void)libfacet_unexport_interface(initrd->entries[i].file_handle);
         if (initrd->entries[i].directory_handle.platform != NULL)
             (void)libfacet_unexport_interface(initrd->entries[i].directory_handle);
+        if (initrd->entries[i].unix_metadata_handle.platform != NULL)
+            (void)libfacet_unexport_interface(initrd->entries[i].unix_metadata_handle);
         free(initrd->entries[i].path);
     }
     free(initrd->entries); free(initrd);

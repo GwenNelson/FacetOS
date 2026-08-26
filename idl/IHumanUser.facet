@@ -8,4 +8,7 @@ interface IHumanUser {
     property string home_path read;
     property string default_shell read;
     property handle pronouns read;
+    property u32 uid read;
+    property u32 gid read;
+    property bool admin read;
 }

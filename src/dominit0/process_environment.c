@@ -32,6 +32,9 @@ struct Dominit0ProcessEnvironment {
     FacetHandle private_page_allocator;
     Dominit0ProcessProfile profile;
     Dominit0PosixView *posix_view;
+    FacetString sysv_environment[8];
+    char *owned_sysv_environment[8];
+    size_t sysv_environment_count;
 };
 
 static bool iid_equal(uuid_t left, uuid_t right)
@@ -163,6 +166,31 @@ static FacetResult list_bindings(void *self, FacetArray_BindingInfo *out)
     return FACET_OK;
 }
 
+static FacetResult get_sysv_environment(void *self, FacetArray_string *out)
+{
+    Dominit0ProcessEnvironment *environment = self;
+    if (out == NULL) return FACET_INVALID_ARGUMENT;
+    out->data = environment->sysv_environment;
+    out->count = environment->sysv_environment_count;
+    return FACET_OK;
+}
+
+static int add_sysv_environment(Dominit0ProcessEnvironment *environment,
+                                const char *value)
+{
+    if (environment == NULL || value == NULL || strchr(value, '=') == NULL ||
+        environment->sysv_environment_count == 8)
+        return -1;
+    size_t index = environment->sysv_environment_count;
+    char *copy = strdup(value);
+    if (copy == NULL) return -1;
+    environment->owned_sysv_environment[index] = copy;
+    environment->sysv_environment[index].data = copy;
+    environment->sysv_environment[index].length = strlen(copy);
+    environment->sysv_environment_count++;
+    return 0;
+}
+
 Dominit0ProcessEnvironment *dominit0_process_environment_create(
     Dominit0DomainEnvironment *parent, FacetHandle session,
     bool bootstrap_authority, Dominit0ProcessProfile profile)
@@ -171,6 +199,12 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
     Dominit0ProcessEnvironment *environment = calloc(1, sizeof(*environment));
     if (environment == NULL) return NULL;
     environment->profile = profile;
+    if (add_sysv_environment(environment, "PATH=/FacetOS") != 0 ||
+        add_sysv_environment(environment, "PWD=/") != 0 ||
+        add_sysv_environment(environment, "USER=root") != 0 ||
+        add_sysv_environment(environment, "HOME=/root") != 0 ||
+        add_sysv_environment(environment, "SHELL=/FacetOS/FacetShell") != 0)
+        goto fail;
     static const char *delegated[] = {"logger", "files"};
     for (size_t i = 0; profile == DOMINIT0_PROCESS_NATIVE &&
          i < sizeof(delegated) / sizeof(delegated[0]); i++) {
@@ -211,6 +245,7 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
     environment->interface.get_primary_iid = primary_iid;
     environment->interface.get_advertised_iids = advertised_iids;
     environment->interface.list_bindings = list_bindings;
+    environment->interface.get_sysv_environment = get_sysv_environment;
     if (libfacet_export_interface(&environment->interface,
                                   &IProcessEnvironment_MetaData,
                                   &environment->handle) != FACET_OK)
@@ -267,6 +302,17 @@ FacetHandle dominit0_process_environment_root_handle(
     return environment == NULL ? (FacetHandle){0} : environment->handle;
 }
 
+int dominit0_process_environment_get_sysv(
+    const Dominit0ProcessEnvironment *environment, size_t *count,
+    const char *const **values)
+{
+    if (environment == NULL || count == NULL || values == NULL)
+        return -1;
+    *count = environment->sysv_environment_count;
+    *values = (const char *const *)environment->owned_sysv_environment;
+    return 0;
+}
+
 void dominit0_process_environment_destroy(Dominit0ProcessEnvironment *environment)
 {
     if (environment == NULL) return;
@@ -277,5 +323,7 @@ void dominit0_process_environment_destroy(Dominit0ProcessEnvironment *environmen
     dominit0_posix_view_destroy(environment->posix_view);
     for (size_t i = 0; i < environment->binding_count; i++)
         free(environment->bindings[i].name);
+    for (size_t i = 0; i < environment->sysv_environment_count; i++)
+        free(environment->owned_sysv_environment[i]);
     free(environment);
 }

@@ -93,10 +93,14 @@ enum {
     USER_ADMIN = 1u << 2,
     USER_NATIVE_SHELL = 1u << 3,
     USER_POSIX_SHELL = 1u << 4,
+    USER_UID = 1u << 5,
+    USER_GID = 1u << 6,
+    USER_HOME_PATH = 1u << 7,
     TERMINAL_REFERENCE = 1u << 0,
     TERMINAL_VIEW = 1u << 1,
     TERMINAL_INITIAL_PROCESS = 1u << 2,
     TERMINAL_DEVICE = 1u << 3,
+    TERMINAL_RUN_AS = 1u << 4,
 };
 
 static void diagnostic_clear(FacetConfigDiagnostic *diagnostic)
@@ -880,6 +884,8 @@ static int domain_terminals_from_array(Parser *parser, Value *value,
                 destination = &assignment->initial_process;
             } else if (strcmp(entry->key, "device") == 0) {
                 bit = TERMINAL_DEVICE; destination = &assignment->device_name;
+            } else if (strcmp(entry->key, "run_as") == 0) {
+                bit = TERMINAL_RUN_AS; destination = &assignment->run_as;
             } else if (strcmp(entry->key, "view") == 0) {
                 bit = TERMINAL_VIEW; destination = NULL;
             } else {
@@ -933,6 +939,12 @@ static int user_from_table(Parser *parser, const Value *table,
             bit = USER_NATIVE_SHELL; string_destination = &user->native_shell;
         } else if (strcmp(entry->key, "posix_shell") == 0) {
             bit = USER_POSIX_SHELL; string_destination = &user->posix_shell;
+        } else if (strcmp(entry->key, "home_path") == 0) {
+            bit = USER_HOME_PATH; string_destination = &user->home_path;
+        } else if (strcmp(entry->key, "uid") == 0) {
+            bit = USER_UID;
+        } else if (strcmp(entry->key, "gid") == 0) {
+            bit = USER_GID;
         } else {
             return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA,
                            entry->line, entry->column, entry->key,
@@ -950,11 +962,21 @@ static int user_from_table(Parser *parser, const Value *table,
             *string_destination = duplicate_bytes(parser, entry->value->as.string,
                                                   strlen(entry->value->as.string));
             if (*string_destination == NULL) return -1;
-        } else {
+        } else if (bit == USER_ADMIN) {
             if (require_kind(parser, entry->key, entry->value,
                              VALUE_BOOL, "boolean") != 0)
                 return -1;
             user->admin = entry->value->as.boolean;
+        } else {
+            if (require_kind(parser, entry->key, entry->value,
+                             VALUE_INTEGER, "non-negative integer") != 0 ||
+                entry->value->as.integer < 0 ||
+                (uint64_t)entry->value->as.integer > UINT32_MAX)
+                return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA,
+                               entry->line, entry->column, entry->key,
+                               "uid and gid must fit in u32");
+            if (bit == USER_UID) user->uid = (uint32_t)entry->value->as.integer;
+            else user->gid = (uint32_t)entry->value->as.integer;
         }
     }
     return 0;
@@ -1078,6 +1100,12 @@ static int apply_value(Parser *parser, char *key, Value *value,
             bit = USER_NATIVE_SHELL; string_destination = &user->native_shell;
         } else if (strcmp(key, "posix_shell") == 0) {
             bit = USER_POSIX_SHELL; string_destination = &user->posix_shell;
+        } else if (strcmp(key, "home_path") == 0) {
+            bit = USER_HOME_PATH; string_destination = &user->home_path;
+        } else if (strcmp(key, "uid") == 0) {
+            bit = USER_UID;
+        } else if (strcmp(key, "gid") == 0) {
+            bit = USER_GID;
         } else return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA,
                               line, column, key, "unknown user key");
         if ((user->_present & bit) != 0)
@@ -1086,9 +1114,21 @@ static int apply_value(Parser *parser, char *key, Value *value,
         user->_present |= bit;
         if (string_destination != NULL)
             return take_string(parser, key, value, string_destination);
-        if (require_kind(parser, key, value, VALUE_BOOL, "boolean") != 0)
-            return -1;
-        user->admin = value->as.boolean;
+        if (bit == USER_ADMIN) {
+            if (require_kind(parser, key, value, VALUE_BOOL, "boolean") != 0)
+                return -1;
+            user->admin = value->as.boolean;
+        } else {
+            if (require_kind(parser, key, value, VALUE_INTEGER,
+                             "non-negative integer") != 0 ||
+                value->as.integer < 0 ||
+                (uint64_t)value->as.integer > UINT32_MAX)
+                return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA,
+                               value->line, value->column, key,
+                               "uid and gid must fit in u32");
+            if (bit == USER_UID) user->uid = (uint32_t)value->as.integer;
+            else user->gid = (uint32_t)value->as.integer;
+        }
         return 0;
     }
     if (parser->section == SECTION_SEAT) {
@@ -1200,6 +1240,7 @@ static void destroy_user(FacetConfigUser *user)
 {
     free(user->name);
     free(user->password_sha256);
+    free(user->home_path);
     free(user->native_shell);
     free(user->posix_shell);
     memset(user, 0, sizeof(*user));
@@ -1218,12 +1259,16 @@ static bool valid_sha256_hex(const char *text)
 static int validate_user(Parser *parser, const FacetConfigUser *user,
                          const char *context)
 {
-    uint32_t required = USER_NAME | USER_PASSWORD_SHA256 | USER_ADMIN;
+    uint32_t required = USER_NAME | USER_PASSWORD_SHA256 | USER_ADMIN |
+                        USER_UID | USER_GID | USER_HOME_PATH;
     if ((user->_present & required) != required || user->name == NULL ||
         user->password_sha256 == NULL || user->name[0] == '\0' ||
         !valid_sha256_hex(user->password_sha256))
         return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
-                       context, "user requires name, lowercase SHA-256 hash, and admin");
+                       context, "user requires name, lowercase SHA-256 hash, admin, uid, gid, and home_path");
+    if (user->home_path[0] != '/')
+        return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
+                       user->name, "home_path must be absolute");
     if ((user->native_shell != NULL && user->native_shell[0] != '/') ||
         (user->posix_shell != NULL && user->posix_shell[0] != '/'))
         return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
@@ -1304,10 +1349,11 @@ static int validate_required(Parser *parser)
                 return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_DUPLICATE, 0, 0,
                                user->name, "duplicate global user");
         if (strcmp(user->name, "root") == 0) {
-            if (!user->admin || strcmp(user->password_sha256,
+            if (!user->admin || user->uid != 0 || user->gid != 0 ||
+                strcmp(user->password_sha256,
                 "f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59") != 0)
                 return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
-                               "root", "root must be admin with the required development hash");
+                               "root", "root must be uid/gid 0, admin, with the required development hash");
             root_found = true;
         }
     }
@@ -1401,7 +1447,8 @@ static int validate_required(Parser *parser)
             uint32_t expected = domain->personality == FACET_CONFIG_PERSONALITY_NATIVE
                 ? TERMINAL_REFERENCE | TERMINAL_VIEW | TERMINAL_INITIAL_PROCESS
                 : TERMINAL_REFERENCE | TERMINAL_DEVICE;
-            if (assignment->_present != expected)
+            if (assignment->_present != expected &&
+                assignment->_present != (expected | TERMINAL_RUN_AS))
                 return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
                                domain->name,
                                domain->personality == FACET_CONFIG_PERSONALITY_NATIVE
@@ -1413,6 +1460,22 @@ static int validate_required(Parser *parser)
                 (assignment->device_name != NULL && assignment->device_name[0] == '\0'))
                 return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
                                domain->name, "terminal assignment strings must not be empty");
+            if (assignment->run_as != NULL) {
+                bool user_found = false;
+                for (size_t u = 0; u < parser->config->user_count; u++)
+                    if (strcmp(assignment->run_as,
+                               parser->config->users[u].name) == 0)
+                        user_found = true;
+                for (size_t u = 0; u < domain->user_count; u++)
+                    if (strcmp(assignment->run_as,
+                               domain->users[u].name) == 0)
+                        user_found = true;
+                if (!user_found)
+                    return fail_at(parser,
+                                   FACET_CONFIG_DIAGNOSTIC_UNRESOLVED_REFERENCE,
+                                   0, 0, assignment->run_as,
+                                   "unknown run_as user");
+            }
             if (domain->personality == FACET_CONFIG_PERSONALITY_POSIX) {
                 for (size_t k = 0; k < j; k++)
                     if (strcmp(assignment->device_name,
@@ -1597,6 +1660,16 @@ int facet_config_make_fallback(FacetSystemConfig *config,
         "name = \"root\"\n"
         "password_sha256 = \"f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59\"\n"
         "admin = true\n"
+        "uid = 0\n"
+        "gid = 0\n"
+        "home_path = \"/root\"\n"
+        "[[users]]\n"
+        "name = \"user\"\n"
+        "password_sha256 = \"f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59\"\n"
+        "admin = false\n"
+        "uid = 1000\n"
+        "gid = 1000\n"
+        "home_path = \"/home/user\"\n"
         "[[seats]]\n"
         "name = \"seat0\"\n"
         "type = \"serial\"\n"
@@ -1671,6 +1744,7 @@ void facet_config_destroy(FacetSystemConfig *config)
             free(config->domains[i].terminals[j].reference);
             free(config->domains[i].terminals[j].initial_process);
             free(config->domains[i].terminals[j].device_name);
+            free(config->domains[i].terminals[j].run_as);
         }
         free(config->domains[i].terminals);
     }

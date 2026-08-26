@@ -1,0 +1,9 @@
+// Process-scoped open description. Offsets are maintained by the object.
+interface IFileDescriptor {
+    uuid auto;
+    requires IGenericObject;
+
+    method FacetResult read_bytes(in u32 maximum, out array<u8> data);
+    method FacetResult write_bytes(in array<u8> data, out u32 written);
+    method FacetResult seek(in i64 offset, in u32 whence, out u64 position);
+}

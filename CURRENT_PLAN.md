@@ -1,75 +1,94 @@
-# Current FacetShell cwd and path-resolution status
+# Native Execution, FacetOS auxv ABI, Owned libc, Descriptor Translation, and Permissions
 
-This file records the implementation verified on 2026-08-25. The accepted
-FacetShell current-directory and initrd path-resolution plan is complete.
+## Summary
 
-## Filesystem object model
+- Replace hidden capability arguments in `argv` with FacetOS auxiliary-vector
+  entries in the ELF `AT_LOOS`-`AT_HIOS` range.
+- Make FacetShell execute foreground native programs, with quoted arguments
+  and `PATH=/FacetOS`; move `ls` and `cat` to external binaries.
+- Build owned `libc-native.a` and `libc-posix.a`, keeping application code free
+  of seL4 and making POSIX calls translate only through `IPOSIXView`.
+- Add descriptor objects, UID/GID permission enforcement, deterministic initrd
+  tooling, standalone application build scripts, and permission test programs.
 
-- An `IDirectory` object can report its canonical absolute `path` and open a
-  file or directory relative to itself. An absolute argument starts at the
-  root of the same store.
-- `IFileStore.open_file()` and `open_directory()` use the same resolver, with
-  relative arguments interpreted from `/`.
-- Adding the three `IDirectory` operations changed its auto-generated UUID.
-  dominit0, FacetShell, tests, and all generated contracts are rebuilt
-  together; the existing `list` method remains ordinal 100.
-- Cwd is not mutable state in the domain-wide store. FacetShell owns an
-  `IDirectory` capability for its cwd. A future `IPOSIXView` can privately own
-  the same lower-level object without exposing it to a pure-POSIX process.
-- `IPOSIXView` was not changed by this work.
+## FacetOS auxv and startup ABI
 
-## Path semantics
+- Publish stable `AT_FACET_*` keys and the startup ABI version in common libc
+  headers. Reserve common process, domain-bootstrap, and seat-server subranges
+  beginning at `AT_LOOS`; reject duplicates, standard-key collisions, and
+  values above `AT_HIOS`.
+- Put the bootstrap root/object capability, receive CNode, slot, and depth in
+  auxv. The SysV stack contains real argv, envp, standard/seL4 auxv entries,
+  and FacetOS entries; no capability value is serialized in argv.
+- Native CRT exposes the root through a native-only accessor. POSIX CRT obtains
+  only `IPOSIXView`. Both libc variants implement `getauxval()`.
+- Verify ordinary applications first, then migrate dominit and seat server
+  bootstrap data to auxv. Legitimate application arguments remain in argv;
+  dominit0's root-task ABI is unchanged. Document remaining seL4 seat backends.
 
-- Runtime lookup accepts absolute and relative paths, repeated separators,
-  trailing separators for directories, `.` components, and `..` components.
-- `..` at `/` remains at `/`; resolution cannot escape the delegated store.
-- Resolved paths are canonical absolute paths with no trailing slash except
-  for `/`.
-- Empty strings, embedded NULs, and paths whose normalized result exceeds the
-  4096-byte service limit are rejected. A file lookup ending in `/`, `/.`, or
-  `/..` is rejected because that syntax requires a directory.
-- Trusted executable lookup through `facet_initrd_find_file()` remains
-  absolute-only. CPIO archive-name validation remains strict.
-- Nested directory enumeration no longer treats the directory itself as a
-  child or reads beyond its path terminator. This fixes the corrupt output
-  formerly produced by `ls /FacetOS`.
+## Interfaces and security model
 
-## FacetShell behavior
+- Repair `IProcessManager.launch` to accept path, argv, caller environment, and
+  cwd. Inherit the authenticated session, stdio, SysV environment, and terminal
+  while creating fresh allocator and lifecycle objects.
+- Add immutable `stdin`, `stdout`, `stderr`, cwd, and SysV environment state to
+  each process environment. Native processes may resolve their full namespace;
+  pure POSIX processes receive only their `IPOSIXView` capability.
+- Add `ICharacterStream`, `IFileDescriptor`, optional `IUnixMetadata`, canonical
+  `IFile.path`, and process exit status. Extend `IPOSIXView` with descriptor
+  read/write/open/close/seek, page allocation/free, and process exit.
+- Keep a 64-entry POSIX descriptor table. Descriptors 0-2 wrap terminal streams;
+  opened descriptors wrap credential-filtered files. The filesystem remains
+  read-only and reports POSIX errno separately from RPC transport errors.
+- Add configured UID, primary GID, home path, and optional terminal `run_as`.
+  Root is UID/GID 0; add non-admin `user`, UID/GID 1000, password `facetos`,
+  home `/home/user`. Enforce owner/group/other permissions and directory search.
+  UID 0 and admins bypass read/write checks but still require an execute bit.
 
-- Every shell starts with cwd `/`; bare `cd` also selects `/` until HOME and
-  POSIX environment support exist.
-- The prompt displays cwd, for example `/> ` and `/FacetOS> `.
-- `pwd`, `ls [path]`, `cat <path>`, and `cd [path]` all use the directory
-  object API. FacetShell does not join or normalize paths itself.
-- `ls` without a path lists cwd. Failed `cd` reports an error and retains the
-  previous directory.
-- Verified forms include `cat README`, `cat ./README`, `ls .`, `ls ..`,
-  `ls /FacetOS`, `ls /FacetOS/`, `cd FacetOS`, `cd ..`, and
-  `cd /FacetOS/../`.
-- The filesystem remains read-only and the shell retains its existing simple
-  single-argument command syntax.
+## Runtime, applications, filesystem, and tools
 
-## Verification completed
+- Reorganize application sources under `src/apps/native/` and
+  `src/apps/posix/`.
+- `libc-native.a` and `libc-posix.a` own the SysV CRT, auxv/env/errno, required
+  memory and string routines, allocator, `read`, `write`, `open`, `close`,
+  `lseek`, `putchar`, `puts`, and exit. Both call standard
+  `int main(int argc, char **argv)` and do not link musl.
+- Move application bootstrap and yielding into application-facing
+  `libfacet-platform-sel4.a`. Applications depend at project level only on one
+  libc flavor, libfacet common, and that platform library.
+- FacetShell keeps `help`, `whoami`, `pwd`, `cd`, and `exit` built in. It parses
+  whitespace, quotes, and backslash escapes, searches colon-separated PATH,
+  resolves slash paths from cwd, launches foreground children, and waits.
+- `/FacetOS/ls` supports `-l`, `-a`, combined flags, `--`, and multiple paths.
+  `/FacetOS/cat` supports `-n`, `--`, multiple files, and stdin via no operand
+  or `-`.
+- Preserve newc mode, UID, and GID through optional metadata objects and enforce
+  access in credential-bound views. Add `/FacetOS/TestPerms` with data under
+  `/Data/TestData`, and `/bin/test_perms` with data under
+  `/usr/share/test_data`.
+- Add native/POSIX GCC driver scripts, gitignored persistent initrd overlays,
+  and a deterministic standalone newc tool supporting pack, unpack, list,
+  add/replace, remove, chmod, and chown with atomic updates and path validation.
 
-- `CCACHE_DISABLE=1 make test` passes, including RPC tests for root-relative
-  store lookup, directory-relative and absolute lookup, canonical paths,
-  `.`, `..`, root clamping, repeated/trailing separators, type mismatches,
-  malformed strings, length limits, file trailing-slash rejection, and nested
-  directory listing.
-- `CCACHE_DISABLE=1 make build` and `CCACHE_DISABLE=1 make image` pass.
-- A bounded KVM/QEMU run was invoked through Make with an explicit timeout:
-  `CCACHE_DISABLE=1 make run TIMEOUT="timeout 25s"` plus a headless console
-  override for automated serial input.
-- The guest serial transcript confirms root login, cwd-aware prompts, both
-  relative `cat` forms, both `/FacetOS` `ls` forms, the three expected native
-  executables, relative `cd`, root-clamped `..`, and canonical `pwd` output.
-  QEMU exited with the expected timeout status 124 after the transcript.
+## Verification requirements
 
-## Deliberate later work
+- Host tests cover auxv, clean argv, shell parsing/PATH, env inheritance,
+  credentials and permissions, descriptors and errno, lifecycle, metadata, and
+  deterministic initrd round trips.
+- Inspect application link maps/symbols to confirm libc/app objects import
+  neither musl nor seL4 APIs.
+- Run normal tests/build/image and bounded QEMU with explicit `TIMEOUT`; verify
+  external utilities, execution/path/quoting/cwd/env/auxv, user login, and
+  native permission outcomes.
+- Run exactly one special bounded image assigning child `/bin/test_perms` to
+  `ttyS0` as `run_as = "user"`; verify POSIX startup, descriptors, file APIs,
+  allocation, and denials. Restore and rebuild the normal configuration, then
+  perform a final bounded smoke boot.
+- Preserve the unrelated untracked `TUTORIAL.md`.
 
-- Add POSIX open-file descriptions, descriptor tables, and per-process cwd to
-  the private server-side implementation of `IPOSIXView`.
-- Add writable filesystem providers, symlinks, mounts, permissions, and
-  distinct POSIX errno mapping when those layers are designed.
-- Replace bare native-shell `cd`-to-root behavior with a configured home
-  directory once native process environment/home policy is available.
+## Deferred work
+
+- Writable filesystems, supplemental groups, umask, fork, signals, pipes,
+  redirection, expansion, globbing, and background jobs remain out of scope.
+- Interface UUIDs remain `auto` while these ABIs are evolving. Published
+  `AT_FACET_*` numbers are stable and extended through the ABI version.

@@ -1,0 +1,9 @@
+// Optional UNIX metadata view implemented by filesystem nodes that have it.
+interface IUnixMetadata {
+    uuid auto;
+    requires IGenericObject;
+
+    property u32 mode read;
+    property u32 uid read;
+    property u32 gid read;
+}

@@ -70,6 +70,13 @@ static FacetResult process_get_running(void *self, bool *running)
     return FACET_OK;
 }
 
+static FacetResult process_get_exit_status(void *self, int32_t *status)
+{
+    if (status == NULL) return FACET_INVALID_ARGUMENT;
+    *status = ((RunningProcess *)self)->exit_status;
+    return FACET_OK;
+}
+
 static FacetResult lifecycle_get_interface(void *self, uuid_t iid,
                                            FacetHandle *out)
 {
@@ -194,6 +201,7 @@ static FacetResult launch_process(ProcessManager *manager,
     process->interface.priv = process;
     process->interface.getInterface = process_get_interface;
     process->interface.getrunning = process_get_running;
+    process->interface.getexit_status = process_get_exit_status;
     process->lifecycle.self = process;
     process->lifecycle.priv = process;
     process->lifecycle.getInterface = lifecycle_get_interface;
@@ -249,8 +257,10 @@ done:
 static FacetResult manager_launch(void *self, const FacetString *path,
                                   const FacetArray_string *arguments,
                                   FacetHandle session_handle,
+                                  FacetHandle cwd_handle,
                                   FacetHandle *out)
 {
+    (void)cwd_handle;
     ProcessManager *manager = self;
     FacetHandle owned = {0};
     if (libfacet_handle_clone(session_handle, &owned) != FACET_OK)

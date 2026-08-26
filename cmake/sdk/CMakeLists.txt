@@ -263,7 +263,7 @@ set(FACET_SHELL_CONTRACT_IDLS
     ISecurityManager IAuthService IByteReader IByteWriter ITerminalControl
     ITerminal ISeat IProcessEnvironment IFileStore IFile IDirectory
     IProcessManager IProcess IProcessLifecycle
-    IPOSIXView
+    IPOSIXView ICharacterStream IFileDescriptor IUnixMetadata
 )
 set(FACET_SHELL_CONTRACT_HEADERS)
 foreach(FACET_SHELL_CONTRACT ${FACET_SHELL_CONTRACT_IDLS})

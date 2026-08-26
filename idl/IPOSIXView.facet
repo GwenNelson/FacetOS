@@ -1,9 +1,20 @@
-// Provisional public POSIX syscall view.  This first slice intentionally
-// contains only write(2); transport status and POSIX status are separate.
+// Provisional per-process POSIX translation view. Transport status and POSIX
+// result/errno are deliberately separate.
 interface IPOSIXView {
     uuid auto;
     requires IGenericObject;
 
     method FacetResult write_fd(in i32 fd, in array<u8> data,
                                 out i64 result, out i32 error);
+    method FacetResult read_fd(in i32 fd, in u32 maximum,
+                               out array<u8> data, out i64 result,
+                               out i32 error);
+    method FacetResult open_fd(in string path, in i32 flags, in u32 mode,
+                               out i32 fd, out i32 error);
+    method FacetResult close_fd(in i32 fd, out i32 result, out i32 error);
+    method FacetResult seek_fd(in i32 fd, in i64 offset, in i32 whence,
+                               out i64 result, out i32 error);
+    method FacetResult allocate_pages(in u64 count, out local_ptr pages);
+    method FacetResult free_pages(in u64 count, in u64 base);
+    method FacetResult exit_process(in i32 status);
 }

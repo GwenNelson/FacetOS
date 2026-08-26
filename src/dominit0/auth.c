@@ -32,6 +32,7 @@ struct Session {
     FacetHandle handle;
     FacetHandle principal;
     uint64_t domain_id;
+    const FacetConfigUser *user;
     Session *next;
 };
 
@@ -113,10 +114,31 @@ static FacetResult human_full_name(void *self, FacetString *out)
 
 static FacetResult human_home(void *self, FacetString *out)
 {
-    (void)self;
+    AuthUser *user = self;
     if (out == NULL) return FACET_INVALID_ARGUMENT;
-    out->data = "/";
-    out->length = 1;
+    out->data = user->config->home_path;
+    out->length = strlen(out->data);
+    return FACET_OK;
+}
+
+static FacetResult human_uid(void *self, uint32_t *out)
+{
+    if (out == NULL) return FACET_INVALID_ARGUMENT;
+    *out = ((AuthUser *)self)->config->uid;
+    return FACET_OK;
+}
+
+static FacetResult human_gid(void *self, uint32_t *out)
+{
+    if (out == NULL) return FACET_INVALID_ARGUMENT;
+    *out = ((AuthUser *)self)->config->gid;
+    return FACET_OK;
+}
+
+static FacetResult human_admin(void *self, bool *out)
+{
+    if (out == NULL) return FACET_INVALID_ARGUMENT;
+    *out = ((AuthUser *)self)->config->admin;
     return FACET_OK;
 }
 
@@ -175,6 +197,9 @@ static int export_user(AuthUser *user)
     user->human.gethome_path = human_home;
     user->human.getdefault_shell = human_shell;
     user->human.getpronouns = human_pronouns;
+    user->human.getuid = human_uid;
+    user->human.getgid = human_gid;
+    user->human.getadmin = human_admin;
     user->authenticated.self = user;
     user->authenticated.priv = user;
     user->authenticated.getInterface = authenticated_get_interface;
@@ -264,6 +289,18 @@ static FacetResult session_domain_id(void *self, uint64_t *out)
     return FACET_OK;
 }
 
+static FacetResult session_credentials(void *self, uint32_t *uid,
+                                       uint32_t *gid, bool *admin)
+{
+    Session *session = self;
+    if (uid == NULL || gid == NULL || admin == NULL || session->user == NULL)
+        return FACET_INVALID_ARGUMENT;
+    *uid = session->user->uid;
+    *gid = session->user->gid;
+    *admin = session->user->admin;
+    return FACET_OK;
+}
+
 static FacetResult security_get_interface(void *self, uuid_t iid,
                                           FacetHandle *out)
 {
@@ -323,7 +360,9 @@ static FacetResult security_create(void *self, FacetHandle authenticated,
     if (out == NULL) return FACET_INVALID_ARGUMENT;
     *out = (FacetHandle){0};
     FacetHandle principal = {0};
-    if (find_authenticated_user(authority, authenticated, &principal) == NULL) {
+    AuthUser *authenticated_user =
+        find_authenticated_user(authority, authenticated, &principal);
+    if (authenticated_user == NULL) {
         if (principal.platform != NULL) (void)libfacet_handle_release(principal);
         return FACET_ACCESS_DENIED;
     }
@@ -334,11 +373,13 @@ static FacetResult security_create(void *self, FacetHandle authenticated,
     }
     session->principal = principal;
     session->domain_id = authority->domain_id;
+    session->user = authenticated_user->config;
     session->interface.self = session;
     session->interface.priv = session;
     session->interface.getInterface = session_get_interface;
     session->interface.get_principal = session_principal;
     session->interface.get_domain_id = session_domain_id;
+    session->interface.get_credentials = session_credentials;
     if (libfacet_export_interface(&session->interface, &ISession_MetaData,
                                   &session->handle) != FACET_OK) {
         (void)libfacet_handle_release(principal);

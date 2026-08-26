@@ -185,6 +185,24 @@ static FacetResult process_list_bindings(void *self, FacetArray_BindingInfo *bin
     return FACET_OK;
 }
 
+static FacetResult process_get_sysv_environment(void *self,
+                                                FacetArray_string *variables)
+{
+    (void)self;
+    static FacetString values[] = {
+        {.data = "PATH=/FacetOS", .length = sizeof("PATH=/FacetOS") - 1},
+        {.data = "PWD=/", .length = sizeof("PWD=/") - 1},
+        {.data = "USER=root", .length = sizeof("USER=root") - 1},
+        {.data = "HOME=/root", .length = sizeof("HOME=/root") - 1},
+        {.data = "SHELL=/FacetOS/FacetShell",
+         .length = sizeof("SHELL=/FacetOS/FacetShell") - 1},
+    };
+    if (variables == NULL) return FACET_INVALID_ARGUMENT;
+    variables->data = values;
+    variables->count = sizeof(values) / sizeof(values[0]);
+    return FACET_OK;
+}
+
 static FacetResult environment_get_domain_id(void *self, uint64_t *value)
 {
     Dominit0DomainEnvironment *environment = self;
@@ -285,6 +303,8 @@ int dominit0_environment_initialize(Dominit0SystemConfig *system)
         environment->process_environment.get_primary_iid = process_get_primary_iid;
         environment->process_environment.get_advertised_iids = process_get_advertised_iids;
         environment->process_environment.list_bindings = process_list_bindings;
+        environment->process_environment.get_sysv_environment =
+            process_get_sysv_environment;
         environment->logger.self = environment;
         environment->logger.priv = environment;
         environment->logger.getInterface = logger_get_interface;

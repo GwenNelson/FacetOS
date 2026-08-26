@@ -91,6 +91,9 @@ typedef struct FacetConfigUser {
     char *name;
     char *password_sha256;
     bool admin;
+    uint32_t uid;
+    uint32_t gid;
+    char *home_path;
     char *native_shell;
     char *posix_shell;
     uint32_t _present;
@@ -109,6 +112,7 @@ typedef struct FacetConfigTerminalAssignment {
     FacetConfigTerminalView view;
     char *initial_process;
     char *device_name;
+    char *run_as;
     uint32_t _present;
 } FacetConfigTerminalAssignment;
 

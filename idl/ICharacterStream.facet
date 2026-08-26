@@ -1,0 +1,8 @@
+// Bidirectional byte stream used as the object behind terminal descriptors.
+interface ICharacterStream {
+    uuid auto;
+    requires IGenericObject;
+
+    method FacetResult read_bytes(in u32 maximum, out array<u8> data);
+    method FacetResult write_bytes(in array<u8> data, out u32 written);
+}

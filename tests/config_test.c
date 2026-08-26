@@ -9,7 +9,10 @@
     "[[users]]\n" \
     "name='root'\n" \
     "password_sha256='f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59'\n" \
-    "admin=true\n"
+    "admin=true\n" \
+    "uid=0\n" \
+    "gid=0\n" \
+    "home_path='/root'\n"
 
 #define ZERO_HASH \
     "0000000000000000000000000000000000000000000000000000000000000000"
@@ -33,8 +36,11 @@ static void check_default_shape(const FacetSystemConfig *config)
     assert(config->authentication_source_count == 1);
     assert(strcmp(config->authentication_sources[0].name, "system") == 0);
     assert(config->authentication_sources[0].provider_domain_index == 0);
-    assert(config->user_count == 1);
+    assert(config->user_count == 2);
     assert(strcmp(config->users[0].name, "root") == 0);
+    assert(config->users[0].uid == 0 && config->users[0].gid == 0);
+    assert(strcmp(config->users[1].name, "user") == 0);
+    assert(config->users[1].uid == 1000 && config->users[1].gid == 1000);
 
     assert(config->seat_count == 2);
     assert(strcmp(config->seats[0].name, "seat0") == 0);
@@ -180,7 +186,8 @@ static void test_user_shell_overrides(void)
         "[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
         "[[users]]\nname='root'\n"
         "password_sha256='f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59'\n"
-        "admin=true\nnative_shell='/FacetOS/FacetDummy'\nposix_shell='/bin/dummysh'\n"
+        "admin=true\nuid=0\ngid=0\nhome_path='/root'\n"
+        "native_shell='/FacetOS/FacetDummy'\nposix_shell='/bin/dummysh'\n"
         "[[seats]]\nname='s'\ntype='serial'\nserver='/FacetOS/seat-server-serial'\nterminals=['t']\n"
         "[[domains]]\nid=0\nname='n'\npersonality='native'\n"
         "domain_manager='local'\ninitrd='n.initrd'\n"
@@ -208,7 +215,8 @@ static void test_domain_user_merge(void)
         "[[seats]]\nname='s'\ntype='serial'\nserver='/FacetOS/seat-server-serial'\nterminals=['t']\n"
         "[[domains]]\nid=0\nname='n'\npersonality='native'\n"
         "domain_manager='local'\ninitrd='n.initrd'\n"
-        "users=[{name='alice',password_sha256='" ZERO_HASH "',admin=false}]\n"
+        "users=[{name='alice',password_sha256='" ZERO_HASH
+        "',admin=false,uid=1000,gid=1000,home_path='/home/alice'}]\n"
         "logging_sinks=[{name='d',level='info'}]\n"
         "terminals=[{terminal='s.t',view='native',initial_process='/x'}]\n";
     FacetSystemConfig config;
@@ -325,7 +333,7 @@ static void test_failures(void)
         "[[domains]]\nid=0\nname='n'\npersonality='native'\n"
         "domain_manager='local'\ninitrd='n.initrd'\n"
         "users=[{name='root',password_sha256='" ZERO_HASH
-        "',admin=false}]\n"
+        "',admin=false,uid=0,gid=0,home_path='/root'}]\n"
         "logging_sinks=[{name='d',level='info'}]\n"
         "terminals=[{terminal='s.t',view='native',initial_process='/x'}]\n";
     expect_failure(duplicate_user, FACET_CONFIG_DIAGNOSTIC_DUPLICATE);

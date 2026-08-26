@@ -5,4 +5,6 @@ interface ISession {
 
     method FacetResult get_principal(out handle principal);
     method FacetResult get_domain_id(out u64 domain_id);
+    method FacetResult get_credentials(out u32 uid, out u32 gid,
+                                       out bool admin);
 }

@@ -13,4 +13,7 @@ interface IProcessEnvironment {
     method FacetResult get_primary_iid(in string name, out uuid iid);
     method FacetResult get_advertised_iids(in string name, out array<uuid> iids);
     method FacetResult list_bindings(out array<BindingInfo> bindings);
+
+    // Immutable SysV KEY=VALUE snapshot installed as envp at process startup.
+    method FacetResult get_sysv_environment(out array<string> variables);
 }

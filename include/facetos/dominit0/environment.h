@@ -42,5 +42,8 @@ int dominit0_process_environment_bind_terminal(
     FacetHandle output, FacetHandle control, FacetHandle terminal);
 FacetHandle dominit0_process_environment_root_handle(
     const Dominit0ProcessEnvironment *environment);
+int dominit0_process_environment_get_sysv(
+    const Dominit0ProcessEnvironment *environment, size_t *count,
+    const char *const **values);
 void dominit0_process_environment_destroy(
     Dominit0ProcessEnvironment *environment);

@@ -4,4 +4,5 @@ interface IProcess {
     requires IGenericObject;
 
     property bool running read;
+    property i32 exit_status read;
 }

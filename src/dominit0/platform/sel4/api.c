@@ -5,6 +5,7 @@
 #include <facetos/dominit0/environment.h>
 #include <facetos/dominit0/terminal.h>
 #include <facetos/interfaces/IPageAllocator.h>
+#include <facetos/libc.h>
 #include <facetos/libfacet/platform/sel4.h>
 
 #include <sel4/sel4.h>
@@ -25,6 +26,8 @@
 #include <sel4utils/process.h>
 #include <sel4utils/thread.h>
 #include <sel4utils/vspace.h>
+#include <sel4utils/helpers.h>
+#include <sel4utils/util.h>
 #include <sel4platsupport/device.h>
 
 #include <stddef.h>
@@ -93,8 +96,8 @@ typedef struct Sel4SeatState {
     bool ready_receive_allocated;
     cspacepath_t fault_endpoint_path;
     bool fault_endpoint_allocated;
-    char argument_text[9][WORD_STRING_SIZE];
-    char *arguments[10];
+    FacetAuxvEntry auxv[9];
+    size_t auxc;
     CurrentSeat *seat;
 } Sel4SeatState;
 
@@ -230,12 +233,14 @@ child_page_allocator_self_test(Sel4ChildPageAllocator *allocator)
 
 static int
 child_page_allocator_prepare(sel4utils_process_t *process, void *context,
-                             FacetHandle *out_bootstrap_handle)
+                             FacetHandle *out_bootstrap_handle,
+                             FacetAuxvEntry extra_auxv[], size_t *extra_auxc)
 {
     Sel4DomainState *state = context;
     if (process == NULL || state == NULL || out_bootstrap_handle == NULL ||
-        process != &state->process)
+        process != &state->process || extra_auxv == NULL || extra_auxc == NULL)
         return -1;
+    *extra_auxc = 0;
     *out_bootstrap_handle = (FacetHandle){0};
 
     Sel4ChildPageAllocator *allocator = &state->page_allocator;
@@ -280,12 +285,15 @@ child_page_allocator_cleanup(void *context)
 
 static int
 program_page_allocator_prepare(sel4utils_process_t *process, void *context,
-                               FacetHandle *out_bootstrap_handle)
+                               FacetHandle *out_bootstrap_handle,
+                               FacetAuxvEntry extra_auxv[], size_t *extra_auxc)
 {
     Sel4ProgramState *state = context;
     if (process == NULL || state == NULL || out_bootstrap_handle == NULL ||
-        process != &state->process || state->environment == NULL)
+        process != &state->process || state->environment == NULL ||
+        extra_auxv == NULL || extra_auxc == NULL)
         return -1;
+    *extra_auxc = 0;
     *out_bootstrap_handle = (FacetHandle){0};
     Sel4ChildPageAllocator *allocator = &state->page_allocator;
     allocator->process = process;
@@ -349,20 +357,14 @@ static int seat_map_vga(Sel4SeatState *state, sel4utils_process_t *process)
     return result;
 }
 
-static void seat_set_argument(Sel4SeatState *state, size_t index,
-                              uint64_t value)
-{
-    (void)snprintf(state->argument_text[index], WORD_STRING_SIZE, "%llu",
-                   (unsigned long long)value);
-    state->arguments[index + 1] = state->argument_text[index];
-}
-
 static int seat_prepare(sel4utils_process_t *process, void *context,
-                        FacetHandle *out_bootstrap_handle)
+                        FacetHandle *out_bootstrap_handle,
+                        FacetAuxvEntry extra_auxv[], size_t *extra_auxc)
 {
     Sel4SeatState *state = context;
     if (process == NULL || state == NULL || state->seat == NULL ||
-        out_bootstrap_handle == NULL)
+        out_bootstrap_handle == NULL || extra_auxv == NULL ||
+        extra_auxc == NULL)
         return -1;
     if (vka_alloc_endpoint(&sel4_vka, &state->service_endpoint) != 0 ||
         state->ready_endpoint.cptr == seL4_CapNull)
@@ -395,16 +397,19 @@ static int seat_prepare(sel4utils_process_t *process, void *context,
     seL4_CPtr receive_slot = process->cspace_next_free++;
     seL4_CPtr export_slot = process->cspace_next_free;
     process->cspace_next_free += SEAT_EXPORT_SLOT_COUNT;
-    state->arguments[0] = (char *)state->seat->config->server;
-    seat_set_argument(state, 0, child_service);
-    seat_set_argument(state, 1, child_ready);
-    seat_set_argument(state, 2, device0);
-    seat_set_argument(state, 3, device1);
-    seat_set_argument(state, 4, receive_slot);
-    seat_set_argument(state, 5, export_slot);
-    seat_set_argument(state, 6, SEL4UTILS_CNODE_SLOT);
-    seat_set_argument(state, 7, seL4_WordBits);
-    seat_set_argument(state, 8, vga_address);
+    FacetAuxvEntry seat_entries[] = {
+        {AT_FACET_SEAT_SERVICE_ENDPOINT, child_service},
+        {AT_FACET_SEAT_READY_ENDPOINT, child_ready},
+        {AT_FACET_SEAT_DEVICE0, device0},
+        {AT_FACET_SEAT_DEVICE1, device1},
+        {AT_FACET_SEAT_RECEIVE_SLOT, receive_slot},
+        {AT_FACET_SEAT_EXPORT_SLOT, export_slot},
+        {AT_FACET_SEAT_CNODE, SEL4UTILS_CNODE_SLOT},
+        {AT_FACET_SEAT_DEPTH, seL4_WordBits},
+        {AT_FACET_SEAT_VGA_ADDRESS, vga_address},
+    };
+    memcpy(extra_auxv, seat_entries, sizeof(seat_entries));
+    *extra_auxc = sizeof(seat_entries) / sizeof(seat_entries[0]);
 
     if (vka_cspace_alloc_path(&sel4_vka, &state->ready_receive_path) != 0)
         return -1;
@@ -608,8 +613,165 @@ copy_elf_program_headers(sel4utils_process_t *process, const elf_t *elf)
 
 typedef int (*DomainPreSpawnHook)(sel4utils_process_t *process,
                                   void *context,
-                                  FacetHandle *out_bootstrap_handle);
+                                  FacetHandle *out_bootstrap_handle,
+                                  FacetAuxvEntry extra_auxv[],
+                                  size_t *extra_auxc);
 typedef void (*DomainFailureCleanup)(void *context);
+
+/* libsel4utils exports this primitive but omits it from its public headers. */
+extern int sel4utils_stack_write(vspace_t *current_vspace,
+                                 vspace_t *target_vspace, vka_t *vka,
+                                 void *buffer, size_t length,
+                                 uintptr_t *stack_pointer);
+
+static int
+stack_push(const void *value, size_t size, uintptr_t *stack_pointer,
+           sel4utils_process_t *process)
+{
+    return sel4utils_stack_write(&sel4_vspace, &process->vspace, &sel4_vka,
+                                 (void *)value, size, stack_pointer);
+}
+
+static int
+auxv_type_is_standard(uintptr_t type)
+{
+    switch (type) {
+    case AT_NULL:
+    case AT_PAGESZ:
+    case AT_PHDR:
+    case AT_PHNUM:
+    case AT_PHENT:
+    case AT_SYSINFO:
+    case AT_SEL4_IPC_BUFFER_PTR:
+    case AT_SEL4_TCB:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static int
+validate_facet_auxv(size_t count, const FacetAuxvEntry entries[])
+{
+    if (count != 0 && entries == NULL)
+        return -1;
+    for (size_t i = 0; i < count; i++) {
+        if (entries[i].type < AT_LOOS || entries[i].type > AT_HIOS ||
+            auxv_type_is_standard(entries[i].type))
+            return -1;
+        for (size_t j = 0; j < i; j++)
+            if (entries[j].type == entries[i].type)
+                return -1;
+    }
+    return 0;
+}
+
+static int
+spawn_process_with_auxv(sel4utils_process_t *process, int argc, char *argv[],
+                        size_t envc, const char *const envp[],
+                        size_t facet_auxc,
+                        const FacetAuxvEntry facet_auxv[])
+{
+    if (process == NULL || argc < 1 || argv == NULL ||
+        (envc != 0 && envp == NULL) ||
+        validate_facet_auxv(facet_auxc, facet_auxv) != 0)
+        return -1;
+
+    uintptr_t *child_argv = calloc((size_t)argc, sizeof(*child_argv));
+    uintptr_t *child_envp = calloc(envc == 0 ? 1 : envc,
+                                  sizeof(*child_envp));
+    size_t standard_auxc = process->sysinfo == 0 ? 6 : 7;
+    size_t auxc = standard_auxc + facet_auxc;
+    Elf_auxv_t *auxv = calloc(auxc, sizeof(*auxv));
+    if (child_argv == NULL || child_envp == NULL || auxv == NULL)
+        goto fail;
+
+    uintptr_t stack_pointer =
+        (uintptr_t)process->thread.stack_top - sizeof(seL4_Word);
+    uintptr_t phdr_address;
+    if (stack_push(process->elf_phdrs,
+                   process->num_elf_phdrs * sizeof(Elf_Phdr),
+                   &stack_pointer, process) != 0)
+        goto fail;
+    phdr_address = stack_pointer;
+
+    for (int i = 0; i < argc; i++) {
+        if (argv[i] == NULL ||
+            stack_push(argv[i], strlen(argv[i]) + 1, &stack_pointer,
+                       process) != 0)
+            goto fail;
+        child_argv[i] = stack_pointer;
+        stack_pointer = ROUND_DOWN(stack_pointer, 4);
+    }
+    for (size_t i = 0; i < envc; i++) {
+        if (envp[i] == NULL ||
+            stack_push(envp[i], strlen(envp[i]) + 1, &stack_pointer,
+                       process) != 0)
+            goto fail;
+        child_envp[i] = stack_pointer;
+        stack_pointer = ROUND_DOWN(stack_pointer, 4);
+    }
+
+    size_t next = 0;
+#define ADD_AUXV(key, val) do { \
+    auxv[next].a_type = (key); \
+    auxv[next++].a_un.a_val = (long)(val); \
+} while (0)
+    ADD_AUXV(AT_PAGESZ, process->pagesz);
+    ADD_AUXV(AT_PHDR, phdr_address);
+    ADD_AUXV(AT_PHNUM, process->num_elf_phdrs);
+    ADD_AUXV(AT_PHENT, sizeof(Elf_Phdr));
+    ADD_AUXV(AT_SEL4_IPC_BUFFER_PTR, process->thread.ipc_buffer_addr);
+    ADD_AUXV(AT_SEL4_TCB, process->dest_tcb_cptr);
+    if (process->sysinfo != 0)
+        ADD_AUXV(AT_SYSINFO, process->sysinfo);
+    for (size_t i = 0; i < facet_auxc; i++)
+        ADD_AUXV(facet_auxv[i].type, facet_auxv[i].value);
+#undef ADD_AUXV
+
+    size_t frame_size = sizeof(Elf_auxv_t) * (auxc + 1) +
+                        sizeof(uintptr_t) * (envc + 1) +
+                        sizeof(uintptr_t) * ((size_t)argc + 1) +
+                        sizeof(seL4_Word);
+    uintptr_t final_pointer = stack_pointer - frame_size;
+    stack_pointer -= final_pointer -
+                     ALIGN_DOWN(final_pointer, STACK_CALL_ALIGNMENT);
+
+    Elf_auxv_t terminator = {.a_type = AT_NULL, .a_un.a_val = 0};
+    uintptr_t zero = 0;
+    seL4_Word argument_count = (seL4_Word)argc;
+    if (stack_push(&terminator, sizeof(terminator), &stack_pointer,
+                   process) != 0 ||
+        stack_push(auxv, sizeof(*auxv) * auxc, &stack_pointer, process) != 0 ||
+        stack_push(&zero, sizeof(zero), &stack_pointer, process) != 0 ||
+        (envc != 0 && stack_push(child_envp, sizeof(*child_envp) * envc,
+                                 &stack_pointer, process) != 0) ||
+        stack_push(&zero, sizeof(zero), &stack_pointer, process) != 0 ||
+        stack_push(child_argv, sizeof(*child_argv) * (size_t)argc,
+                   &stack_pointer, process) != 0 ||
+        stack_push(&argument_count, sizeof(argument_count), &stack_pointer,
+                   process) != 0)
+        goto fail;
+
+    seL4_UserContext context = {0};
+    if (sel4utils_arch_init_context(process->entry_point,
+                                    (void *)stack_pointer, &context) != 0)
+        goto fail;
+    process->thread.initial_stack_pointer = (void *)stack_pointer;
+    int result = seL4_TCB_WriteRegisters(
+        process->thread.tcb.cptr, 1, 0,
+        sizeof(context) / sizeof(seL4_Word), &context);
+    free(auxv);
+    free(child_envp);
+    free(child_argv);
+    return result;
+
+fail:
+    free(auxv);
+    free(child_envp);
+    free(child_argv);
+    return -1;
+}
 
 static int
 load_and_start_domain(sel4utils_process_t *process,
@@ -618,6 +780,8 @@ load_and_start_domain(sel4utils_process_t *process,
                       uint8_t priority,
                       int argc,
                       char *argv[],
+                      size_t envc,
+                      const char *const envp[],
                       DomainPreSpawnHook pre_spawn,
                       DomainFailureCleanup failure_cleanup,
                       void *hook_context,
@@ -635,8 +799,6 @@ load_and_start_domain(sel4utils_process_t *process,
             return -1;
         }
     }
-
-    char *spawn_argv[argc + 4];
 
     if (sel4_allocman == NULL) {
         klog(LOG_ERROR,
@@ -674,8 +836,11 @@ load_and_start_domain(sel4utils_process_t *process,
     }
 
     FacetHandle child_bootstrap_handle = {0};
+    FacetAuxvEntry extra_auxv[16];
+    size_t extra_auxc = 0;
     if (pre_spawn != NULL &&
-        pre_spawn(process, hook_context, &child_bootstrap_handle) != 0) {
+        pre_spawn(process, hook_context, &child_bootstrap_handle,
+                  extra_auxv, &extra_auxc) != 0) {
         klog(LOG_ERROR,
              "load_and_start_domain(): process service setup failed\n");
         goto fail;
@@ -710,32 +875,24 @@ load_and_start_domain(sel4utils_process_t *process,
         goto fail;
     }
 
-    char endpoint_string[4][WORD_STRING_SIZE];
-    char *endpoint_argv[4];
     seL4_CPtr child_receive_slot = process->cspace_next_free;
-    seL4_Word child_words[4] = {
-        (seL4_Word)child_bootstrap_endpoint,
-        (seL4_Word)SEL4UTILS_CNODE_SLOT,
-        (seL4_Word)child_receive_slot,
-        (seL4_Word)seL4_WordBits,
+    FacetAuxvEntry facet_auxv[21] = {
+        {AT_FACET_ABI_VERSION, FACETOS_STARTUP_ABI_VERSION},
+        {AT_FACET_ROOT_OBJECT, (uintptr_t)child_bootstrap_endpoint},
+        {AT_FACET_RECEIVE_CNODE, SEL4UTILS_CNODE_SLOT},
+        {AT_FACET_RECEIVE_SLOT, (uintptr_t)child_receive_slot},
+        {AT_FACET_RECEIVE_DEPTH, seL4_WordBits},
     };
-    sel4utils_create_word_args(endpoint_string, endpoint_argv, 4,
-                               child_words[0], child_words[1],
-                               child_words[2], child_words[3]);
+    size_t facet_auxc = 5;
+    if (extra_auxc > sizeof(extra_auxv) / sizeof(extra_auxv[0]) ||
+        facet_auxc + extra_auxc > sizeof(facet_auxv) / sizeof(facet_auxv[0]))
+        goto fail;
+    memcpy(&facet_auxv[facet_auxc], extra_auxv,
+           extra_auxc * sizeof(extra_auxv[0]));
+    facet_auxc += extra_auxc;
 
-    /* argv[1] is this child's environment root and argv[2..4] describe the empty
-     * capability receive slot in the child's CSpace. */
-    spawn_argv[0] = argv[0];
-    spawn_argv[1] = endpoint_argv[0];
-    spawn_argv[2] = endpoint_argv[1];
-    spawn_argv[3] = endpoint_argv[2];
-    spawn_argv[4] = endpoint_argv[3];
-    for (int i = 1; i < argc; i++) {
-        spawn_argv[i + 4] = argv[i];
-    }
-
-    if (sel4utils_spawn_process_v(process, &sel4_vka, &sel4_vspace,
-                                  argc + 4, spawn_argv, 1) != 0) {
+    if (spawn_process_with_auxv(process, argc, argv, envc, envp,
+                                facet_auxc, facet_auxv) != 0) {
         klog(LOG_ERROR, "load_and_start_domain(): process start failed\n");
         goto fail;
     }
@@ -976,6 +1133,7 @@ void *platform_start_domain(CurrentDomain *current)
                                seL4_MaxPrio,
                                1,
                                dominit_argv,
+                               0, NULL,
                                child_page_allocator_prepare,
                                child_page_allocator_cleanup,
                                state, seL4_CapNull) != 0) {
@@ -1019,12 +1177,9 @@ void *platform_start_seat(CurrentSeat *seat, const void *elf_data,
         free(state);
         return NULL;
     }
-    /* seat_prepare fills the strings before load_and_start_domain copies the
-     * argument vector onto the new process stack. */
-    state->arguments[0] = (char *)seat->config->server;
-    for (size_t i = 0; i < 9; i++) state->arguments[i + 1] = "0";
+    char *seat_argv[] = {(char *)seat->config->server};
     if (load_and_start_domain(&state->process, elf_data, elf_size,
-                              seL4_MaxPrio, 10, state->arguments,
+                              seL4_MaxPrio, 1, seat_argv, 0, NULL,
                               seat_prepare, seat_cleanup, state,
                               state->fault_endpoint_path.capPtr) != 0) {
         seat_cleanup(state);
@@ -1076,8 +1231,14 @@ void *platform_start_process(CurrentDomain *domain, const void *elf_data,
     Sel4ProgramState *state = calloc(1, sizeof(*state));
     if (state == NULL) return NULL;
     state->environment = environment;
+    size_t envc = 0;
+    const char *const *envp = NULL;
+    if (dominit0_process_environment_get_sysv(environment, &envc, &envp) != 0) {
+        free(state);
+        return NULL;
+    }
     if (load_and_start_domain(&state->process, elf_data, elf_size,
-                              seL4_MaxPrio, argc, argv,
+                              seL4_MaxPrio, argc, argv, envc, envp,
                               program_page_allocator_prepare,
                               program_page_allocator_cleanup, state,
                               seL4_CapNull) != 0) {

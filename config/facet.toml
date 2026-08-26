@@ -17,6 +17,17 @@ required = true
 name = "root"
 password_sha256 = "f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59"
 admin = true
+uid = 0
+gid = 0
+home_path = "/root"
+
+[[users]]
+name = "user"
+password_sha256 = "f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59"
+admin = false
+uid = 1000
+gid = 1000
+home_path = "/home/user"
 
 [[seats]]
 name = "seat0"

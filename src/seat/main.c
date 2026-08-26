@@ -9,10 +9,12 @@
 #include <facetos/interfaces/ISeat.h>
 #include <facetos/interfaces/ITerminal.h>
 #include <facetos/interfaces/ITerminalControl.h>
+#include <facetos/libc.h>
 #include <facetos/libfacet/common.h>
 #include <facetos/libfacet/platform/sel4/service.h>
 
 #include <sel4/sel4.h>
+#include <sel4runtime.h>
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -314,23 +316,25 @@ static int export_seat(void)
     return 0;
 }
 
-static int parse_word(const char *text, uint64_t *out)
+static int lookup_auxv(uintptr_t type, uint64_t *out)
 {
-    if (text == NULL || out == NULL || *text == '\0') return -1;
-    uint64_t value = 0;
-    while (*text != '\0') {
-        if (*text < '0' || *text > '9' ||
-            value > (UINT64_MAX - (uint64_t)(*text - '0')) / 10)
-            return -1;
-        value = value * 10 + (uint64_t)(*text++ - '0');
+    if (out == NULL) return -1;
+    const auxv_t *entry = sel4runtime_auxv();
+    if (entry == NULL) return -1;
+    for (; entry->a_type != AT_NULL; entry++) {
+        if ((uintptr_t)entry->a_type == type) {
+            *out = (uint64_t)(uintptr_t)entry->a_un.a_val;
+            return 0;
+        }
     }
-    *out = value;
-    return 0;
+    return -1;
 }
 
 int main(int argc, char **argv)
 {
-    if (argc < 14 ||
+    (void)argc;
+    (void)argv;
+    if (
         libfacet_register_generic_metadata(&IGenericObject_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IByteReader_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IByteWriter_MetaData) != FACET_OK ||
@@ -340,15 +344,15 @@ int main(int argc, char **argv)
         return 1;
     uint64_t service_endpoint, ready_endpoint, device0, device1;
     uint64_t receive_slot, export_slot, cnode, depth, vga_address;
-    if (parse_word(argv[5], &service_endpoint) != 0 ||
-        parse_word(argv[6], &ready_endpoint) != 0 ||
-        parse_word(argv[7], &device0) != 0 ||
-        parse_word(argv[8], &device1) != 0 ||
-        parse_word(argv[9], &receive_slot) != 0 ||
-        parse_word(argv[10], &export_slot) != 0 ||
-        parse_word(argv[11], &cnode) != 0 ||
-        parse_word(argv[12], &depth) != 0 ||
-        parse_word(argv[13], &vga_address) != 0 ||
+    if (lookup_auxv(AT_FACET_SEAT_SERVICE_ENDPOINT, &service_endpoint) != 0 ||
+        lookup_auxv(AT_FACET_SEAT_READY_ENDPOINT, &ready_endpoint) != 0 ||
+        lookup_auxv(AT_FACET_SEAT_DEVICE0, &device0) != 0 ||
+        lookup_auxv(AT_FACET_SEAT_DEVICE1, &device1) != 0 ||
+        lookup_auxv(AT_FACET_SEAT_RECEIVE_SLOT, &receive_slot) != 0 ||
+        lookup_auxv(AT_FACET_SEAT_EXPORT_SLOT, &export_slot) != 0 ||
+        lookup_auxv(AT_FACET_SEAT_CNODE, &cnode) != 0 ||
+        lookup_auxv(AT_FACET_SEAT_DEPTH, &depth) != 0 ||
+        lookup_auxv(AT_FACET_SEAT_VGA_ADDRESS, &vga_address) != 0 ||
         facet_sel4_service_init(service_endpoint, cnode, receive_slot,
                                 export_slot, depth) != FACET_OK ||
         seat_platform_initialize(device0, device1, vga_address) != 0 ||
