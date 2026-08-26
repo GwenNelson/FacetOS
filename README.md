@@ -1,72 +1,229 @@
 # FacetOS
 
-FacetOS is a capability-oriented seL4 system. `dominit0` parses `config/facet.toml`, starts seat servers, and creates configured domains. Each domain receives a typed `IDomainEnvironment`; platform-specific seL4 state stays behind dominit0 and the platform launcher.
+FacetOS is a capability-oriented operating system built on the seL4
+microkernel.
 
-The default configuration has native domain 0 on serial `seat0.ttyS0` and local `seat1.tty1`. Local `seat1.tty2` is a POSIX view of domain 0: it runs `/bin/login` with only `IPOSIXView`, never native process/auth/filesystem capabilities. Its `/etc` is virtual and synthesized by dominit0; it is not present in `system.initrd`. `seat1.tty3` is domain 1, a pure POSIX domain whose `/sbin/init` is PID 1 and whose `child.initrd` contains its own `/etc`.
+The short version:
+
+-   **seL4** provides isolation, scheduling, IPC, memory-management
+    primitives, and capabilities.
+-   **`dominit0`** starts the FacetOS userspace, launches machine-level
+    services, and creates configured domains.
+-   **Each configured domain has its own `dominit`**, which manages that
+    domain and launches its processes.
+-   **Native FacetOS programs use typed object interfaces defined in
+    IDL.**
+-   **POSIX programs use ordinary POSIX APIs** through `libc-posix`;
+    they do not need to know about FacetOS interfaces.
+
+## Quick start
+
+``` sh
+make build
+make test
+make run TIMEOUT=20
+```
+
+Always give `make run` a `TIMEOUT` so QEMU cannot remain running
+indefinitely.
 
 ## Architecture
 
 ![FacetOS architecture](docs/architecture.png)
 
+FacetOS keeps the microkernel, machine-level services, domains, and
+applications as separate layers.
 
-FacetOS is a capability-oriented operating system built on the seL4 microkernel. seL4 provides the fundamental mechanisms for isolation, memory management, scheduling, IPC and capability-based authority; the higher-level operating-system architecture and APIs are implemented in userspace.
+### seL4
 
-At boot, `dominit0` acts as the privileged root of the FacetOS userspace. It constructs the system environment, starts machine-level services such as seat servers and other drivers, discovers the resources they expose, and delegates those resources to configured domains. It then creates a separate `dominit` instance for each configured domain.
+seL4 is the foundation. It provides the low-level protection mechanisms
+FacetOS builds on: address spaces, scheduling, IPC, memory-management
+primitives, and capability-based authority.
 
-The **system domain** is distinct from the numbered application domains. It contains `dominit0` and machine-level services that must exist outside, or provide resources to, individual domains. Domain 0 is therefore an ordinary configured domain rather than another name for the system domain.
+Higher-level operating-system policy lives in userspace.
 
-Each configured domain is isolated and managed by its own `dominit`. A domain receives only the capabilities explicitly delegated to it and may use those capabilities to construct its own services, namespaces and process environments. `dominit` is responsible for launching and managing the user processes belonging to that domain.
+### System domain
 
-Domains do not have an intrinsic personality based on their domain number. A domain may host native FacetOS applications, expose a POSIX view, operate as a pure POSIX environment, or eventually host other execution environments such as virtual machines. These are configuration and capability choices rather than properties hard-coded into the kernel or domain ID.
+The **system domain** contains `dominit0` and machine-level services
+such as seat servers and drivers that are not owned by another domain.
 
-### Native FacetOS API and IDL interfaces
+At boot, `dominit0`:
 
-The primary API presented to **native FacetOS applications is its typed object-interface system**.
+1.  reads `config/facet.toml`;
+2.  starts machine-level services such as the seat servers;
+3.  discovers resources exposed by those services;
+4.  assigns resources to configured domains; and
+5.  starts one `dominit` for each configured domain.
 
-Operating-system facilities are exposed as objects implementing interfaces defined using the FacetOS Interface Definition Language (IDL). Rather than applications primarily interacting with the OS through a large global table of integer system calls, native applications obtain handles to objects implementing interfaces such as terminal, filesystem, process, authentication or other services and invoke the methods defined by those interfaces.
+The system domain is **not domain 0**. Domain 0 is an ordinary
+configured domain, just like domain 1 or any future domain.
 
-Conceptually:
+Platform-specific seL4 state remains behind `dominit0` and the platform
+launcher rather than being exposed directly to applications.
 
-    Native application
-          │
-          │ typed FacetOS API
-          ▼
-       IWhatever
-          │
-          │ generated IDL bindings / IPC
-          ▼
-    service implementing IWhatever
-          │
-          ▼
-    delegated capabilities and lower-level services
+### Configured domains
 
-IDL definitions specify the contract between clients and services, including methods, properties, argument types and interface relationships. Bindings generated from those definitions provide the native API used by applications while hiding the underlying IPC transport and seL4-specific details.
+Each configured domain is isolated and has its own `dominit`.
 
-Object handles also represent authority. A process can use a service only when it has been explicitly given an appropriate handle/capability to an object providing that interface. There is therefore no assumption that every process can access every operating-system service simply because that service exists.
+`dominit` receives the capabilities delegated to its domain and uses
+them to construct that domain's services, namespaces, process
+environments, and user processes.
 
-The process environment is the starting point for this object graph. When `dominit` launches a native application, it constructs an `IProcessEnvironment` containing the interfaces and capabilities that process is permitted to use. Applications can discover and follow explicitly provided interfaces from there without requiring direct knowledge of seL4 capabilities, endpoints or the internal location of the service implementation.
+A domain number does **not** determine what kind of domain it is.
+Depending on configuration, a domain may be:
 
-This makes the IDL/interface layer both the **native programming API and an architectural boundary**. A service may move into another process, be replaced by another implementation, or be proxied across a domain boundary without requiring applications to depend on its internal implementation.
+-   a native FacetOS domain;
+-   a native domain that also provides a POSIX view;
+-   a pure POSIX domain;
+-   or, eventually, another kind of execution environment such as a
+    virtual machine.
 
-POSIX applications are deliberately different. They interact with a conventional libc/POSIX API; `libc-posix` translates that API onto the appropriate FacetOS interfaces internally. Ordinary POSIX application source therefore does not need to know about FacetOS IDLs or interfaces at all.
+Domain 0 and domain 1 are simply the two configurations currently used
+by the development system.
 
-At a high level, the system is arranged as:
+## Native FacetOS API
 
-- **seL4** — microkernel, isolation, IPC and fundamental capability mechanisms.
-- **System domain** — `dominit0`, seat servers, hardware/platform services and drivers not delegated elsewhere.
-- **Configured domains** — independently managed environments, each rooted at its own `dominit`.
-- **FacetOS IDL/interface layer** — the core typed object API through which native applications consume operating-system services.
-- **Native user processes** — applications using FacetOS interfaces supplied through their process environment.
-- **POSIX user processes** — applications using conventional POSIX APIs, with `libc-posix` privately translating those operations onto FacetOS services.
+The core API for native FacetOS software is the **typed object-interface
+system**.
 
-This separation keeps mechanism, domain policy and application authority distinct: seL4 supplies the underlying protection mechanisms, `dominit0` controls and delegates machine-level resources, each `dominit` controls its own domain, and applications see only the typed interfaces explicitly provided to them.
+Operating-system services are exposed as objects implementing interfaces
+defined with the FacetOS Interface Definition Language (IDL). Native
+applications receive handles to those objects and call their typed
+methods.
 
-## Build and run
+For example:
 
-Run `make build` to build the kernel, services, applications, and initrds. Use a bounded boot such as `make run TIMEOUT=20`; always supply `TIMEOUT` so QEMU cannot remain running. `make test` runs host checks.
+``` text
+Native application
+        │
+        │ typed FacetOS API
+        ▼
+    IWhatever
+        │
+        │ generated IDL bindings / IPC
+        ▼
+Service implementing IWhatever
+        │
+        ▼
+Delegated capabilities and lower-level services
+```
 
-Native applications live in `src/apps/native`; POSIX applications live in `src/apps/posix`. POSIX programs use ordinary SysV `main`, while their CRT obtains the per-process `IPOSIXView` from FacetOS auxv. Add a POSIX target to `src/posix/CMakeLists.txt` and package it into the required initrd rule in `Makefile`.
+IDL definitions describe the contract between a client and a service:
+methods, properties, argument types, and interface relationships.
+Generated bindings hide the underlying IPC transport and seL4-specific
+details from normal application code.
+
+This interface layer is therefore both:
+
+-   the **native FacetOS programming API**; and
+-   an **architectural boundary** between applications and service
+    implementations.
+
+A service can move to another process, be replaced, or be proxied across
+a domain boundary without requiring applications to depend on its
+implementation details.
+
+### Handles are authority
+
+FacetOS does not assume that every process can access every
+operating-system service.
+
+A process can use an object only when it has been given an appropriate
+handle/capability to that object.
+
+When `dominit` launches a native process, it constructs an
+`IProcessEnvironment` containing the interfaces and capabilities that
+process is allowed to use. Native applications begin with that
+environment and discover the services available to them from there.
+
+Applications therefore do not need direct knowledge of seL4 endpoints,
+kernel capabilities, or where a service happens to run.
+
+## POSIX support
+
+POSIX applications deliberately see a different API.
+
+Ordinary POSIX source uses conventional libc interfaces. `libc-posix`
+translates those operations onto FacetOS services internally, using the
+process's `IPOSIXView`.
+
+In other words:
+
+``` text
+POSIX application
+        │
+        │ POSIX / libc API
+        ▼
+    libc-posix
+        │
+        │ FacetOS interfaces
+        ▼
+    IPOSIXView
+        │
+        ▼
+Domain services
+```
+
+The application itself does not need to include FacetOS IDL headers or
+call FacetOS-specific interfaces.
+
+POSIX programs use an ordinary SysV `main`. Their CRT obtains the
+process's `IPOSIXView` from the FacetOS auxiliary vector before entering
+the application.
+
+## Current development configuration
+
+The current `facet.toml` demonstrates several kinds of process
+environment:
+
+  Terminal        Domain     Environment
+  --------------- ---------- ------------------------
+  `seat0.ttyS0`   domain 0   native FacetOS
+  `seat1.tty1`    domain 0   native FacetOS
+  `seat1.tty2`    domain 0   POSIX view of domain 0
+  `seat1.tty3`    domain 1   pure POSIX domain
+
+On `seat1.tty2`, `/bin/login` receives only its POSIX view rather than
+native process, authentication, or filesystem capabilities. Its `/etc`
+is virtual and is not physically present in `system.initrd`.
+
+Domain 1 is currently configured as a pure POSIX domain. Its
+`/sbin/init` runs as PID 1, and `child.initrd` contains that domain's
+own `/etc`.
+
+These are properties of the **current configuration**, not special
+meanings attached to domain numbers.
+
+## Source layout
+
+Native applications live in:
+
+``` text
+src/apps/native
+```
+
+POSIX applications live in:
+
+``` text
+src/apps/posix
+```
+
+To add a POSIX application, add its target to `src/posix/CMakeLists.txt`
+and package it into the appropriate initrd from the `Makefile`.
 
 ## Configuration
 
-`config/facet.toml` defines users, seats, domains, initrds, logging, and terminal assignments. Native terminal entries select an initial process and view. A POSIX domain names `pid1` and device-backed terminal assignments. The default development password for both configured accounts is `facetos`; its SHA-256 value is used by the prototype login implementation.
+`config/facet.toml` defines the development system's:
+
+-   users;
+-   seats and terminals;
+-   domains;
+-   initrds;
+-   logging; and
+-   terminal assignments.
+
+Native terminal entries select an initial process and view. A POSIX
+domain specifies its `pid1` and device-backed terminal assignments.
+
+The prototype login currently uses SHA-256 password hashes. The default
+development password for both configured accounts is `facetos`.
