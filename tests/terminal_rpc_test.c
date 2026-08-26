@@ -417,6 +417,10 @@ int main(void)
                            &posix_error) == FACET_OK);
     assert(posix_result == 5 && posix_error == 0);
     assert(test_streams[2].written_count == 6);
+    assert(posix->write_fd(posix->self, 1, &hello, &posix_result,
+                           &posix_error) == FACET_OK);
+    assert(posix_result == 5 && posix_error == 0);
+    assert(test_streams[2].written_count == 11);
     assert(posix->write_fd(posix->self, 9, &hello, &posix_result,
                            &posix_error) == FACET_OK);
     assert(posix_result == -1 && posix_error != 0);

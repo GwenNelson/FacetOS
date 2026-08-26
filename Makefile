@@ -444,6 +444,7 @@ test-shell-parser: $(FACET_SHELL_PARSER_TEST)
 
 $(FACET_INITRD_TEST): $(ROOT)/tests/initrd_test.c \
 		$(ROOT)/src/dominit0/initrd.c $(ROOT)/src/dominit0/file_view.c \
+		$(ROOT)/src/dominit0/posix.c \
 		$(ROOT)/include/facetos/initrd.h \
 		$(FACET_IDLC)
 	@mkdir -p $(dir $@)
@@ -452,7 +453,8 @@ $(FACET_INITRD_TEST): $(ROOT)/tests/initrd_test.c \
 		-Wall -Wextra -Werror -I$(FACET_GENERATED_INCLUDE) -I$(ROOT)/include \
 		$(ROOT)/libfacet/src/common/runtime.c \
 		$(ROOT)/src/dominit0/initrd.c \
-		$(ROOT)/src/dominit0/file_view.c $(ROOT)/tests/initrd_test.c \
+		$(ROOT)/src/dominit0/file_view.c $(ROOT)/src/dominit0/posix.c \
+		$(ROOT)/tests/initrd_test.c \
 		-Wl,--gc-sections -o $@
 
 test-initrd: $(FACET_INITRD_TEST)

@@ -42,6 +42,18 @@ static bool iid_equal(uuid_t left, uuid_t right)
     return memcmp(left.bytes, right.bytes, sizeof(left.bytes)) == 0;
 }
 
+static void *proxy_from_borrowed(const FacetInterfaceMeta *metadata,
+                                 FacetHandle handle)
+{
+    FacetHandle copy = {0};
+    if (handle.platform == NULL ||
+        libfacet_handle_clone(handle, &copy) != FACET_OK)
+        return NULL;
+    void *proxy = libfacet_proxy_from_handle(metadata, copy);
+    if (proxy == NULL) (void)libfacet_handle_release(copy);
+    return proxy;
+}
+
 static FacetResult get_interface(void *self, uuid_t iid, FacetHandle *out)
 {
     Dominit0PosixView *view = self;
@@ -73,7 +85,7 @@ static FacetResult posix_write(void *self, int32_t fd,
         *error = descriptor->kind == DESCRIPTOR_FILE ? EROFS : EBADF;
         return FACET_OK;
     }
-    IByteWriter *writer = libfacet_proxy_from_handle(
+    IByteWriter *writer = proxy_from_borrowed(
         &IByteWriter_MetaData, descriptor->handle);
     if (writer == NULL) return FACET_INVALID_HANDLE;
     uint32_t written = 0;
@@ -106,14 +118,14 @@ static FacetResult posix_read(void *self, int32_t fd, uint32_t maximum,
     PosixDescriptor *descriptor = &view->descriptors[fd];
     FacetResult transport;
     if (descriptor->kind == DESCRIPTOR_INPUT) {
-        IByteReader *reader = libfacet_proxy_from_handle(
+        IByteReader *reader = proxy_from_borrowed(
             &IByteReader_MetaData, descriptor->handle);
         if (reader == NULL) return FACET_INVALID_HANDLE;
         transport = reader->read_bytes(reader->self, maximum, data);
         libfacet_free_proxy_client(reader);
     } else if (descriptor->kind == DESCRIPTOR_FILE) {
-        IFile *file = libfacet_proxy_from_handle(&IFile_MetaData,
-                                                  descriptor->handle);
+        IFile *file = proxy_from_borrowed(&IFile_MetaData,
+                                          descriptor->handle);
         if (file == NULL) return FACET_INVALID_HANDLE;
         transport = file->read_at(file->self, descriptor->offset, maximum,
                                   data);
@@ -205,8 +217,8 @@ static FacetResult posix_seek(void *self, int32_t fd, int64_t offset,
     }
     PosixDescriptor *descriptor = &view->descriptors[fd];
     if (descriptor->kind != DESCRIPTOR_FILE) { *error = ESPIPE; return FACET_OK; }
-    IFile *file = libfacet_proxy_from_handle(&IFile_MetaData,
-                                              descriptor->handle);
+    IFile *file = proxy_from_borrowed(&IFile_MetaData,
+                                      descriptor->handle);
     uint64_t size = 0;
     FacetResult transport = file == NULL ? FACET_INVALID_HANDLE :
         file->get_size(file->self, &size);
@@ -233,7 +245,7 @@ static FacetResult posix_allocate_pages(void *self, uint64_t count,
     Dominit0PosixView *view = self;
     if (pages == NULL || view->page_allocator_handle.platform == NULL)
         return FACET_INVALID_HANDLE;
-    IPageAllocator *allocator = libfacet_proxy_from_handle(
+    IPageAllocator *allocator = proxy_from_borrowed(
         &IPageAllocator_MetaData, view->page_allocator_handle);
     if (allocator == NULL) return FACET_INVALID_HANDLE;
     FacetResult result = allocator->alloc(allocator->self, count, pages);
@@ -246,7 +258,7 @@ static FacetResult posix_free_pages(void *self, uint64_t count, uint64_t base)
     Dominit0PosixView *view = self;
     if (view->page_allocator_handle.platform == NULL)
         return FACET_INVALID_HANDLE;
-    IPageAllocator *allocator = libfacet_proxy_from_handle(
+    IPageAllocator *allocator = proxy_from_borrowed(
         &IPageAllocator_MetaData, view->page_allocator_handle);
     if (allocator == NULL) return FACET_INVALID_HANDLE;
     FacetResult result = allocator->free(allocator->self, count, base);
@@ -258,7 +270,7 @@ static FacetResult posix_exit(void *self, int32_t status)
 {
     Dominit0PosixView *view = self;
     if (view->lifecycle_handle.platform == NULL) return FACET_INVALID_HANDLE;
-    IProcessLifecycle *lifecycle = libfacet_proxy_from_handle(
+    IProcessLifecycle *lifecycle = proxy_from_borrowed(
         &IProcessLifecycle_MetaData, view->lifecycle_handle);
     if (lifecycle == NULL) return FACET_INVALID_HANDLE;
     FacetResult result = lifecycle->notify_exit(lifecycle->self, status);

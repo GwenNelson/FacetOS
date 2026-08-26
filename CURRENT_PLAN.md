@@ -11,6 +11,29 @@
 - Add descriptor objects, UID/GID permission enforcement, deterministic initrd
   tooling, standalone application build scripts, and permission test programs.
 
+## Implementation status (2026-08-26)
+
+This plan is implemented. FacetOS now boots the normal two-domain
+configuration, authenticates `user`, launches FacetShell, executes external
+programs with ordinary argv/envp plus the versioned auxv bootstrap, and passes
+both native and pure-POSIX permission tests.
+
+Host tests cover auxv validation/runtime lookup, shell quoting and PATH
+candidates, authentication and credentials, path resolution, metadata,
+credential-filtered files, repeated descriptor operations and errno, terminal
+views, logging, and deterministic initrd transformations. Bounded QEMU checks
+cover the process-boundary portions that host fakes cannot: clean application
+argv, inherited cwd/env/session/stdio, foreground lifecycle completion, and the
+seL4 capability transport.
+
+The first special POSIX boot exposed a persistent-handle lifetime defect after
+the test's START marker. The defect was reproduced in host RPC tests and fixed
+by cloning borrowed handles before constructing temporary proxies. One bounded
+post-fix retry produced `POSIX test_perms: PASS`. The default `facet.toml` was
+then restored, rebuilt, and smoke-booted successfully. QEMU used TCG because
+this execution environment did not expose `/dev/kvm`; all runs still went
+through `make run` with an explicit `TIMEOUT`.
+
 ## FacetOS auxv and startup ABI
 
 - Publish stable `AT_FACET_*` keys and the startup ABI version in common libc
@@ -28,12 +51,15 @@
 
 ## Interfaces and security model
 
-- Repair `IProcessManager.launch` to accept path, argv, caller environment, and
-  cwd. Inherit the authenticated session, stdio, SysV environment, and terminal
-  while creating fresh allocator and lifecycle objects.
-- Add immutable `stdin`, `stdout`, `stderr`, cwd, and SysV environment state to
-  each process environment. Native processes may resolve their full namespace;
-  pure POSIX processes receive only their `IPOSIXView` capability.
+- Repair `IProcessManager.launch` to accept path, argv, and the caller
+  environment. The manager obtains cwd from that authenticated environment so
+  callers cannot provide mismatched context. It inherits session, stdio, SysV
+  environment, terminal, and cwd while creating fresh allocator and lifecycle
+  objects.
+- Add immutable `stdin`, `stdout`, `stderr`, and SysV environment state plus a
+  mutable cwd to each process environment. Native processes may resolve their
+  full namespace; pure POSIX processes receive only their `IPOSIXView`
+  capability.
 - Add `ICharacterStream`, `IFileDescriptor`, optional `IUnixMetadata`, canonical
   `IFile.path`, and process exit status. Extend `IPOSIXView` with descriptor
   read/write/open/close/seek, page allocation/free, and process exit.
@@ -72,18 +98,20 @@
 
 ## Verification requirements
 
-- Host tests cover auxv, clean argv, shell parsing/PATH, env inheritance,
-  credentials and permissions, descriptors and errno, lifecycle, metadata, and
-  deterministic initrd round trips.
+- Host tests cover auxv, shell parsing/PATH, credentials and permissions,
+  descriptors and errno, metadata, and deterministic initrd round trips. QEMU
+  covers clean argv, env/cwd inheritance, and process lifecycle across real
+  address spaces.
 - Inspect application link maps/symbols to confirm libc/app objects import
   neither musl nor seL4 APIs.
 - Run normal tests/build/image and bounded QEMU with explicit `TIMEOUT`; verify
   external utilities, execution/path/quoting/cwd/env/auxv, user login, and
   native permission outcomes.
-- Run exactly one special bounded image assigning child `/bin/test_perms` to
-  `ttyS0` as `run_as = "user"`; verify POSIX startup, descriptors, file APIs,
-  allocation, and denials. Restore and rebuild the normal configuration, then
-  perform a final bounded smoke boot.
+- Run a bounded image assigning child `/bin/test_perms` to `ttyS0` as
+  `run_as = "user"`; verify POSIX startup, descriptors, file APIs, allocation,
+  and denials. The initial diagnostic run found the handle-lifetime defect
+  described above; the post-fix retry passed. Restore and rebuild the normal
+  configuration, then perform a final bounded smoke boot.
 - Preserve the unrelated untracked `TUTORIAL.md`.
 
 ## Deferred work

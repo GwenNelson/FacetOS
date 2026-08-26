@@ -1,11 +1,17 @@
 #include <facetos/initrd.h>
 #include <facetos/dominit0/file_view.h>
+#include <facetos/dominit0/posix.h>
+#include <facetos/interfaces/IByteReader.h>
+#include <facetos/interfaces/IByteWriter.h>
 #include <facetos/interfaces/IFile.h>
 #include <facetos/interfaces/IFileStore.h>
 #include <facetos/interfaces/IDirectory.h>
+#include <facetos/interfaces/IPOSIXView.h>
 #include <facetos/libfacet/platform.h>
 
 #include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +21,51 @@ typedef struct FakeHandle {
     FacetPlatformDispatch dispatch;
     size_t references;
 } FakeHandle;
+
+typedef struct TestStreams {
+    IByteReader reader;
+    IByteWriter writer;
+    FacetHandle reader_handle;
+    FacetHandle writer_handle;
+    uint8_t output[64];
+    size_t output_count;
+} TestStreams;
+
+static FacetResult stream_interface(void *self, uuid_t iid, FacetHandle *out)
+{
+    TestStreams *streams = self;
+    FacetHandle handle = {0};
+    if (memcmp(iid.bytes, IID_IByteReader.bytes, sizeof(iid.bytes)) == 0)
+        handle = streams->reader_handle;
+    else if (memcmp(iid.bytes, IID_IByteWriter.bytes, sizeof(iid.bytes)) == 0)
+        handle = streams->writer_handle;
+    if (out == NULL || handle.platform == NULL) return FACET_INVALID_ARGUMENT;
+    *out = handle;
+    return FACET_OK;
+}
+
+static FacetResult stream_read(void *self, uint32_t maximum,
+                               FacetArray_u8 *out)
+{
+    (void)self;
+    (void)maximum;
+    if (out == NULL) return FACET_INVALID_ARGUMENT;
+    *out = (FacetArray_u8){0};
+    return FACET_OK;
+}
+
+static FacetResult stream_write(void *self, const FacetArray_u8 *data,
+                                uint32_t *written)
+{
+    TestStreams *streams = self;
+    if (data == NULL || written == NULL ||
+        data->count > sizeof(streams->output) - streams->output_count)
+        return FACET_INVALID_ARGUMENT;
+    memcpy(streams->output + streams->output_count, data->data, data->count);
+    streams->output_count += data->count;
+    *written = (uint32_t)data->count;
+    return FACET_OK;
+}
 
 FacetResult libfacet_platform_export(void *context, FacetPlatformDispatch dispatch,
                                      FacetHandle *out)
@@ -430,9 +481,100 @@ static void test_malformed_archives(void)
     assert(facet_initrd_create(unsupported.bytes, unsupported.size) == NULL);
 }
 
+static void test_posix_descriptor_lifetimes(void)
+{
+    Archive archive = valid_archive();
+    FacetInitrd *initrd = facet_initrd_create(archive.bytes, archive.size);
+    assert(initrd != NULL);
+    Dominit0CredentialFileStore *view_store =
+        dominit0_credential_file_store_create(initrd, 1000, 1000, false);
+    assert(view_store != NULL);
+    FacetHandle store_copy = {0};
+    assert(libfacet_handle_clone(
+               dominit0_credential_file_store_handle(view_store),
+               &store_copy) == FACET_OK);
+    IFileStore *store = libfacet_new_proxy_client(&IFileStore_MetaData,
+                                                  store_copy);
+    assert(store != NULL);
+    FacetString root_path = facet_string("/");
+    FacetHandle cwd = {0};
+    assert(store->open_directory(store->self, &root_path, &cwd) == FACET_OK);
+    libfacet_free_proxy_client(store);
+
+    TestStreams streams = {0};
+    streams.reader = (IByteReader){
+        .self = &streams, .priv = &streams,
+        .getInterface = stream_interface, .read_bytes = stream_read,
+    };
+    streams.writer = (IByteWriter){
+        .self = &streams, .priv = &streams,
+        .getInterface = stream_interface, .write_bytes = stream_write,
+    };
+    assert(libfacet_export_interface(&streams.reader, &IByteReader_MetaData,
+                                     &streams.reader_handle) == FACET_OK);
+    assert(libfacet_export_interface(&streams.writer, &IByteWriter_MetaData,
+                                     &streams.writer_handle) == FACET_OK);
+    Dominit0PosixView *view = dominit0_posix_view_create(
+        streams.reader_handle, streams.writer_handle,
+        dominit0_credential_file_store_handle(view_store), cwd);
+    assert(view != NULL);
+    (void)libfacet_handle_release(cwd);
+    FacetHandle posix_copy = {0};
+    assert(libfacet_handle_clone(dominit0_posix_view_handle(view),
+                                 &posix_copy) == FACET_OK);
+    IPOSIXView *posix = libfacet_new_proxy_client(&IPOSIXView_MetaData,
+                                                  posix_copy);
+    assert(posix != NULL);
+
+    FacetArray_u8 message = {.data = (uint8_t *)"ok", .count = 2};
+    int64_t io_result = -1;
+    int32_t io_error = -1;
+    assert(posix->write_fd(posix->self, 1, &message, &io_result,
+                           &io_error) == FACET_OK);
+    assert(io_result == 2 && io_error == 0);
+    assert(posix->write_fd(posix->self, 1, &message, &io_result,
+                           &io_error) == FACET_OK);
+    assert(io_result == 2 && streams.output_count == 4);
+
+    FacetString readme = facet_string("/README");
+    int32_t fd = -1;
+    assert(posix->open_fd(posix->self, &readme, O_RDONLY, 0,
+                          &fd, &io_error) == FACET_OK);
+    assert(fd >= 3 && io_error == 0);
+    FacetArray_u8 bytes = {0};
+    assert(posix->read_fd(posix->self, fd, 5, &bytes, &io_result,
+                          &io_error) == FACET_OK);
+    assert(io_result == 5 && bytes.count == 5 &&
+           memcmp(bytes.data, "hello", 5) == 0);
+    free(bytes.data);
+    assert(posix->seek_fd(posix->self, fd, 0, SEEK_SET, &io_result,
+                          &io_error) == FACET_OK);
+    assert(io_result == 0 && io_error == 0);
+    bytes = (FacetArray_u8){0};
+    assert(posix->read_fd(posix->self, fd, 5, &bytes, &io_result,
+                          &io_error) == FACET_OK);
+    assert(io_result == 5 && memcmp(bytes.data, "hello", 5) == 0);
+    free(bytes.data);
+    int32_t close_result = -1;
+    assert(posix->close_fd(posix->self, fd, &close_result,
+                           &io_error) == FACET_OK);
+    assert(close_result == 0 && io_error == 0);
+    assert(posix->close_fd(posix->self, fd, &close_result,
+                           &io_error) == FACET_OK);
+    assert(close_result == -1 && io_error == EBADF);
+
+    libfacet_free_proxy_client(posix);
+    dominit0_posix_view_destroy(view);
+    assert(libfacet_unexport_interface(streams.writer_handle) == FACET_OK);
+    assert(libfacet_unexport_interface(streams.reader_handle) == FACET_OK);
+    dominit0_credential_file_store_destroy(view_store);
+    facet_initrd_destroy(initrd);
+}
+
 int main(void)
 {
     test_lookup_and_read_only_rpc();
+    test_posix_descriptor_lifetimes();
     test_malformed_archives();
     return 0;
 }
