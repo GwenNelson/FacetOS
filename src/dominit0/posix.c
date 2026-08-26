@@ -8,6 +8,7 @@
 #include <facetos/interfaces/IPageAllocator.h>
 #include <facetos/interfaces/IPOSIXView.h>
 #include <facetos/interfaces/IProcessLifecycle.h>
+#include <facetos/interfaces/ISession.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -61,6 +62,7 @@ struct Dominit0PosixView {
     FacetHandle default_session;
     Dominit0PosixSpawn spawn;
     Dominit0PosixWait wait;
+    bool admin;
     void *cwd_context;
     Dominit0PosixCwdChanged cwd_changed;
     PosixDescriptor descriptors[POSIX_DESCRIPTOR_COUNT];
@@ -460,6 +462,10 @@ static FacetResult posix_open(void *self, const FacetString *path,
         if (view->descriptors[i].kind == DESCRIPTOR_UNUSED) { slot = i; break; }
     if (slot < 0) { *error = EMFILE; return FACET_OK; }
     const char *memory = synthetic_file(view, path);
+    if (memory == virtual_shadow && !view->admin) {
+        *error = EACCES;
+        return FACET_OK;
+    }
     if (memory != NULL) {
         view->descriptors[slot] = (PosixDescriptor){
             .kind = DESCRIPTOR_MEMORY, .memory = (const uint8_t *)memory,
@@ -680,6 +686,21 @@ int dominit0_posix_view_bind_process_control(Dominit0PosixView *view,
         return -1;
     view->spawn = spawn;
     view->wait = wait;
+    view->admin = false;
+    if (default_session.platform != NULL) {
+        FacetHandle session_handle = {0};
+        if (libfacet_handle_clone(default_session, &session_handle) != FACET_OK)
+            return -1;
+        ISession *session = libfacet_proxy_from_handle(&ISession_MetaData,
+                                                        session_handle);
+        uint32_t uid = 0, gid = 0;
+        bool admin = false;
+        FacetResult result = session == NULL ? FACET_INVALID_HANDLE :
+            session->get_credentials(session->self, &uid, &gid, &admin);
+        libfacet_free_proxy_client(session);
+        if (result != FACET_OK) return -1;
+        view->admin = admin;
+    }
     return 0;
 }
 
