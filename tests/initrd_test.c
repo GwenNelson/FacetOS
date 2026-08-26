@@ -67,6 +67,26 @@ static FacetResult stream_write(void *self, const FacetArray_u8 *data,
     return FACET_OK;
 }
 
+static FacetResult unused_spawn(void *context, const FacetString *path,
+                                const FacetArray_string *argv,
+                                FacetHandle session, int32_t *pid,
+                                int32_t *error)
+{
+    (void)context; (void)path; (void)argv; (void)session;
+    if (pid != NULL) *pid = -1;
+    if (error != NULL) *error = ENOSYS;
+    return FACET_OK;
+}
+
+static FacetResult unused_wait(void *context, int32_t pid, int32_t *status,
+                               int32_t *error)
+{
+    (void)context; (void)pid;
+    if (status != NULL) *status = -1;
+    if (error != NULL) *error = ECHILD;
+    return FACET_OK;
+}
+
 FacetResult libfacet_platform_export(void *context, FacetPlatformDispatch dispatch,
                                      FacetHandle *out)
 {
@@ -584,6 +604,78 @@ static void test_chrooted_posix_synthetic_etc(void)
     Dominit0CredentialFileStore *view_store =
         dominit0_credential_file_store_create(initrd, 1000, 1000, false);
     assert(view_store != NULL);
+    /* Native clients use the same domain-local mount as IPOSIXView.  This
+     * deliberately exercises IFileStore directly: /posix/etc is not an
+     * initrd entry and must nevertheless be discoverable and readable. */
+    FacetHandle native_store_handle = {0};
+    assert(libfacet_handle_clone(
+               dominit0_credential_file_store_handle(view_store),
+               &native_store_handle) == FACET_OK);
+    IFileStore *native_store = libfacet_new_proxy_client(&IFileStore_MetaData,
+                                                         native_store_handle);
+    assert(native_store != NULL);
+    FacetString native_posix = facet_string("/posix");
+    FacetHandle native_posix_handle = {0};
+    assert(native_store->open_directory(native_store->self, &native_posix,
+                                        &native_posix_handle) == FACET_OK);
+    IDirectory *native_posix_dir = libfacet_new_proxy_client(&IDirectory_MetaData,
+                                                              native_posix_handle);
+    assert(native_posix_dir != NULL);
+    FacetArray_Entry posix_entries = {0};
+    uint64_t posix_next = 0;
+    bool posix_end = false;
+    assert(native_posix_dir->list(native_posix_dir->self, 0, 8, &posix_entries,
+                                  &posix_next, &posix_end) == FACET_OK);
+    bool saw_native_etc = false;
+    for (size_t i = 0; i < posix_entries.count; i++)
+        saw_native_etc |= posix_entries.data[i].name.length == 3 &&
+            memcmp(posix_entries.data[i].name.data, "etc", 3) == 0;
+    assert(saw_native_etc);
+    facet_rpc_release_value(FACET_TYPE_ARRAY, &FacetArray_Entry_TypeMeta,
+                            &posix_entries);
+    libfacet_free_proxy_client(native_posix_dir);
+    FacetString native_etc = facet_string("/posix/etc");
+    FacetHandle native_etc_handle = {0};
+    assert(native_store->open_directory(native_store->self, &native_etc,
+                                        &native_etc_handle) == FACET_OK);
+    IDirectory *native_etc_dir = libfacet_new_proxy_client(&IDirectory_MetaData,
+                                                            native_etc_handle);
+    assert(native_etc_dir != NULL);
+    FacetArray_Entry native_entries = {0};
+    uint64_t native_next = 0;
+    bool native_end = false;
+    assert(native_etc_dir->list(native_etc_dir->self, 0, 8, &native_entries,
+                                &native_next, &native_end) == FACET_OK);
+    assert(native_entries.count == 3 && native_end);
+    facet_rpc_release_value(FACET_TYPE_ARRAY, &FacetArray_Entry_TypeMeta,
+                            &native_entries);
+    FacetString native_passwd = facet_string("passwd");
+    FacetHandle native_passwd_handle = {0};
+    assert(native_etc_dir->open_file(native_etc_dir->self, &native_passwd,
+                                     &native_passwd_handle) == FACET_OK);
+    IFile *native_passwd_file = libfacet_new_proxy_client(&IFile_MetaData,
+                                                           native_passwd_handle);
+    assert(native_passwd_file != NULL);
+    FacetArray_u8 native_bytes = {0};
+    assert(native_passwd_file->read_at(native_passwd_file->self, 0, 128,
+                                       &native_bytes) == FACET_OK);
+    assert(native_bytes.count >= 10 &&
+           memcmp(native_bytes.data, "root:x:0:0", 10) == 0);
+    free(native_bytes.data);
+    libfacet_free_proxy_client(native_passwd_file);
+    FacetString native_shadow = facet_string("shadow");
+    FacetHandle native_shadow_handle = {0};
+    assert(native_etc_dir->open_file(native_etc_dir->self, &native_shadow,
+                                     &native_shadow_handle) == FACET_OK);
+    IFile *native_shadow_file = libfacet_new_proxy_client(&IFile_MetaData,
+                                                           native_shadow_handle);
+    assert(native_shadow_file != NULL);
+    native_bytes = (FacetArray_u8){0};
+    assert(native_shadow_file->read_at(native_shadow_file->self, 0, 128,
+                                       &native_bytes) == FACET_ACCESS_DENIED);
+    libfacet_free_proxy_client(native_shadow_file);
+    libfacet_free_proxy_client(native_etc_dir);
+    libfacet_free_proxy_client(native_store);
     FacetHandle store_copy = {0};
     assert(libfacet_handle_clone(
                dominit0_credential_file_store_handle(view_store),
@@ -656,6 +748,10 @@ static void test_chrooted_posix_synthetic_etc(void)
            FACET_OK);
     assert(fd == -1 && error == EACCES);
 
+    /* The virtual credentials use the same modular crypt format as the
+     * configured authentication source; only the privileged view may read
+     * this file, so the unprivileged open above remains the access check. */
+
     FacetString etc = facet_string("/etc");
     assert(posix->change_directory(posix->self, &etc, &error) == FACET_OK &&
            error == 0);
@@ -673,6 +769,65 @@ static void test_chrooted_posix_synthetic_etc(void)
 
     libfacet_free_proxy_client(posix);
     dominit0_posix_view_destroy(view);
+
+    /* Root sees the same mounted object through both native and POSIX
+     * namespaces.  This is the complement of the unprivileged denials above. */
+    Dominit0CredentialFileStore *root_store =
+        dominit0_credential_file_store_create(initrd, 0, 0, true);
+    assert(root_store != NULL);
+    FacetHandle root_store_handle = {0};
+    assert(libfacet_handle_clone(
+               dominit0_credential_file_store_handle(root_store),
+               &root_store_handle) == FACET_OK);
+    IFileStore *root_files = libfacet_new_proxy_client(&IFileStore_MetaData,
+                                                       root_store_handle);
+    assert(root_files != NULL);
+    FacetString native_root_shadow = facet_string("/posix/etc/shadow");
+    FacetHandle root_shadow_handle = {0};
+    assert(root_files->open_file(root_files->self, &native_root_shadow,
+                                 &root_shadow_handle) == FACET_OK);
+    IFile *root_shadow = libfacet_new_proxy_client(&IFile_MetaData,
+                                                   root_shadow_handle);
+    assert(root_shadow != NULL);
+    bytes = (FacetArray_u8){0};
+    assert(root_shadow->read_at(root_shadow->self, 0, 128, &bytes) == FACET_OK);
+    assert(bytes.count >= 10 && memcmp(bytes.data, "root:$5$", 8) == 0);
+    free(bytes.data);
+    libfacet_free_proxy_client(root_shadow);
+
+    FacetString root_backing = facet_string("/posix");
+    FacetHandle root_cwd = {0};
+    assert(root_files->open_directory(root_files->self, &root_backing,
+                                      &root_cwd) == FACET_OK);
+    libfacet_free_proxy_client(root_files);
+    Dominit0PosixView *root_view = dominit0_posix_view_create(
+        streams.reader_handle, streams.writer_handle,
+        dominit0_credential_file_store_handle(root_store), root_cwd);
+    assert(root_view != NULL);
+    assert(dominit0_posix_view_bind_process_control(
+               root_view, NULL, 0, 1, true, unused_spawn, unused_wait,
+               NULL) == 0);
+    (void)libfacet_handle_release(root_cwd);
+    FacetHandle root_posix_handle = {0};
+    assert(libfacet_handle_clone(dominit0_posix_view_handle(root_view),
+                                 &root_posix_handle) == FACET_OK);
+    IPOSIXView *root_posix = libfacet_new_proxy_client(&IPOSIXView_MetaData,
+                                                       root_posix_handle);
+    assert(root_posix != NULL);
+    assert(root_posix->open_fd(root_posix->self, &shadow, O_RDONLY, 0, &fd,
+                               &error) == FACET_OK);
+    assert(fd >= 3 && error == 0);
+    bytes = (FacetArray_u8){0};
+    assert(root_posix->read_fd(root_posix->self, fd, 128, &bytes, &result,
+                               &error) == FACET_OK);
+    assert(result >= 10 && bytes.count >= 10 &&
+           memcmp(bytes.data, "root:$5$", 8) == 0);
+    free(bytes.data);
+    assert(root_posix->close_fd(root_posix->self, fd, &close_result,
+                                 &error) == FACET_OK);
+    libfacet_free_proxy_client(root_posix);
+    dominit0_posix_view_destroy(root_view);
+    dominit0_credential_file_store_destroy(root_store);
     assert(libfacet_unexport_interface(streams.writer_handle) == FACET_OK);
     assert(libfacet_unexport_interface(streams.reader_handle) == FACET_OK);
     dominit0_credential_file_store_destroy(view_store);

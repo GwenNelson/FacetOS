@@ -15,6 +15,7 @@
 
 #include <assert.h>
 #include <stdbool.h>
+#include <errno.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -131,6 +132,46 @@ FacetResult dominit0_logging_emit(ILoggingConfig *config, uint64_t domain_id,
     (void)component;
     (void)message;
     return FACET_OK;
+}
+
+typedef struct CredentialChange {
+    uint32_t uid;
+    uint32_t gid;
+    bool set_uid;
+    bool set_gid;
+    unsigned calls;
+} CredentialChange;
+
+static FacetResult unused_posix_spawn(void *context, const FacetString *path,
+                                      const FacetArray_string *arguments,
+                                      FacetHandle session, int32_t *pid,
+                                      int32_t *error)
+{
+    (void)context; (void)path; (void)arguments; (void)session;
+    if (pid != NULL) *pid = -1;
+    if (error != NULL) *error = ENOSYS;
+    return FACET_OK;
+}
+
+static FacetResult unused_posix_wait(void *context, int32_t pid,
+                                     int32_t *status, int32_t *error)
+{
+    (void)context; (void)pid;
+    if (status != NULL) *status = -1;
+    if (error != NULL) *error = ECHILD;
+    return FACET_OK;
+}
+
+static int record_credential_change(void *context, uint32_t uid, uint32_t gid,
+                                    bool set_uid, bool set_gid)
+{
+    CredentialChange *change = context;
+    change->uid = uid;
+    change->gid = gid;
+    change->set_uid = set_uid;
+    change->set_gid = set_gid;
+    change->calls++;
+    return 0;
 }
 
 typedef struct TestStream {
@@ -275,8 +316,9 @@ static IProcessEnvironment *make_environment(Dominit0SystemConfig *system,
 {
     Dominit0ProcessEnvironment *server = dominit0_process_environment_create(
         system->current_domains[domain]->environment, (FacetHandle){0}, false,
-        DOMINIT0_PROCESS_NATIVE, NULL, (FacetHandle){0}, NULL);
+        true, NULL, (FacetHandle){0}, NULL);
     assert(server != NULL);
+    assert(dominit0_process_environment_has_native_capabilities(server));
     assert(dominit0_terminal_bind_process_environment(
                system->current_domains[domain], assignment, server) == 0);
     FacetHandle root = dominit0_process_environment_root_handle(server);
@@ -380,10 +422,16 @@ int main(void)
     Dominit0ProcessEnvironment *posix_server =
         dominit0_process_environment_create(
             system.current_domains[1]->environment, (FacetHandle){0}, true,
-            DOMINIT0_PROCESS_PURE_POSIX, NULL, (FacetHandle){0}, NULL);
+            false, NULL, (FacetHandle){0}, NULL);
     assert(posix_server != NULL);
+    assert(!dominit0_process_environment_has_native_capabilities(posix_server));
     assert(dominit0_terminal_bind_process_environment(
                system.current_domains[1], 0, posix_server) == 0);
+    CredentialChange credential_change = {0};
+    assert(dominit0_process_environment_bind_posix_process_control(
+               posix_server, &credential_change, 1, 42, true,
+               unused_posix_spawn, unused_posix_wait,
+               record_credential_change) == 0);
     FacetHandle posix_root_handle = {0};
     assert(libfacet_handle_clone(
                dominit0_process_environment_root_handle(posix_server),
@@ -410,6 +458,16 @@ int main(void)
     IPOSIXView *posix = libfacet_new_proxy_client(&IPOSIXView_MetaData,
                                                   posix_handle);
     assert(posix != NULL);
+    int32_t credential_error = -1;
+    assert(posix->set_credentials(posix->self, 1000, UINT32_MAX,
+                                  &credential_error) == FACET_OK);
+    assert(credential_error == 0 && credential_change.calls == 1 &&
+           credential_change.set_uid && !credential_change.set_gid &&
+           credential_change.uid == 1000);
+    /* Dropping uid also drops the authority to mutate credentials again. */
+    assert(posix->set_credentials(posix->self, 0, UINT32_MAX,
+                                  &credential_error) == FACET_OK);
+    assert(credential_error == EPERM && credential_change.calls == 1);
     FacetArray_u8 hello = {.data = (uint8_t *)"hello", .count = 5};
     int64_t posix_result = -1;
     int32_t posix_error = -1;

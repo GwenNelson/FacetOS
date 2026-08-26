@@ -7,11 +7,6 @@
 typedef struct Dominit0DomainEnvironment Dominit0DomainEnvironment;
 typedef struct Dominit0ProcessEnvironment Dominit0ProcessEnvironment;
 
-typedef enum Dominit0ProcessProfile {
-    DOMINIT0_PROCESS_NATIVE = 0,
-    DOMINIT0_PROCESS_PURE_POSIX = 1,
-} Dominit0ProcessProfile;
-
 int dominit0_environment_initialize(Dominit0SystemConfig *system);
 void dominit0_environment_destroy(Dominit0SystemConfig *system);
 
@@ -36,7 +31,7 @@ FacetInitrd *dominit0_environment_initrd(
 
 Dominit0ProcessEnvironment *dominit0_process_environment_create(
     Dominit0DomainEnvironment *parent, FacetHandle session,
-    bool bootstrap_authority, Dominit0ProcessProfile profile,
+    bool bootstrap_authority, bool native_capabilities,
     const FacetArray_string *sysv_environment, FacetHandle cwd,
     const Dominit0ProcessEnvironment *identity_source);
 int dominit0_process_environment_bind_named(
@@ -72,7 +67,8 @@ int dominit0_process_environment_set_domain_id(
     Dominit0ProcessEnvironment *environment, uint64_t domain_id);
 int dominit0_process_environment_bind_posix_process_control(
     Dominit0ProcessEnvironment *environment, void *context, uint64_t domain_id, int32_t pid,
-    bool admin, Dominit0PosixSpawn spawn, Dominit0PosixWait wait);
+    bool admin, Dominit0PosixSpawn spawn, Dominit0PosixWait wait,
+    Dominit0PosixSetCredentials set_credentials);
 FacetHandle dominit0_process_environment_root_handle(
     const Dominit0ProcessEnvironment *environment);
 int dominit0_process_environment_get_sysv(
@@ -81,5 +77,13 @@ int dominit0_process_environment_get_sysv(
 int dominit0_process_environment_get_credentials(
     const Dominit0ProcessEnvironment *environment, uint32_t *uid,
     uint32_t *gid, bool *admin);
+/* Whether this process received the native-domain interfaces in addition to
+ * any IPOSIXView.  This is inherited by children launched through IPOSIXView;
+ * it is not a property of the executable being launched. */
+bool dominit0_process_environment_has_native_capabilities(
+    const Dominit0ProcessEnvironment *environment);
+int dominit0_process_environment_set_credentials(
+    Dominit0ProcessEnvironment *environment, uint32_t uid, uint32_t gid,
+    bool set_uid, bool set_gid);
 void dominit0_process_environment_destroy(
     Dominit0ProcessEnvironment *environment);

@@ -36,10 +36,11 @@ static void *resolve(IProcessEnvironment *environment, const char *name,
 static FacetResult configured_initial_process(IDomainEnvironment *environment,
                                               uint64_t index,
                                               FacetString *path,
-                                              bool *posix_profile)
+                                              bool *posix_view)
 {
-    if (posix_profile == NULL) return FACET_INVALID_ARGUMENT;
-    *posix_profile = false;
+    if (path == NULL || posix_view == NULL) return FACET_INVALID_ARGUMENT;
+    *path = (FacetString){0};
+    *posix_view = false;
     FacetHandle config_handle = {0};
     if (environment->getdomain_config(environment->self, &config_handle) != FACET_OK)
         return FACET_INVALID_HANDLE;
@@ -66,13 +67,21 @@ static FacetResult configured_initial_process(IDomainEnvironment *environment,
                                 &Assignment_TypeMeta, &assignment);
         return result == FACET_OK ? FACET_NOT_FOUND : result;
     }
-    /* Move the selected decoded string to the caller. dominit is a permanent
-     * supervisor and performs this once, so retaining the three other small
-     * decoded fields avoids allocator RPCs in the bootstrap path. */
-    *path = assignment.initial_process;
-    *posix_profile = assignment.view.data != NULL &&
+    char *copy = malloc(assignment.initial_process.length + 1);
+    if (copy == NULL) {
+        facet_rpc_release_value(FACET_TYPE_STRUCT,
+                                &Assignment_TypeMeta, &assignment);
+        return FACET_OUT_OF_MEMORY;
+    }
+    memcpy(copy, assignment.initial_process.data, assignment.initial_process.length);
+    copy[assignment.initial_process.length] = '\0';
+    *path = (FacetString){.data = copy,
+                          .length = assignment.initial_process.length};
+    *posix_view = assignment.view.data != NULL &&
         assignment.view.length == sizeof("posix") - 1 &&
-        memcmp(assignment.view.data, "posix", assignment.view.length) == 0;
+        memcmp(assignment.view.data, "posix", sizeof("posix") - 1) == 0;
+    facet_rpc_release_value(FACET_TYPE_STRUCT, &Assignment_TypeMeta,
+                            &assignment);
     return FACET_OK;
 }
 
@@ -224,7 +233,6 @@ int main(int argc, char **argv)
                 FacetArray_string argv = {.data = args, .count = 1};
                 if (processes->launch_initial(processes->self, &pid1, &argv, 0,
                                               &posix_root,
-                                              true,
                                               &process) == FACET_OK)
                     child_log(logger, "launched POSIX pid1");
                 if (process.platform != NULL) (void)libfacet_handle_release(process);
@@ -233,11 +241,30 @@ int main(int argc, char **argv)
         uint64_t assignment_count = configured_assignment_count(domain);
         for (uint64_t index = 0; index < assignment_count; index++) {
             FacetString initial = {0};
+            bool initial_uses_posix_view = false;
             FacetHandle process = {0};
-            bool posix_profile = false;
-            if (configured_initial_process(domain, index, &initial, &posix_profile) !=
-                FACET_OK)
+            if (configured_initial_process(domain, index, &initial,
+                                           &initial_uses_posix_view) != FACET_OK)
                 continue;
+            /* The terminal configuration selects its namespace.  This is not
+             * an executable classification: the same ELF can be launched in
+             * either view.  A POSIX-view terminal in a native domain names
+             * files from /posix, while its argv[0] remains POSIX-visible. */
+            FacetString launch_path = initial;
+            char *backing_path = NULL;
+            if (initial_uses_posix_view) {
+                backing_path = malloc(posix_root.length + initial.length + 1);
+                if (backing_path == NULL) {
+                    free((void *)(uintptr_t)initial.data);
+                    continue;
+                }
+                memcpy(backing_path, posix_root.data, posix_root.length);
+                memcpy(backing_path + posix_root.length, initial.data,
+                       initial.length + 1);
+                launch_path = (FacetString){.data = backing_path,
+                                             .length = posix_root.length +
+                                                       initial.length};
+            }
             FacetString argument = initial;
             char index_text[24];
             size_t index_length = 0;
@@ -261,16 +288,17 @@ int main(int argc, char **argv)
                 .data = argument_values,
                 .count = 2,
             };
-            if (processes->launch_initial(processes->self, &initial, &arguments,
+            if (processes->launch_initial(processes->self, &launch_path, &arguments,
                                           index,
                                           &posix_root,
-                                          posix_profile,
                                           &process) == FACET_OK)
                 child_log(logger, "launched configured initial process");
             else
                 child_log(logger, "could not launch configured initial process");
             if (process.platform != NULL)
                 (void)libfacet_handle_release(process);
+            free(backing_path);
+            free((void *)(uintptr_t)initial.data);
         }
         }
     } else {

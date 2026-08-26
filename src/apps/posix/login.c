@@ -1,5 +1,7 @@
-#include <facetos/posix.h>
-#include <stdlib.h>
+#include <crypt.h>
+#include <pwd.h>
+#include <shadow.h>
+#include <spawn.h>
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -13,22 +15,43 @@ static void read_line(char *buffer, unsigned capacity, int echo)
         if (c>=32&&c<127&&length+1<capacity) { buffer[length++]=c; if(echo) write(1,&c,1); }
     }
 }
+static void banner(void)
+{
+    char host[64] = "unknown-domain";
+    char *terminal = ttyname(0);
+    (void)gethostname(host, sizeof(host));
+    (void)write(1, "FacetOS POSIX login (", 21);
+    (void)write(1, host, strlen(host));
+    (void)write(1, " on ", 4);
+    (void)write(1, terminal == NULL ? "unknown terminal" : terminal,
+                strlen(terminal == NULL ? "unknown terminal" : terminal));
+    (void)write(1, ")\n", 2);
+}
+
 int main(void)
 {
-    uint64_t domain=get_domain_id(); char user[64], password[128];
-    char digits[24]; unsigned count=0; do { digits[count++]=(char)('0'+domain%10); domain/=10; } while(domain);
-    write(1,"FacetOS POSIX login (domain ",27);
-    while(count) { char c=digits[--count]; write(1,&c,1); }
-    write(1," on ",4);
-    const char *terminal = getenv("FACET_TERMINAL");
-    if (terminal != NULL) write(1, terminal, strlen(terminal));
-    else write(1, "unknown terminal", 16);
-    write(1,")\n",2);
-    for (;;) { write(1,"login: ",7); read_line(user,sizeof(user),1); write(1,"password: ",10); read_line(password,sizeof(password),0);
+    char user[64], password[128];
+    banner();
+    for (;;) {
+        (void)write(1, "login: ", 7);
+        read_line(user, sizeof(user), 1);
+        (void)write(1, "password: ", 10);
+        read_line(password, sizeof(password), 0);
+        struct passwd *account = getpwnam(user);
+        struct spwd *shadow = account == NULL ? NULL : getspnam(user);
+        char *hash = shadow == NULL ? NULL : crypt(password, shadow->sp_pwdp);
+        if (account == NULL || shadow == NULL || hash == NULL ||
+            strcmp(hash, shadow->sp_pwdp) != 0 ||
+            setgid(account->pw_gid) != 0 || setuid(account->pw_uid) != 0 ||
+            chdir(account->pw_dir) != 0) {
+            (void)write(1, "Login incorrect\n", 16);
+            continue;
+        }
+        char *argv[] = {account->pw_shell, NULL};
         pid_t pid;
         int status;
-        if(facet_posix_login_shell(user,password,"/bin/sh",&pid)!=0) { write(1,"Login incorrect\n",16); continue; }
-        if (waitpid(pid,&status,0) != pid)
-            write(1,"Unable to wait for shell\n",24);
+        if (posix_spawn(&pid, account->pw_shell, NULL, NULL, argv, NULL) != 0 ||
+            waitpid(pid, &status, 0) != pid)
+            (void)write(1, "Unable to start shell\n", 22);
     }
 }

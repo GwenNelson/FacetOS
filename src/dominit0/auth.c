@@ -9,6 +9,8 @@
 #include <facetos/interfaces/ISession.h>
 #include <facetos/sha256.h>
 
+#include <crypt.h>
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -230,12 +232,6 @@ static FacetResult service_get_interface(void *self, uuid_t iid,
     return FACET_NO_INTERFACE;
 }
 
-static unsigned hex_nibble(char value)
-{
-    return value >= '0' && value <= '9'
-        ? (unsigned)(value - '0') : (unsigned)(value - 'a' + 10);
-}
-
 static bool constant_time_equal(const void *left, const void *right, size_t size)
 {
     const uint8_t *a = left;
@@ -253,18 +249,19 @@ static FacetResult authenticate(void *self, const FacetString *name,
     if (name == NULL || password == NULL || out == NULL ||
         name->data == NULL || password->data == NULL || password->length > 4096)
         return FACET_INVALID_ARGUMENT;
-    uint8_t digest[32];
-    uint8_t expected[32];
-    facet_sha256((const uint8_t *)password->data, password->length, digest);
     for (size_t i = 0; i < authority->user_count; i++) {
         AuthUser *user = &authority->users[i];
         if (strlen(user->config->name) != name->length ||
             !constant_time_equal(user->config->name, name->data, name->length))
             continue;
-        for (size_t j = 0; j < sizeof(expected); j++)
-            expected[j] = (uint8_t)((hex_nibble(user->config->password_sha256[j * 2]) << 4) |
-                                    hex_nibble(user->config->password_sha256[j * 2 + 1]));
-        if (!constant_time_equal(digest, expected, sizeof(digest))) break;
+        char *secret = strndup(password->data, password->length);
+        if (secret == NULL) return FACET_OUT_OF_MEMORY;
+        char *actual = crypt(secret, user->config->password_hash);
+        bool matches = actual != NULL &&
+            constant_time_equal(actual, user->config->password_hash,
+                                strlen(user->config->password_hash));
+        free(secret);
+        if (!matches) break;
         if (export_user(user) != 0) return FACET_OUT_OF_MEMORY;
         return clone_handle(user->authenticated_handle, out);
     }

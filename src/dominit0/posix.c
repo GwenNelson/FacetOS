@@ -36,13 +36,13 @@ typedef struct PosixDescriptor {
     size_t memory_size;
 } PosixDescriptor;
 
-static const char virtual_passwd[] =
-    "root:x:0:0:root:/root:/bin/sh\n"
+static const char default_passwd[] =
+    "root:x:0:0:root:/home/root:/bin/sh\n"
     "user:x:1000:1000:user:/home/user:/bin/sh\n";
-static const char virtual_shadow[] =
-    "root:f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59:::::::\n"
-    "user:f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59:::::::\n";
-static const char virtual_fstab[] = "initrd / initrd ro 0 0\n";
+static const char default_shadow[] =
+    "root:$5$facet$j7FgoXidvJl10CTaW0nguGP3ZnvKnqS3/IHmDVliPQ9:::::::\n"
+    "user:$5$facet$j7FgoXidvJl10CTaW0nguGP3ZnvKnqS3/IHmDVliPQ9:::::::\n";
+static const char default_fstab[] = "initrd / initrd ro 0 0\n";
 
 struct Dominit0PosixView {
     IPOSIXView interface;
@@ -54,6 +54,9 @@ struct Dominit0PosixView {
      * selected mount as process-local CWD state so relative operations have
      * precisely the same behaviour as ordinary directories. */
     bool cwd_synthetic_etc;
+    const char *virtual_passwd;
+    const char *virtual_shadow;
+    const char *virtual_fstab;
     FacetHandle page_allocator_handle;
     FacetHandle lifecycle_handle;
     uint64_t domain_id;
@@ -61,6 +64,7 @@ struct Dominit0PosixView {
     void *process_context;
     Dominit0PosixSpawn spawn;
     Dominit0PosixWait wait;
+    Dominit0PosixSetCredentials set_credentials;
     bool admin;
     void *cwd_context;
     Dominit0PosixCwdChanged cwd_changed;
@@ -80,13 +84,13 @@ static const char *synthetic_file(Dominit0PosixView *view,
     if (!view->chrooted || path == NULL) return NULL;
     if (string_equals(path, "/etc/passwd") ||
         (view->cwd_synthetic_etc && string_equals(path, "passwd")))
-        return virtual_passwd;
+        return view->virtual_passwd;
     if (string_equals(path, "/etc/shadow") ||
         (view->cwd_synthetic_etc && string_equals(path, "shadow")))
-        return virtual_shadow;
+        return view->virtual_shadow;
     if (string_equals(path, "/etc/fstab") ||
         (view->cwd_synthetic_etc && string_equals(path, "fstab")))
-        return virtual_fstab;
+        return view->virtual_fstab;
     return NULL;
 }
 
@@ -142,6 +146,27 @@ static FacetResult posix_get_pid(void *self, int32_t *pid)
 {
     if (pid == NULL) return FACET_INVALID_ARGUMENT;
     *pid = ((Dominit0PosixView *)self)->pid;
+    return FACET_OK;
+}
+
+static FacetResult posix_set_credentials(void *self, uint32_t uid,
+                                         uint32_t gid, int32_t *error)
+{
+    Dominit0PosixView *view = self;
+    if (error == NULL) return FACET_INVALID_ARGUMENT;
+    *error = 0;
+    bool set_uid = uid != UINT32_MAX, set_gid = gid != UINT32_MAX;
+    if ((!set_uid && !set_gid) || !view->admin || view->set_credentials == NULL) {
+        *error = EPERM;
+        return FACET_OK;
+    }
+    if (view->set_credentials(view->process_context, uid, gid, set_uid, set_gid) != 0)
+        *error = EPERM;
+    else if (set_uid)
+        /* This authority check protects the process, rather than the
+         * executable.  Once login has dropped to a non-root uid, subsequent
+         * credential changes from that same POSIX view must be refused. */
+        view->admin = uid == 0;
     return FACET_OK;
 }
 
@@ -303,6 +328,14 @@ static FacetResult posix_list_directory(void *self, const FacetString *path,
     bool include_etc = view->chrooted &&
         (string_equals(path, "/") ||
          (!view->cwd_synthetic_etc && string_equals(path, ".")));
+    if (include_etc) {
+        for (size_t i = 0; i < raw.count; i++)
+            if (raw.data[i].name.length == sizeof("etc") - 1 &&
+                memcmp(raw.data[i].name.data, "etc", sizeof("etc") - 1) == 0) {
+                include_etc = false;
+                break;
+            }
+    }
     size_t count = raw.count + (include_etc ? 1 : 0);
     FacetString *copy = calloc(count, sizeof(*copy));
     if (count != 0 && copy == NULL) { facet_rpc_release_value(FACET_TYPE_ARRAY, &FacetArray_Entry_TypeMeta, &raw); return FACET_OUT_OF_MEMORY; }
@@ -461,7 +494,7 @@ static FacetResult posix_open(void *self, const FacetString *path,
         if (view->descriptors[i].kind == DESCRIPTOR_UNUSED) { slot = i; break; }
     if (slot < 0) { *error = EMFILE; return FACET_OK; }
     const char *memory = synthetic_file(view, path);
-    if (memory == virtual_shadow && !view->admin) {
+    if (memory == view->virtual_shadow && !view->admin) {
         *error = EACCES;
         return FACET_OK;
     }
@@ -607,6 +640,9 @@ Dominit0PosixView *dominit0_posix_view_create(
         return NULL;
     Dominit0PosixView *view = calloc(1, sizeof(*view));
     if (view == NULL) return NULL;
+    view->virtual_passwd = default_passwd;
+    view->virtual_shadow = default_shadow;
+    view->virtual_fstab = default_fstab;
     if (cwd_handle.platform != NULL &&
         libfacet_handle_clone(cwd_handle, &view->cwd_handle) != FACET_OK) {
         free(view);
@@ -637,6 +673,7 @@ Dominit0PosixView *dominit0_posix_view_create(
         .seek_fd = posix_seek, .allocate_pages = posix_allocate_pages,
         .free_pages = posix_free_pages, .exit_process = posix_exit,
         .get_domain_id = posix_get_domain_id, .get_pid = posix_get_pid,
+        .set_credentials = posix_set_credentials,
         .get_cwd = posix_get_cwd, .change_directory = posix_change_directory,
         .list_directory = posix_list_directory,
         .authenticate = posix_authenticate, .spawn_process = posix_spawn,
@@ -661,6 +698,11 @@ int dominit0_posix_view_set_root(Dominit0PosixView *view,
     if (view->root_handle.platform != NULL)
         (void)libfacet_handle_release(view->root_handle);
     view->root_handle = copy;
+    FacetHandle cwd = {0};
+    if (libfacet_handle_clone(root_handle, &cwd) != FACET_OK) return -1;
+    if (view->cwd_handle.platform != NULL)
+        (void)libfacet_handle_release(view->cwd_handle);
+    view->cwd_handle = cwd;
     IDirectory *root = proxy_from_borrowed(&IDirectory_MetaData, root_handle);
     FacetString physical = {0};
     FacetResult result = root == NULL ? FACET_INVALID_HANDLE :
@@ -696,7 +738,7 @@ int dominit0_posix_view_bind_lifecycle(Dominit0PosixView *view,
 int dominit0_posix_view_bind_process_control(Dominit0PosixView *view,
     void *context, uint64_t domain_id, int32_t pid, bool admin,
     Dominit0PosixSpawn spawn,
-    Dominit0PosixWait wait)
+    Dominit0PosixWait wait, Dominit0PosixSetCredentials set_credentials)
 {
     if (view == NULL || spawn == NULL || wait == NULL) return -1;
     view->process_context = context;
@@ -704,6 +746,7 @@ int dominit0_posix_view_bind_process_control(Dominit0PosixView *view,
     view->pid = pid;
     view->spawn = spawn;
     view->wait = wait;
+    view->set_credentials = set_credentials;
     view->admin = admin;
     return 0;
 }
@@ -722,6 +765,15 @@ void dominit0_posix_view_set_synthetic_cwd(Dominit0PosixView *view,
                                            bool synthetic_etc)
 {
     if (view != NULL) view->cwd_synthetic_etc = synthetic_etc;
+}
+
+void dominit0_posix_view_set_credential_files(Dominit0PosixView *view,
+    const char *passwd, const char *shadow, const char *fstab)
+{
+    if (view == NULL || passwd == NULL || shadow == NULL || fstab == NULL) return;
+    view->virtual_passwd = passwd;
+    view->virtual_shadow = shadow;
+    view->virtual_fstab = fstab;
 }
 
 FacetHandle dominit0_posix_view_handle(const Dominit0PosixView *view)

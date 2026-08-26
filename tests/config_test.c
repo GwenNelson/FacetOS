@@ -8,14 +8,13 @@
 #define ROOT_USER_CONFIG \
     "[[users]]\n" \
     "name='root'\n" \
-    "password_sha256='f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59'\n" \
+    "password_hash='$5$facet$j7FgoXidvJl10CTaW0nguGP3ZnvKnqS3/IHmDVliPQ9'\n" \
     "admin=true\n" \
     "uid=0\n" \
     "gid=0\n" \
     "home_path='/root'\n"
 
-#define ZERO_HASH \
-    "0000000000000000000000000000000000000000000000000000000000000000"
+#define CRYPT_HASH "$5$facet$j7FgoXidvJl10CTaW0nguGP3ZnvKnqS3/IHmDVliPQ9"
 
 static int parse_text(const char *text, FacetSystemConfig *config,
                       FacetConfigDiagnostic *diagnostic)
@@ -183,7 +182,7 @@ static void test_user_shell_overrides(void)
         "[facet]\nversion=1\nseat_initrd='dominit0.initrd'\n"
         "[[logging_sinks]]\nname='d'\ntype='x'\nrequired=true\n"
         "[[users]]\nname='root'\n"
-        "password_sha256='f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59'\n"
+        "password_hash='$5$facet$j7FgoXidvJl10CTaW0nguGP3ZnvKnqS3/IHmDVliPQ9'\n"
         "admin=true\nuid=0\ngid=0\nhome_path='/root'\n"
         "native_shell='/FacetOS/FacetDummy'\nposix_shell='/bin/dummysh'\n"
         "[[seats]]\nname='s'\ntype='serial'\nserver='/FacetOS/seat-server-serial'\nterminals=['t']\n"
@@ -213,7 +212,7 @@ static void test_domain_user_merge(void)
         "[[seats]]\nname='s'\ntype='serial'\nserver='/FacetOS/seat-server-serial'\nterminals=['t']\n"
         "[[domains]]\nid=0\nname='n'\npersonality='native'\n"
         "domain_manager='local'\ninitrd='n.initrd'\n"
-        "users=[{name='alice',password_sha256='" ZERO_HASH
+        "users=[{name='alice',password_hash='" CRYPT_HASH
         "',admin=false,uid=1000,gid=1000,home_path='/home/alice'}]\n"
         "logging_sinks=[{name='d',level='info'}]\n"
         "terminals=[{terminal='s.t',view='native',initial_process='/x'}]\n";
@@ -283,14 +282,17 @@ static void test_failures(void)
                    "terminals=['t']\nserver_args=[]\n",
                    FACET_CONFIG_DIAGNOSTIC_SCHEMA);
     expect_failure("[facet]\nversion=1\n"
-                   "[[users]]\nname='root'\npassword_sha256='ABCDEF'\nadmin=true\n",
+                   "[[users]]\nname='root'\npassword_hash='ABCDEF'\nadmin=true\n",
                    FACET_CONFIG_DIAGNOSTIC_SCHEMA);
     expect_failure("[facet]\nversion=1\n"
-                   "[[users]]\nname='not-root'\npassword_sha256='" ZERO_HASH
+                   "[[users]]\nname='root'\npassword_hash='$6$salt$digest'\nadmin=true\n",
+                   FACET_CONFIG_DIAGNOSTIC_SCHEMA);
+    expect_failure("[facet]\nversion=1\n"
+                   "[[users]]\nname='not-root'\npassword_hash='" CRYPT_HASH
                    "'\nadmin=true\n",
                    FACET_CONFIG_DIAGNOSTIC_SCHEMA);
     expect_failure("[facet]\nversion=1\n"
-                   "[[users]]\nname='root'\npassword_sha256='" ZERO_HASH
+                   "[[users]]\nname='root'\npassword_hash='" CRYPT_HASH
                    "'\nadmin=true\n",
                    FACET_CONFIG_DIAGNOSTIC_SCHEMA);
     expect_failure("[facet]\nversion = 1\n" ROOT_USER_CONFIG
@@ -330,7 +332,7 @@ static void test_failures(void)
         "[[seats]]\nname='s'\ntype='serial'\nserver='/FacetOS/seat-server-serial'\nterminals=['t']\n"
         "[[domains]]\nid=0\nname='n'\npersonality='native'\n"
         "domain_manager='local'\ninitrd='n.initrd'\n"
-        "users=[{name='root',password_sha256='" ZERO_HASH
+        "users=[{name='root',password_hash='" CRYPT_HASH
         "',admin=false,uid=0,gid=0,home_path='/root'}]\n"
         "logging_sinks=[{name='d',level='info'}]\n"
         "terminals=[{terminal='s.t',view='native',initial_process='/x'}]\n";

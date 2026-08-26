@@ -9,6 +9,8 @@ typedef FacetResult (*Dominit0PosixSpawn)(void *context, const FacetString *path
     const FacetArray_string *argv, FacetHandle session, int32_t *pid, int32_t *error);
 typedef FacetResult (*Dominit0PosixWait)(void *context, int32_t pid,
     int32_t *status, int32_t *error);
+typedef int (*Dominit0PosixSetCredentials)(void *context, uint32_t uid,
+    uint32_t gid, bool set_uid, bool set_gid);
 typedef int (*Dominit0PosixCwdChanged)(void *context, FacetHandle directory,
                                        bool synthetic_etc);
 
@@ -24,10 +26,12 @@ int dominit0_posix_view_bind_lifecycle(Dominit0PosixView *view,
 int dominit0_posix_view_bind_process_control(Dominit0PosixView *view,
     void *context, uint64_t domain_id, int32_t pid, bool admin,
     Dominit0PosixSpawn spawn,
-    Dominit0PosixWait wait);
+    Dominit0PosixWait wait, Dominit0PosixSetCredentials set_credentials);
 int dominit0_posix_view_bind_cwd_sync(Dominit0PosixView *view,
     void *context, Dominit0PosixCwdChanged changed, bool synthetic_etc);
 void dominit0_posix_view_set_synthetic_cwd(Dominit0PosixView *view,
                                            bool synthetic_etc);
+void dominit0_posix_view_set_credential_files(Dominit0PosixView *view,
+    const char *passwd, const char *shadow, const char *fstab);
 FacetHandle dominit0_posix_view_handle(const Dominit0PosixView *view);
 void dominit0_posix_view_destroy(Dominit0PosixView *view);

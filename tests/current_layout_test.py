@@ -27,14 +27,17 @@ def main() -> None:
     system = entries(tool, system_image)
     child = entries(tool, child_image)
 
-    for path in ("FacetOS", "Data", "home", "posix", "posix/bin", "README"):
+    for path in ("FacetOS", "Data", "home", "home/root", "home/user",
+                 "posix", "posix/bin", "README"):
         require(system, path, system_image)
     for path in ("posix/bin/login", "posix/bin/sh", "posix/bin/ls", "posix/bin/cat"):
         require(system, path, system_image)
     for path in ("bin", "etc", "etc/passwd", "etc/shadow", "etc/fstab", "posix/etc"):
         reject(system, path, system_image)
 
-    for path in ("bin", "sbin", "sbin/init", "etc", "etc/passwd", "etc/shadow", "etc/fstab"):
+    for path in ("bin", "sbin", "sbin/init", "etc", "etc/passwd",
+                 "etc/shadow", "etc/fstab", "home", "home/root",
+                 "home/user"):
         require(child, path, child_image)
     print("current initrd layout tests passed")
 

@@ -4,15 +4,7 @@
 #include <stddef.h>
 #include <sys/types.h>
 
-/* FacetOS-specific POSIX-view identity extension. */
-uint64_t get_domain_id(void);
-
 /* Process/cwd calls are backed by the process's sole IPOSIXView capability. */
 pid_t getpid(void);
 int chdir(const char *path);
 char *getcwd(char *buffer, size_t size);
-
-/* FacetOS extensions implemented by libc-posix.  They deliberately expose
- * POSIX-shaped values rather than Facet handles or interface objects. */
-int facet_posix_login_shell(const char *user, const char *password,
-                            const char *shell, pid_t *pid);

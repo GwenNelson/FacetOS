@@ -21,6 +21,10 @@ interface IPOSIXView {
     // authority behind this per-process translation object.
     method FacetResult get_domain_id(out u64 domain_id);
     method FacetResult get_pid(out i32 pid);
+    // libc implements the standard setuid/setgid calls through this narrow
+    // per-process transition; applications never receive native auth state.
+    method FacetResult set_credentials(in u32 uid, in u32 gid,
+                                      out i32 error);
     method FacetResult get_cwd(out string path, out i32 error);
     method FacetResult change_directory(in string path, out i32 error);
     method FacetResult list_directory(in string path, out array<string> entries,

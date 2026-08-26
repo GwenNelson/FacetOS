@@ -395,6 +395,10 @@ add_library(libc-posix STATIC
     "${FACETOS_ROOT}/src/posix/libc/files.c"
     "${FACETOS_ROOT}/src/posix/libc/dir.c"
     "${FACETOS_ROOT}/src/posix/libc/stdio.c"
+    "${FACETOS_ROOT}/src/posix/libc/passwd.c"
+    "${FACETOS_ROOT}/src/posix/libc/crypt.c"
+    "${FACETOS_ROOT}/src/posix/libc/misc.c"
+    "${FACETOS_ROOT}/external/musllibc/src/crypt/crypt_sha256.c"
     "${FACETOS_ROOT}/src/posix/libc/exit.c"
     "${FACETOS_ROOT}/src/posix/libc/process.c"
 )

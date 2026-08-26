@@ -89,7 +89,8 @@ typedef struct FacetConfigAuthenticationSource {
 
 typedef struct FacetConfigUser {
     char *name;
-    char *password_sha256;
+    /* Stored in the portable crypt(3) representation used by /etc/shadow. */
+    char *password_hash;
     bool admin;
     uint32_t uid;
     uint32_t gid;

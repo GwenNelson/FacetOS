@@ -365,6 +365,7 @@ FACET_TERMINAL_RPC_TEST := $(FACET_CONFIG_BUILD)/terminal-rpc-test
 FACET_SEAT_PC_CONSOLE_TEST := $(FACET_CONFIG_BUILD)/seat-pc-console-test
 FACET_LIBC_RUNTIME_TEST := $(FACET_CONFIG_BUILD)/libc-runtime-test
 FACET_SHELL_PARSER_TEST := $(FACET_CONFIG_BUILD)/shell-parser-test
+FACET_POSIX_CRYPT_TEST := $(FACET_CONFIG_BUILD)/posix-crypt-test
 
 $(FACET_GENERATED_IGENERIC): $(FACET_IDLC) $(ROOT)/idl/IGenericObject.facet
 	@mkdir -p $(FACET_GENERATED_INTERFACE_DIR)
@@ -447,6 +448,19 @@ $(FACET_SHELL_PARSER_TEST): $(ROOT)/tests/shell_parser_test.c \
 test-shell-parser: $(FACET_SHELL_PARSER_TEST)
 	$(FACET_SHELL_PARSER_TEST)
 
+$(FACET_POSIX_CRYPT_TEST): $(ROOT)/tests/posix_crypt_test.c \
+		$(ROOT)/src/posix/libc/crypt.c \
+		$(ROOT)/external/musllibc/src/crypt/crypt_sha256.c
+	@mkdir -p $(dir $@)
+	$(CC) -std=gnu11 -O2 -Wall -Wextra -Werror -Wno-error=sign-compare \
+		-Wno-error=missing-braces -I$(ROOT)/include \
+		$(ROOT)/src/posix/libc/crypt.c \
+		$(ROOT)/external/musllibc/src/crypt/crypt_sha256.c \
+		$(ROOT)/tests/posix_crypt_test.c -o $@
+
+test-posix-crypt: $(FACET_POSIX_CRYPT_TEST)
+	$(FACET_POSIX_CRYPT_TEST)
+
 $(FACET_INITRD_TEST): $(ROOT)/tests/initrd_test.c \
 		$(ROOT)/src/dominit0/initrd.c $(ROOT)/src/dominit0/file_view.c \
 		$(ROOT)/src/dominit0/posix.c \
@@ -485,7 +499,7 @@ $(FACET_AUTH_RPC_TEST): $(ROOT)/tests/auth_rpc_test.c \
 		$(ROOT)/libfacet/src/common/sha256.c $(ROOT)/src/config.c \
 		$(ROOT)/src/dominit0/config.c $(ROOT)/src/dominit0/environment.c \
 		$(ROOT)/src/dominit0/auth.c $(ROOT)/tests/auth_rpc_test.c \
-		-Wl,--gc-sections -o $@
+		-Wl,--gc-sections -lcrypt -o $@
 
 test-auth-rpc: $(FACET_AUTH_RPC_TEST)
 	$(FACET_AUTH_RPC_TEST)
@@ -562,7 +576,7 @@ test-logging-setup: $(FACET_LOGGING_SETUP_TEST)
 test-initrd-tool: $(ROOT)/tests/initrd_tool_test.py $(FACET_INITRD_TOOL)
 	python3 $(ROOT)/tests/initrd_tool_test.py $(FACET_INITRD_TOOL)
 
-test: test-config test-sha256 test-libc-runtime test-shell-parser test-initrd test-current-layout test-posix-api-boundary test-initrd-tool test-auth-rpc test-terminal-rpc \
+test: test-config test-sha256 test-libc-runtime test-shell-parser test-posix-crypt test-initrd test-current-layout test-posix-api-boundary test-initrd-tool test-auth-rpc test-terminal-rpc \
 	test-klog test-logging-setup test-seat-pc-console
 
 
@@ -690,7 +704,7 @@ $(INITRD_SYSTEM): $(FACET_INITRD_TOOL) $(shell find $(ROOT)/initrd/system -type 
 	cp $(FACET_POSIX_SH) $(ROOT)/build/initrd/system-root/posix/bin/sh
 	cp $(FACET_POSIX_LS) $(ROOT)/build/initrd/system-root/posix/bin/ls
 	cp $(FACET_POSIX_CAT) $(ROOT)/build/initrd/system-root/posix/bin/cat
-	mkdir -p $(ROOT)/build/initrd/system-root/home/user $(FACET_OVERLAY_ROOT)/system
+	mkdir -p $(ROOT)/build/initrd/system-root/home/root $(ROOT)/build/initrd/system-root/home/user $(FACET_OVERLAY_ROOT)/system
 	$(FACET_INITRD_TOOL) pack $@ $(ROOT)/build/initrd/system-root \
 		--overlay $(FACET_OVERLAY_ROOT)/system
 	$(FACET_INITRD_TOOL) chmod $@ 0700 Data/TestData/root-private
@@ -717,7 +731,7 @@ $(INITRD_CHILD): $(FACET_INITRD_TOOL) $(shell find $(ROOT)/initrd/child -type f)
 	cp $(FACET_POSIX_CAT) $(ROOT)/build/initrd/child-root/bin/cat
 	mkdir -p $(ROOT)/build/initrd/child-root/sbin
 	cp $(FACET_POSIX_INIT) $(ROOT)/build/initrd/child-root/sbin/init
-	mkdir -p $(ROOT)/build/initrd/child-root/home/user $(FACET_OVERLAY_ROOT)/child
+	mkdir -p $(ROOT)/build/initrd/child-root/home/root $(ROOT)/build/initrd/child-root/home/user $(FACET_OVERLAY_ROOT)/child
 	$(FACET_INITRD_TOOL) pack $@ $(ROOT)/build/initrd/child-root \
 		--overlay $(FACET_OVERLAY_ROOT)/child
 	$(FACET_INITRD_TOOL) chmod $@ 0600 usr/share/test_data/user-only.txt usr/share/test_data/root-only.txt

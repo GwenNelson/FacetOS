@@ -89,7 +89,7 @@ enum {
     DOMAIN_INITRD = 1u << 8,
     DOMAIN_USERS = 1u << 9,
     USER_NAME = 1u << 0,
-    USER_PASSWORD_SHA256 = 1u << 1,
+    USER_PASSWORD_HASH = 1u << 1,
     USER_ADMIN = 1u << 2,
     USER_NATIVE_SHELL = 1u << 3,
     USER_POSIX_SHELL = 1u << 4,
@@ -931,8 +931,8 @@ static int user_from_table(Parser *parser, const Value *table,
         char **string_destination = NULL;
         if (strcmp(entry->key, "name") == 0) {
             bit = USER_NAME; string_destination = &user->name;
-        } else if (strcmp(entry->key, "password_sha256") == 0) {
-            bit = USER_PASSWORD_SHA256; string_destination = &user->password_sha256;
+        } else if (strcmp(entry->key, "password_hash") == 0) {
+            bit = USER_PASSWORD_HASH; string_destination = &user->password_hash;
         } else if (strcmp(entry->key, "admin") == 0) {
             bit = USER_ADMIN;
         } else if (strcmp(entry->key, "native_shell") == 0) {
@@ -1092,8 +1092,8 @@ static int apply_value(Parser *parser, char *key, Value *value,
         char **string_destination = NULL;
         if (strcmp(key, "name") == 0) {
             bit = USER_NAME; string_destination = &user->name;
-        } else if (strcmp(key, "password_sha256") == 0) {
-            bit = USER_PASSWORD_SHA256; string_destination = &user->password_sha256;
+        } else if (strcmp(key, "password_hash") == 0) {
+            bit = USER_PASSWORD_HASH; string_destination = &user->password_hash;
         } else if (strcmp(key, "admin") == 0) {
             bit = USER_ADMIN;
         } else if (strcmp(key, "native_shell") == 0) {
@@ -1239,33 +1239,33 @@ static int apply_value(Parser *parser, char *key, Value *value,
 static void destroy_user(FacetConfigUser *user)
 {
     free(user->name);
-    free(user->password_sha256);
+    free(user->password_hash);
     free(user->home_path);
     free(user->native_shell);
     free(user->posix_shell);
     memset(user, 0, sizeof(*user));
 }
 
-static bool valid_sha256_hex(const char *text)
+static bool valid_password_hash(const char *text)
 {
-    if (text == NULL || strlen(text) != 64) return false;
-    for (size_t i = 0; i < 64; i++)
-        if (!((text[i] >= '0' && text[i] <= '9') ||
-              (text[i] >= 'a' && text[i] <= 'f')))
-            return false;
-    return true;
+    /* libc-posix currently provides crypt(3)'s SHA-256 modular scheme.  Do
+     * not accept a syntactically modular hash which the in-system login can
+     * never verify. */
+    if (text == NULL || strncmp(text, "$5$", 3) != 0) return false;
+    const char *digest = strchr(text + 3, '$');
+    return digest != NULL && digest != text + 3 && digest[1] != '\0';
 }
 
 static int validate_user(Parser *parser, const FacetConfigUser *user,
                          const char *context)
 {
-    uint32_t required = USER_NAME | USER_PASSWORD_SHA256 | USER_ADMIN |
+    uint32_t required = USER_NAME | USER_PASSWORD_HASH | USER_ADMIN |
                         USER_UID | USER_GID | USER_HOME_PATH;
     if ((user->_present & required) != required || user->name == NULL ||
-        user->password_sha256 == NULL || user->name[0] == '\0' ||
-        !valid_sha256_hex(user->password_sha256))
+        user->password_hash == NULL || user->name[0] == '\0' ||
+        !valid_password_hash(user->password_hash))
         return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
-                       context, "user requires name, lowercase SHA-256 hash, admin, uid, gid, and home_path");
+                       context, "user requires name, supported crypt password_hash, admin, uid, gid, and home_path");
     if (user->home_path[0] != '/')
         return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
                        user->name, "home_path must be absolute");
@@ -1350,10 +1350,10 @@ static int validate_required(Parser *parser)
                                user->name, "duplicate global user");
         if (strcmp(user->name, "root") == 0) {
             if (!user->admin || user->uid != 0 || user->gid != 0 ||
-                strcmp(user->password_sha256,
-                "f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59") != 0)
+                strcmp(user->password_hash,
+                "$5$facet$j7FgoXidvJl10CTaW0nguGP3ZnvKnqS3/IHmDVliPQ9") != 0)
                 return fail_at(parser, FACET_CONFIG_DIAGNOSTIC_SCHEMA, 0, 0,
-                               "root", "root must be uid/gid 0, admin, with the required development hash");
+                               "root", "root must be uid/gid 0, admin, with the required development password hash");
             root_found = true;
         }
     }
@@ -1658,7 +1658,7 @@ int facet_config_make_fallback(FacetSystemConfig *config,
         "required = true\n"
         "[[users]]\n"
         "name = \"root\"\n"
-        "password_sha256 = \"f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59\"\n"
+        "password_hash = \"$5$facet$j7FgoXidvJl10CTaW0nguGP3ZnvKnqS3/IHmDVliPQ9\"\n"
         "admin = true\n"
         "uid = 0\n"
         "gid = 0\n"
@@ -1666,7 +1666,7 @@ int facet_config_make_fallback(FacetSystemConfig *config,
         "posix_shell = \"/bin/sh\"\n"
         "[[users]]\n"
         "name = \"user\"\n"
-        "password_sha256 = \"f490b96d6a372fd2fd1ab87bbe272a193567d04d23f5783862a187b201273f59\"\n"
+        "password_hash = \"$5$facet$j7FgoXidvJl10CTaW0nguGP3ZnvKnqS3/IHmDVliPQ9\"\n"
         "admin = false\n"
         "uid = 1000\n"
         "gid = 1000\n"

@@ -93,26 +93,3 @@ int posix_spawn(pid_t *restrict pid, const char *restrict path,
     *pid = child;
     return 0;
 }
-
-int facet_posix_login_shell(const char *user, const char *password,
-                            const char *shell, pid_t *pid)
-{
-    IPOSIXView *view = facet_posix_view();
-    if (view == NULL || user == NULL || password == NULL || shell == NULL || pid == NULL) {
-        errno = EINVAL; return -1;
-    }
-    FacetString name = {.data = user, .length = strlen(user)};
-    FacetString secret = {.data = password, .length = strlen(password)};
-    FacetHandle session = {0}; int32_t error = 0, child = -1;
-    if (view->authenticate(view->self, &name, &secret, &session, &error) != FACET_OK || error != 0) {
-        errno = error == 0 ? EACCES : error; return -1;
-    }
-    FacetString program = {.data = shell, .length = strlen(shell)};
-    FacetArray_string arguments = {.data = &program, .count = 1};
-    FacetResult result = view->spawn_process(view->self, &program, &arguments,
-                                              session, &child, &error);
-    (void)libfacet_handle_release(session);
-    if (result != FACET_OK || error != 0) { errno = error == 0 ? EIO : error; return -1; }
-    *pid = child;
-    return 0;
-}

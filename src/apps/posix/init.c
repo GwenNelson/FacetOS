@@ -1,4 +1,3 @@
-#include <facetos/posix.h>
 #include <errno.h>
 #include <spawn.h>
 #include <sys/wait.h>

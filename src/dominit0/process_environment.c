@@ -38,7 +38,7 @@ struct Dominit0ProcessEnvironment {
     size_t binding_count;
     FacetHandle owned_session;
     FacetHandle private_page_allocator;
-    Dominit0ProcessProfile profile;
+    bool native_capabilities;
     Dominit0PosixView *posix_view;
     char *posix_namespace_root;
     bool posix_cwd_synthetic_etc;
@@ -306,6 +306,43 @@ static int add_sysv_environment(Dominit0ProcessEnvironment *environment,
     return 0;
 }
 
+static int replace_sysv_environment(Dominit0ProcessEnvironment *environment,
+                                    const char *key, const char *value)
+{
+    if (environment == NULL || key == NULL || value == NULL) return -1;
+    size_t key_length = strlen(key);
+    size_t value_length = strlen(value);
+    char *replacement = malloc(key_length + 1 + value_length + 1);
+    if (replacement == NULL) return -1;
+    memcpy(replacement, key, key_length);
+    replacement[key_length] = '=';
+    memcpy(replacement + key_length + 1, value, value_length + 1);
+    for (size_t i = 0; i < environment->sysv_environment_count; i++) {
+        char *entry = environment->owned_sysv_environment[i];
+        if (strncmp(entry, key, key_length) != 0 || entry[key_length] != '=')
+            continue;
+        free(entry);
+        environment->owned_sysv_environment[i] = replacement;
+        environment->sysv_environment[i].data = replacement;
+        environment->sysv_environment[i].length = key_length + 1 + value_length;
+        return 0;
+    }
+    int result = add_sysv_environment(environment, replacement);
+    free(replacement);
+    return result;
+}
+
+static const FacetConfigUser *configured_user(uint32_t uid, uint32_t gid)
+{
+    Dominit0SystemConfig *system = dominit0_config_get_system();
+    if (system == NULL) return NULL;
+    for (size_t i = 0; i < system->parsed.user_count; i++) {
+        const FacetConfigUser *user = &system->parsed.users[i];
+        if (user->uid == uid && user->gid == gid) return user;
+    }
+    return NULL;
+}
+
 static int copy_facet_string(const FacetString *input, char **out)
 {
     if (input == NULL || out == NULL || input->data == NULL ||
@@ -408,7 +445,7 @@ fail:
 
 Dominit0ProcessEnvironment *dominit0_process_environment_create(
     Dominit0DomainEnvironment *parent, FacetHandle session,
-    bool bootstrap_authority, Dominit0ProcessProfile profile,
+    bool bootstrap_authority, bool native_capabilities,
     const FacetArray_string *sysv_environment, FacetHandle cwd,
     const Dominit0ProcessEnvironment *identity_source)
 {
@@ -416,7 +453,7 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
     const char *failure_stage = "allocate environment";
     Dominit0ProcessEnvironment *environment = calloc(1, sizeof(*environment));
     if (environment == NULL) return NULL;
-    environment->profile = profile;
+    environment->native_capabilities = native_capabilities;
     char *user_name = NULL, *home_path = NULL, *shell_path = NULL;
     failure_stage = "read session identity";
     if (identity_source != NULL) {
@@ -478,7 +515,7 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
 
     static const char *delegated[] = {"logger", "processes"};
     failure_stage = "delegate domain services";
-    for (size_t i = 0; profile == DOMINIT0_PROCESS_NATIVE &&
+    for (size_t i = 0; native_capabilities &&
          i < sizeof(delegated) / sizeof(delegated[0]); i++) {
         uuid_t iid;
         FacetHandle handle = {0};
@@ -490,7 +527,7 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
     static const char *bootstrap_delegated[] = {
         "auth", "security",
     };
-    if (bootstrap_authority && profile == DOMINIT0_PROCESS_NATIVE) {
+    if (bootstrap_authority && native_capabilities) {
         failure_stage = "delegate bootstrap authority";
         for (size_t i = 0;
              i < sizeof(bootstrap_delegated) / sizeof(bootstrap_delegated[0]);
@@ -520,7 +557,7 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
         failure_stage = "retain session";
         if (libfacet_handle_clone(session, &environment->owned_session) != FACET_OK)
             goto fail;
-        if (profile == DOMINIT0_PROCESS_NATIVE &&
+        if (native_capabilities &&
             bind(environment, "session", IID_ISession,
                  environment->owned_session) != 0) goto fail;
     }
@@ -583,7 +620,7 @@ int dominit0_process_environment_bind_named(
     uuid_t primary_iid, FacetHandle object)
 {
     if (environment == NULL ||
-        environment->profile == DOMINIT0_PROCESS_PURE_POSIX)
+        !environment->native_capabilities)
         return -1;
     return bind(environment, name, primary_iid, object);
 }
@@ -592,7 +629,7 @@ int dominit0_process_environment_bind_page_allocator(
     Dominit0ProcessEnvironment *environment, FacetHandle allocator)
 {
     if (environment != NULL &&
-        environment->profile == DOMINIT0_PROCESS_PURE_POSIX) {
+        !environment->native_capabilities) {
         environment->private_page_allocator = allocator;
         return dominit0_posix_view_bind_page_allocator(
             environment->posix_view, allocator);
@@ -605,7 +642,7 @@ int dominit0_process_environment_bind_lifecycle(
 {
     if (environment == NULL || lifecycle.platform == NULL)
         return -1;
-    if (environment->profile == DOMINIT0_PROCESS_PURE_POSIX)
+    if (!environment->native_capabilities)
         return dominit0_posix_view_bind_lifecycle(environment->posix_view,
                                                   lifecycle);
     return bind(environment, "process.lifecycle", IID_IProcessLifecycle,
@@ -614,13 +651,14 @@ int dominit0_process_environment_bind_lifecycle(
 
 int dominit0_process_environment_bind_posix_process_control(
     Dominit0ProcessEnvironment *environment, void *context, uint64_t domain_id, int32_t pid,
-    bool admin, Dominit0PosixSpawn spawn, Dominit0PosixWait wait)
+    bool admin, Dominit0PosixSpawn spawn, Dominit0PosixWait wait,
+    Dominit0PosixSetCredentials set_credentials)
 {
-    if (environment == NULL || environment->profile != DOMINIT0_PROCESS_PURE_POSIX)
+    if (environment == NULL || environment->posix_view == NULL)
         return -1;
     return dominit0_posix_view_bind_process_control(environment->posix_view,
                                                     context, domain_id, pid, admin,
-                                                    spawn, wait);
+                                                    spawn, wait, set_credentials);
 }
 
 int dominit0_process_environment_bind_terminal(
@@ -629,13 +667,19 @@ int dominit0_process_environment_bind_terminal(
 {
     (void)terminal;
     if (environment == NULL) return -1;
-    if (environment->profile == DOMINIT0_PROCESS_PURE_POSIX) {
+    if (!environment->native_capabilities ||
+        environment->posix_namespace_root != NULL) {
         FacetString files_name = {.data = "files", .length = 5};
         ProcessBinding *files = find_binding(environment, &files_name);
         environment->posix_view = dominit0_posix_view_create(
             input, output, files == NULL ? (FacetHandle){0} : files->handle,
             environment->owned_cwd);
         if (environment->posix_view == NULL) return -1;
+        if (environment->credential_files != NULL)
+            dominit0_posix_view_set_credential_files(environment->posix_view,
+                dominit0_credential_file_store_passwd(environment->credential_files),
+                dominit0_credential_file_store_shadow(environment->credential_files),
+                dominit0_credential_file_store_fstab(environment->credential_files));
         if (environment->posix_namespace_root != NULL) {
             FacetHandle copy = {0}, root = {0};
             IFileStore *store = files == NULL ||
@@ -657,8 +701,11 @@ int dominit0_process_environment_bind_terminal(
                 environment, sync_posix_cwd,
                 environment->posix_cwd_synthetic_etc) != 0)
             return -1;
-        return bind(environment, "posix", IID_IPOSIXView,
-                    dominit0_posix_view_handle(environment->posix_view));
+        if (bind(environment, "posix", IID_IPOSIXView,
+                 dominit0_posix_view_handle(environment->posix_view)) != 0)
+            return -1;
+        if (!environment->native_capabilities)
+            return 0;
     }
     return bind(environment, "terminal.control", IID_ITerminalControl,
                 control) ||
@@ -670,8 +717,7 @@ int dominit0_process_environment_bind_terminal(
 int dominit0_process_environment_set_posix_root(
     Dominit0ProcessEnvironment *environment, const char *path)
 {
-    if (environment == NULL || path == NULL || path[0] != '/' ||
-        environment->profile != DOMINIT0_PROCESS_PURE_POSIX)
+    if (environment == NULL || path == NULL || path[0] != '/')
         return -1;
     if (dominit0_process_environment_set_posix_namespace_root(environment,
                                                                 path) != 0)
@@ -702,8 +748,7 @@ int dominit0_process_environment_set_posix_root(
 int dominit0_process_environment_set_posix_namespace_root(
     Dominit0ProcessEnvironment *environment, const char *path)
 {
-    if (environment == NULL || path == NULL || path[0] != '/' ||
-        environment->profile != DOMINIT0_PROCESS_PURE_POSIX)
+    if (environment == NULL || path == NULL || path[0] != '/')
         return -1;
     char *copy = strdup(path);
     if (copy == NULL) return -1;
@@ -752,6 +797,31 @@ int dominit0_process_environment_get_credentials(
     *uid = environment->uid;
     *gid = environment->gid;
     *admin = environment->admin;
+    return 0;
+}
+
+bool dominit0_process_environment_has_native_capabilities(
+    const Dominit0ProcessEnvironment *environment)
+{
+    return environment != NULL && environment->native_capabilities;
+}
+
+int dominit0_process_environment_set_credentials(
+    Dominit0ProcessEnvironment *environment, uint32_t uid, uint32_t gid,
+    bool set_uid, bool set_gid)
+{
+    if (environment == NULL || (!set_uid && !set_gid)) return -1;
+    if (set_uid) environment->uid = uid;
+    if (set_gid) environment->gid = gid;
+    environment->admin = environment->uid == 0;
+    const FacetConfigUser *user = configured_user(environment->uid,
+                                                   environment->gid);
+    if (user != NULL &&
+        (replace_sysv_environment(environment, "USER", user->name) != 0 ||
+         replace_sysv_environment(environment, "HOME", user->home_path) != 0 ||
+         replace_sysv_environment(environment, "SHELL", user->posix_shell) != 0 ||
+         replace_sysv_environment(environment, "PWD", user->home_path) != 0))
+        return -1;
     return 0;
 }
 
