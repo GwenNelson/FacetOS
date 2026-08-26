@@ -15,6 +15,8 @@ typedef int (*Dominit0PosixCwdChanged)(void *context, FacetHandle directory,
 Dominit0PosixView *dominit0_posix_view_create(
     FacetHandle stdin_handle, FacetHandle stdout_handle,
     FacetHandle files_handle, FacetHandle cwd_handle);
+int dominit0_posix_view_set_root(Dominit0PosixView *view,
+                                 FacetHandle root_handle);
 int dominit0_posix_view_bind_page_allocator(Dominit0PosixView *view,
                                              FacetHandle allocator);
 int dominit0_posix_view_bind_lifecycle(Dominit0PosixView *view,

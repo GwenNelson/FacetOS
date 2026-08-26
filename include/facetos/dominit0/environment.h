@@ -50,6 +50,12 @@ int dominit0_process_environment_bind_terminal(
     FacetHandle output, FacetHandle control, FacetHandle terminal);
 int dominit0_process_environment_set_posix_root(
     Dominit0ProcessEnvironment *environment, const char *path);
+/* The configured POSIX namespace root is distinct from a process's mutable
+ * CWD and is inherited by every POSIX child. */
+int dominit0_process_environment_set_posix_namespace_root(
+    Dominit0ProcessEnvironment *environment, const char *path);
+const char *dominit0_process_environment_posix_namespace_root(
+    const Dominit0ProcessEnvironment *environment);
 /* Returns a retained copy of the process CWD for an inherited child. */
 FacetHandle dominit0_process_environment_cwd_handle(
     const Dominit0ProcessEnvironment *environment);

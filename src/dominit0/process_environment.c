@@ -40,6 +40,7 @@ struct Dominit0ProcessEnvironment {
     FacetHandle private_page_allocator;
     Dominit0ProcessProfile profile;
     Dominit0PosixView *posix_view;
+    char *posix_namespace_root;
     bool posix_cwd_synthetic_etc;
     FacetString *sysv_environment;
     char **owned_sysv_environment;
@@ -624,6 +625,23 @@ int dominit0_process_environment_bind_terminal(
             input, output, files == NULL ? (FacetHandle){0} : files->handle,
             environment->owned_cwd);
         if (environment->posix_view == NULL) return -1;
+        if (environment->posix_namespace_root != NULL) {
+            FacetHandle copy = {0}, root = {0};
+            IFileStore *store = files == NULL ||
+                libfacet_handle_clone(files->handle, &copy) != FACET_OK ? NULL :
+                libfacet_proxy_from_handle(&IFileStore_MetaData, copy);
+            FacetString path = {.data = environment->posix_namespace_root,
+                                .length = strlen(environment->posix_namespace_root)};
+            FacetResult result = store == NULL ? FACET_INVALID_HANDLE :
+                store->open_directory(store->self, &path, &root);
+            libfacet_free_proxy_client(store);
+            if (result != FACET_OK ||
+                dominit0_posix_view_set_root(environment->posix_view, root) != 0) {
+                if (root.platform != NULL) (void)libfacet_handle_release(root);
+                return -1;
+            }
+            (void)libfacet_handle_release(root);
+        }
         if (dominit0_posix_view_bind_cwd_sync(environment->posix_view,
                 environment, sync_posix_cwd,
                 environment->posix_cwd_synthetic_etc) != 0)
@@ -643,6 +661,9 @@ int dominit0_process_environment_set_posix_root(
 {
     if (environment == NULL || path == NULL || path[0] != '/' ||
         environment->profile != DOMINIT0_PROCESS_PURE_POSIX)
+        return -1;
+    if (dominit0_process_environment_set_posix_namespace_root(environment,
+                                                                path) != 0)
         return -1;
     FacetString files_name = {.data = "files", .length = 5};
     ProcessBinding *files_binding = find_binding(environment, &files_name);
@@ -665,6 +686,25 @@ int dominit0_process_environment_set_posix_root(
     environment->owned_cwd = root;
     cwd->handle = root;
     return 0;
+}
+
+int dominit0_process_environment_set_posix_namespace_root(
+    Dominit0ProcessEnvironment *environment, const char *path)
+{
+    if (environment == NULL || path == NULL || path[0] != '/' ||
+        environment->profile != DOMINIT0_PROCESS_PURE_POSIX)
+        return -1;
+    char *copy = strdup(path);
+    if (copy == NULL) return -1;
+    free(environment->posix_namespace_root);
+    environment->posix_namespace_root = copy;
+    return 0;
+}
+
+const char *dominit0_process_environment_posix_namespace_root(
+    const Dominit0ProcessEnvironment *environment)
+{
+    return environment == NULL ? NULL : environment->posix_namespace_root;
 }
 
 FacetHandle dominit0_process_environment_cwd_handle(
@@ -776,6 +816,7 @@ void dominit0_process_environment_destroy(Dominit0ProcessEnvironment *environmen
     if (environment->owned_cwd.platform != NULL)
         (void)libfacet_handle_release(environment->owned_cwd);
     dominit0_posix_view_destroy(environment->posix_view);
+    free(environment->posix_namespace_root);
     dominit0_credential_file_store_destroy(environment->credential_files);
     for (size_t i = 0; i < environment->binding_count; i++)
         free(environment->bindings[i].name);

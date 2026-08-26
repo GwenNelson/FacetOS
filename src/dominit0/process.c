@@ -302,6 +302,15 @@ static FacetResult launch_process(ProcessManager *manager,
         result = FACET_NOT_FOUND;
         goto done;
     }
+    if (profile == DOMINIT0_PROCESS_PURE_POSIX && posix_root != NULL &&
+        posix_root->data != NULL &&
+        dominit0_process_environment_set_posix_namespace_root(
+            process->environment, posix_root->data) != 0) {
+        dominit0_process_environment_destroy(process->environment);
+        free(process);
+        result = FACET_NOT_FOUND;
+        goto done;
+    }
     if (terminal_index > SIZE_MAX ||
         dominit0_terminal_bind_process_environment(
             manager->domain, (size_t)terminal_index,
@@ -391,9 +400,13 @@ static FacetResult posix_spawn_process(void *context, const FacetString *path,
         *error = ENOMEM;
         return FACET_OK;
     }
+    const char *namespace_root =
+        dominit0_process_environment_posix_namespace_root(parent->environment);
+    FacetString root = {.data = namespace_root,
+                        .length = namespace_root == NULL ? 0 : strlen(namespace_root)};
     FacetResult result = launch_process(parent->manager, path, arguments,
-        session, false, parent->terminal_index, NULL, cwd, true, NULL,
-        &process_handle);
+        session, false, parent->terminal_index, NULL, cwd, true,
+        namespace_root == NULL ? NULL : &root, &process_handle);
     if (cwd.platform != NULL) (void)libfacet_handle_release(cwd);
     if (result == FACET_OK) {
         if (parent->manager->processes != NULL)

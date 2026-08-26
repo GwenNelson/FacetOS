@@ -653,6 +653,27 @@ Dominit0PosixView *dominit0_posix_view_create(
     return view;
 }
 
+int dominit0_posix_view_set_root(Dominit0PosixView *view,
+                                 FacetHandle root_handle)
+{
+    if (view == NULL || root_handle.platform == NULL) return -1;
+    FacetHandle copy = {0};
+    if (libfacet_handle_clone(root_handle, &copy) != FACET_OK) return -1;
+    if (view->root_handle.platform != NULL)
+        (void)libfacet_handle_release(view->root_handle);
+    view->root_handle = copy;
+    IDirectory *root = proxy_from_borrowed(&IDirectory_MetaData, root_handle);
+    FacetString physical = {0};
+    FacetResult result = root == NULL ? FACET_INVALID_HANDLE :
+        root->getpath(root->self, &physical);
+    libfacet_free_proxy_client(root);
+    view->chrooted = result == FACET_OK &&
+        physical.length == sizeof("/posix") - 1 &&
+        memcmp(physical.data, "/posix", physical.length) == 0;
+    free((void *)(uintptr_t)physical.data);
+    return result == FACET_OK ? 0 : -1;
+}
+
 int dominit0_posix_view_bind_page_allocator(Dominit0PosixView *view,
                                              FacetHandle allocator)
 {
