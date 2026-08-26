@@ -704,12 +704,12 @@ $(INITRD_SYSTEM): $(FACET_INITRD_TOOL) $(shell find $(ROOT)/initrd/system -type 
 	cp $(FACET_POSIX_SH) $(ROOT)/build/initrd/system-root/posix/bin/sh
 	cp $(FACET_POSIX_LS) $(ROOT)/build/initrd/system-root/posix/bin/ls
 	cp $(FACET_POSIX_CAT) $(ROOT)/build/initrd/system-root/posix/bin/cat
-	mkdir -p $(ROOT)/build/initrd/system-root/home/root $(ROOT)/build/initrd/system-root/home/user $(FACET_OVERLAY_ROOT)/system
+	mkdir -p $(ROOT)/build/initrd/system-root/home/root $(ROOT)/build/initrd/system-root/home/user $(ROOT)/build/initrd/system-root/posix/home/root $(ROOT)/build/initrd/system-root/posix/home/user $(FACET_OVERLAY_ROOT)/system
 	$(FACET_INITRD_TOOL) pack $@ $(ROOT)/build/initrd/system-root \
 		--overlay $(FACET_OVERLAY_ROOT)/system
 	$(FACET_INITRD_TOOL) chmod $@ 0700 Data/TestData/root-private
 	$(FACET_INITRD_TOOL) chmod $@ 0600 Data/TestData/user-only.txt Data/TestData/root-only.txt
-	$(FACET_INITRD_TOOL) chown $@ 1000:1000 home/user Data/TestData/user-only.txt
+	$(FACET_INITRD_TOOL) chown $@ 1000:1000 home/user posix/home/user Data/TestData/user-only.txt
 	$(FACET_INITRD_TOOL) chown $@ 0:0 Data/TestData/root-only.txt Data/TestData/root-private Data/TestData/root-private/inside.txt
 
 $(FACET_POSIX_LOGIN): facet-idlc libfacet-common configure

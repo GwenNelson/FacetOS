@@ -598,6 +598,8 @@ static void test_chrooted_posix_synthetic_etc(void)
     append_entry(&archive, "posix", 0040755, NULL, 0);
     append_entry(&archive, "posix/bin", 0040755, NULL, 0);
     append_entry(&archive, "posix/bin/sh", 0100755, "elf", 3);
+    append_entry(&archive, "posix/home", 0040755, NULL, 0);
+    append_entry(&archive, "posix/home/root", 0040755, NULL, 0);
     append_entry(&archive, "TRAILER!!!", 0, NULL, 0);
     FacetInitrd *initrd = facet_initrd_create(archive.bytes, archive.size);
     assert(initrd != NULL);
@@ -717,15 +719,17 @@ static void test_chrooted_posix_synthetic_etc(void)
     FacetArray_string entries = {0};
     FacetString root = facet_string("/");
     assert(posix->list_directory(posix->self, &root, &entries, &error) == FACET_OK);
-    assert(error == 0 && entries.count == 2);
-    bool saw_bin = false, saw_etc = false;
+    assert(error == 0 && entries.count == 3);
+    bool saw_bin = false, saw_etc = false, saw_home = false;
     for (size_t i = 0; i < entries.count; i++) {
         saw_bin |= entries.data[i].length == 3 &&
             memcmp(entries.data[i].data, "bin", 3) == 0;
         saw_etc |= entries.data[i].length == 3 &&
             memcmp(entries.data[i].data, "etc", 3) == 0;
+        saw_home |= entries.data[i].length == 4 &&
+            memcmp(entries.data[i].data, "home", 4) == 0;
     }
-    assert(saw_bin && saw_etc);
+    assert(saw_bin && saw_etc && saw_home);
     facet_rpc_release_value(FACET_TYPE_ARRAY, &FacetArray_string_TypeMeta,
                             &entries);
 
@@ -825,6 +829,14 @@ static void test_chrooted_posix_synthetic_etc(void)
     free(bytes.data);
     assert(root_posix->close_fd(root_posix->self, fd, &close_result,
                                  &error) == FACET_OK);
+    FacetString root_home = facet_string("/home/root");
+    assert(root_posix->change_directory(root_posix->self, &root_home, &error) ==
+               FACET_OK &&
+           error == 0);
+    assert(root_posix->get_cwd(root_posix->self, &cwd_path, &error) == FACET_OK &&
+           error == 0 && cwd_path.length == strlen("/home/root") &&
+           memcmp(cwd_path.data, "/home/root", cwd_path.length) == 0);
+    free((void *)(uintptr_t)cwd_path.data);
     libfacet_free_proxy_client(root_posix);
     dominit0_posix_view_destroy(root_view);
     dominit0_credential_file_store_destroy(root_store);

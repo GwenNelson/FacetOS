@@ -28,7 +28,8 @@ def main() -> None:
     child = entries(tool, child_image)
 
     for path in ("FacetOS", "Data", "home", "home/root", "home/user",
-                 "posix", "posix/bin", "README"):
+                 "posix", "posix/bin", "posix/home", "posix/home/root",
+                 "posix/home/user", "README"):
         require(system, path, system_image)
     for path in ("posix/bin/login", "posix/bin/sh", "posix/bin/ls", "posix/bin/cat"):
         require(system, path, system_image)
