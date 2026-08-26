@@ -384,7 +384,6 @@ static FacetResult posix_spawn_process(void *context, const FacetString *path,
 {
     RunningProcess *parent = context;
     if (pid == NULL || error == NULL || parent == NULL) return FACET_INVALID_ARGUMENT;
-    (void)session;
     *pid = -1; *error = 0;
     FacetHandle process_handle = {0};
     bool inherited_synthetic_cwd =
@@ -410,14 +409,17 @@ static FacetResult posix_spawn_process(void *context, const FacetString *path,
         return FACET_OK;
     }
     for (size_t i = 0; i < sysv_count; i++)
-        sysv[i] = (FacetString){.data = sysv_values[i],
-                                .length = strlen(sysv_values[i])};
+        sysv[i] = (FacetString){.data = sysv_values[i], .length = strlen(sysv_values[i])};
     FacetArray_string inherited_sysv = {.data = sysv, .count = sysv_count};
-    /* An attached session cap is scoped to the RPC dispatch.  A child keeps
-     * its parent's credential snapshot rather than a borrowed cap slot. */
+    /* A just-authenticated login supplies a live session for this dispatch:
+     * capture its identity while it is valid.  Ordinary descendants instead
+     * use their parent's durable credential snapshot. */
+    bool newly_authenticated = session.platform != NULL;
     FacetResult result = launch_process(parent->manager, path, arguments,
-        (FacetHandle){0}, false, parent->terminal_index, &inherited_sysv, cwd, true,
-        namespace_root == NULL ? NULL : &root, parent->environment,
+        session, false, parent->terminal_index,
+        newly_authenticated ? NULL : &inherited_sysv, cwd, true,
+        namespace_root == NULL ? NULL : &root,
+        newly_authenticated ? NULL : parent->environment,
         &process_handle);
     free(sysv);
     if (cwd.platform != NULL) (void)libfacet_handle_release(cwd);
