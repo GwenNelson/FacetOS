@@ -9,6 +9,8 @@
 #include <facetos/interfaces/IPrincipal.h>
 #include <facetos/interfaces/IProcessEnvironment.h>
 #include <facetos/interfaces/IProcessLifecycle.h>
+#include <facetos/interfaces/IProcess.h>
+#include <facetos/interfaces/IProcessManager.h>
 #include <facetos/interfaces/ISession.h>
 
 #include <stdint.h>
@@ -131,70 +133,6 @@ static void write_prompt(IDirectory *cwd, IByteWriter *output)
     (void)write_text(output, "> ");
 }
 
-static void command_ls(IDirectory *cwd, IByteWriter *output, const char *path)
-{
-    IDirectory *opened = NULL;
-    IDirectory *directory = cwd;
-    if (path != NULL) {
-        opened = open_directory(cwd, path);
-        if (opened == NULL) {
-            (void)write_text(output, "ls: directory not found\r\n");
-            return;
-        }
-        directory = opened;
-    }
-    uint64_t cursor = 0;
-    bool end = false;
-    while (directory != NULL && !end) {
-        FacetArray_Entry entries = {0};
-        uint64_t next = cursor;
-        if (directory->list(directory->self, cursor, 16, &entries,
-                            &next, &end) != FACET_OK)
-            break;
-        for (size_t i = 0; i < entries.count; i++) {
-            (void)write_string(output, entries.data[i].name);
-            if (entries.data[i].type == EntryType_Directory)
-                (void)write_text(output, "/");
-            (void)write_text(output, "\r\n");
-        }
-        facet_rpc_release_value(FACET_TYPE_ARRAY,
-                                &FacetArray_Entry_TypeMeta, &entries);
-        if (next == cursor && !end) break;
-        cursor = next;
-    }
-    libfacet_free_proxy_client(opened);
-}
-
-static void command_cat(IDirectory *cwd, IByteWriter *output, const char *path)
-{
-    FacetString file_name = {.data = path, .length = strlen(path)};
-    FacetHandle file_handle = {0};
-    if (cwd->open_file(cwd->self, &file_name, &file_handle) != FACET_OK) {
-        (void)write_text(output, "cat: file not found\r\n");
-        return;
-    }
-    IFile *file = libfacet_proxy_from_handle(&IFile_MetaData, file_handle);
-    uint64_t size = 0;
-    if (file == NULL || file->get_size(file->self, &size) != FACET_OK) {
-        libfacet_free_proxy_client(file);
-        return;
-    }
-    for (uint64_t offset = 0; offset < size;) {
-        FacetArray_u8 bytes = {0};
-        if (file->read_at(file->self, offset, 256, &bytes) != FACET_OK ||
-            bytes.count == 0) {
-            free(bytes.data);
-            break;
-        }
-        uint32_t written = 0;
-        (void)output->write_bytes(output->self, &bytes, &written);
-        offset += bytes.count;
-        free(bytes.data);
-    }
-    (void)write_text(output, "\r\n");
-    libfacet_free_proxy_client(file);
-}
-
 static void command_cd(IDirectory **cwd, IByteWriter *output, const char *path)
 {
     IDirectory *replacement = open_directory(*cwd, path);
@@ -206,10 +144,160 @@ static void command_cd(IDirectory **cwd, IByteWriter *output, const char *path)
     *cwd = replacement;
 }
 
+static int parse_command(char *line, char *arguments[], size_t capacity,
+                         size_t *count)
+{
+    char *source = line;
+    char *destination = line;
+    *count = 0;
+    while (*source != '\0') {
+        while (*source == ' ' || *source == '\t') source++;
+        if (*source == '\0') break;
+        if (*count == capacity) return -1;
+        arguments[(*count)++] = destination;
+        char quote = 0;
+        for (;;) {
+            char byte = *source;
+            if (byte == '\0') {
+                if (quote != 0) return -1;
+                break;
+            }
+            if (byte == '\\') {
+                source++;
+                if (*source == '\0') return -1;
+                *destination++ = *source++;
+                continue;
+            }
+            if (quote != 0) {
+                source++;
+                if (byte == quote) quote = 0;
+                else *destination++ = byte;
+                continue;
+            }
+            if (byte == '\'' || byte == '"') {
+                quote = byte;
+                source++;
+                continue;
+            }
+            if (byte == ' ' || byte == '\t') break;
+            *destination++ = byte;
+            source++;
+        }
+        while (*source == ' ' || *source == '\t') source++;
+        *destination++ = '\0';
+    }
+    return 0;
+}
+
+static bool file_exists(IDirectory *cwd, const char *path)
+{
+    FacetString name = {.data = path, .length = strlen(path)};
+    FacetHandle handle = {0};
+    if (cwd->open_file(cwd->self, &name, &handle) != FACET_OK)
+        return false;
+    (void)libfacet_handle_release(handle);
+    return true;
+}
+
+static const char *environment_value(const FacetArray_string *environment,
+                                     const char *name)
+{
+    size_t length = strlen(name);
+    for (size_t i = 0; environment != NULL && i < environment->count; i++) {
+        FacetString value = environment->data[i];
+        if (value.length > length && value.data != NULL &&
+            memcmp(value.data, name, length) == 0 && value.data[length] == '=')
+            return value.data + length + 1;
+    }
+    return NULL;
+}
+
+static char *resolve_program(IDirectory *cwd, const char *command,
+                             const char *path)
+{
+    if (strchr(command, '/') != NULL)
+        return file_exists(cwd, command) ? strdup(command) : NULL;
+    if (path == NULL || *path == '\0') path = "/FacetOS";
+    const char *cursor = path;
+    while (true) {
+        const char *end = strchr(cursor, ':');
+        size_t directory_length = end == NULL ? strlen(cursor) :
+            (size_t)(end - cursor);
+        const char *directory = directory_length == 0 ? "." : cursor;
+        if (directory_length == 0) directory_length = 1;
+        size_t needed = directory_length + 1 + strlen(command) + 1;
+        char *candidate = malloc(needed);
+        if (candidate == NULL) return NULL;
+        memcpy(candidate, directory, directory_length);
+        size_t used = directory_length;
+        if (used == 0 || candidate[used - 1] != '/') candidate[used++] = '/';
+        strcpy(&candidate[used], command);
+        if (file_exists(cwd, candidate)) return candidate;
+        free(candidate);
+        if (end == NULL) break;
+        cursor = end + 1;
+    }
+    return NULL;
+}
+
+static void execute_program(IProcessManager *processes,
+                            IProcessEnvironment *environment,
+                            IDirectory *cwd, IByteWriter *output,
+                            char *arguments[], size_t count,
+                            const char *path)
+{
+    char *program = resolve_program(cwd, arguments[0], path);
+    if (program == NULL) {
+        (void)write_text(output, "command not found\r\n");
+        return;
+    }
+    FacetHandle environment_handle = {0};
+    FacetHandle cwd_handle = {0};
+    FacetHandle process_handle = {0};
+    if (environment->getInterface(environment->self, IID_IProcessEnvironment,
+                                  &environment_handle) != FACET_OK ||
+        cwd->getInterface(cwd->self, IID_IDirectory, &cwd_handle) != FACET_OK) {
+        free(program);
+        (void)write_text(output, "unable to capture process context\r\n");
+        return;
+    }
+    FacetString executable = {.data = program, .length = strlen(program)};
+    FacetString values[32];
+    for (size_t i = 0; i < count; i++)
+        values[i] = (FacetString){.data = arguments[i],
+                                  .length = strlen(arguments[i])};
+    values[0] = executable;
+    FacetArray_string argv = {.data = values, .count = count};
+    FacetResult result = processes->launch(
+        processes->self, &executable, &argv, environment_handle, cwd_handle,
+        &process_handle);
+    (void)libfacet_handle_release(environment_handle);
+    (void)libfacet_handle_release(cwd_handle);
+    free(program);
+    if (result != FACET_OK) {
+        (void)write_text(output, "unable to start program\r\n");
+        return;
+    }
+    IProcess *process = libfacet_proxy_from_handle(&IProcess_MetaData,
+                                                    process_handle);
+    bool running = true;
+    while (process != NULL && running) {
+        if (process->getrunning(process->self, &running) != FACET_OK) break;
+        if (running) (void)platform_yield();
+    }
+    libfacet_free_proxy_client(process);
+}
+
 static void shell_loop(IByteReader *input, IByteWriter *output,
-                       IFileStore *files, ISession *session)
+                       IFileStore *files, ISession *session,
+                       IProcessEnvironment *environment,
+                       IProcessManager *processes)
 {
     char line[512];
+    FacetArray_string sysv_environment = {0};
+    (void)environment->get_sysv_environment(environment->self,
+                                            &sysv_environment);
+    const char *path = environment_value(&sysv_environment, "PATH");
     FacetString root_name = {.data = "/", .length = 1};
     FacetHandle root_handle = {0};
     if (files->open_directory(files->self, &root_name, &root_handle) != FACET_OK) {
@@ -223,31 +311,31 @@ static void shell_loop(IByteReader *input, IByteWriter *output,
     for (;;) {
         write_prompt(cwd, output);
         if (read_line(input, output, line, sizeof(line)) != FACET_OK) break;
-        char *argument = strchr(line, ' ');
-        if (argument != NULL) {
-            *argument++ = '\0';
-            while (*argument == ' ') argument++;
+        char *arguments[32];
+        size_t count = 0;
+        if (parse_command(line, arguments, 32, &count) != 0) {
+            (void)write_text(output, "syntax error: unmatched quote or escape\r\n");
+            continue;
         }
-        if (strcmp(line, "help") == 0)
+        if (count == 0) continue;
+        if (strcmp(arguments[0], "help") == 0)
             (void)write_text(output,
-                "help whoami pwd ls [path] cat <path> cd [path] exit\r\n");
-        else if (strcmp(line, "whoami") == 0)
+                "help whoami pwd cd [path] exit; other commands are external\r\n");
+        else if (strcmp(arguments[0], "whoami") == 0)
             command_whoami(session, output);
-        else if (strcmp(line, "pwd") == 0)
+        else if (strcmp(arguments[0], "pwd") == 0)
             command_pwd(cwd, output);
-        else if (strcmp(line, "ls") == 0)
-            command_ls(cwd, output,
-                       argument != NULL && *argument ? argument : NULL);
-        else if (strcmp(line, "cat") == 0 && argument != NULL && *argument)
-            command_cat(cwd, output, argument);
-        else if (strcmp(line, "cd") == 0)
+        else if (strcmp(arguments[0], "cd") == 0)
             command_cd(&cwd, output,
-                       argument != NULL && *argument ? argument : "/");
-        else if (strcmp(line, "exit") == 0)
+                       count > 1 ? arguments[1] : "/");
+        else if (strcmp(arguments[0], "exit") == 0)
             break;
-        else if (*line != '\0')
-            (void)write_text(output, "Unknown command\r\n");
+        else
+            execute_program(processes, environment, cwd, output,
+                            arguments, count, path);
     }
+    facet_rpc_release_value(FACET_TYPE_ARRAY, &FacetArray_string_TypeMeta,
+                            &sysv_environment);
     libfacet_free_proxy_client(cwd);
 }
 
@@ -263,7 +351,9 @@ int main(int argc, char **argv)
         libfacet_register_interface_metadata(&IFile_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IDirectory_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&ISession_MetaData) != FACET_OK ||
-        libfacet_register_interface_metadata(&IPrincipal_MetaData) != FACET_OK)
+        libfacet_register_interface_metadata(&IPrincipal_MetaData) != FACET_OK ||
+        libfacet_register_interface_metadata(&IProcessManager_MetaData) != FACET_OK ||
+        libfacet_register_interface_metadata(&IProcess_MetaData) != FACET_OK)
         return 1;
     IGenericObject *root = NULL;
     if (platform_init(&argc, &argv, &root) != FACET_OK) return 1;
@@ -290,6 +380,7 @@ int main(int argc, char **argv)
     IFileStore *files = NULL;
     ISession *session = NULL;
     IProcessLifecycle *lifecycle = NULL;
+    IProcessManager *processes = NULL;
     void **objects[] = {(void **)&allocator, (void **)&input, (void **)&output,
                         (void **)&files, (void **)&session,
                         (void **)&lifecycle};
@@ -302,8 +393,16 @@ int main(int argc, char **argv)
         *objects[i] = libfacet_proxy_from_handle(required[i].metadata, handle);
         if (*objects[i] == NULL) return 1;
     }
+    FacetString process_name = {.data = "processes", .length = 9};
+    FacetHandle process_manager_handle = {0};
+    if (environment->resolve(environment->self, &process_name,
+                             &process_manager_handle) != FACET_OK)
+        return 1;
+    processes = libfacet_proxy_from_handle(&IProcessManager_MetaData,
+                                            process_manager_handle);
+    if (processes == NULL) return 1;
     if (facet_app_allocator_use_pages(allocator) != 0) return 1;
-    shell_loop(input, output, files, session);
+    shell_loop(input, output, files, session, environment, processes);
     (void)lifecycle->notify_exit(lifecycle->self, 0);
     return 0;
 }

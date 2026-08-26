@@ -1,6 +1,7 @@
 #pragma once
 
 #include <facetos/dominit0/config.h>
+#include <facetos/interfaces/IProcessEnvironment.h>
 
 typedef struct Dominit0DomainEnvironment Dominit0DomainEnvironment;
 typedef struct Dominit0ProcessEnvironment Dominit0ProcessEnvironment;
@@ -31,15 +32,20 @@ FacetResult dominit0_environment_resolve_named(
 
 Dominit0ProcessEnvironment *dominit0_process_environment_create(
     Dominit0DomainEnvironment *parent, FacetHandle session,
-    bool bootstrap_authority, Dominit0ProcessProfile profile);
+    bool bootstrap_authority, Dominit0ProcessProfile profile,
+    const FacetArray_string *sysv_environment, FacetHandle cwd);
 int dominit0_process_environment_bind_named(
     Dominit0ProcessEnvironment *environment, const char *name,
     uuid_t primary_iid, FacetHandle object);
 int dominit0_process_environment_bind_page_allocator(
     Dominit0ProcessEnvironment *environment, FacetHandle allocator);
+int dominit0_process_environment_bind_lifecycle(
+    Dominit0ProcessEnvironment *environment, FacetHandle lifecycle);
 int dominit0_process_environment_bind_terminal(
     Dominit0ProcessEnvironment *environment, FacetHandle input,
     FacetHandle output, FacetHandle control, FacetHandle terminal);
+void dominit0_process_environment_set_terminal_index(
+    Dominit0ProcessEnvironment *environment, uint64_t terminal_index);
 FacetHandle dominit0_process_environment_root_handle(
     const Dominit0ProcessEnvironment *environment);
 int dominit0_process_environment_get_sysv(

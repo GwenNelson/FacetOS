@@ -3,10 +3,13 @@
 #include <facetos/interfaces/IGenericObject.h>
 #include <facetos/interfaces/IPageAllocator.h>
 #include <facetos/interfaces/IProcessEnvironment.h>
+#include <facetos/interfaces/IProcessLifecycle.h>
 #include <facetos/interfaces/IPOSIXView.h>
 #include <facetos/interfaces/ISession.h>
 #include <facetos/interfaces/IByteReader.h>
 #include <facetos/interfaces/IByteWriter.h>
+#include <facetos/interfaces/IDirectory.h>
+#include <facetos/interfaces/IFileStore.h>
 #include <facetos/interfaces/ITerminalControl.h>
 #include <facetos/dominit0/posix.h>
 #include <facetos/utf8.h>
@@ -32,9 +35,12 @@ struct Dominit0ProcessEnvironment {
     FacetHandle private_page_allocator;
     Dominit0ProcessProfile profile;
     Dominit0PosixView *posix_view;
-    FacetString sysv_environment[8];
-    char *owned_sysv_environment[8];
+    FacetString *sysv_environment;
+    char **owned_sysv_environment;
     size_t sysv_environment_count;
+    size_t sysv_environment_capacity;
+    FacetHandle owned_cwd;
+    uint64_t terminal_index;
 };
 
 static bool iid_equal(uuid_t left, uuid_t right)
@@ -175,12 +181,78 @@ static FacetResult get_sysv_environment(void *self, FacetArray_string *out)
     return FACET_OK;
 }
 
+static FacetResult get_cwd(void *self, FacetHandle *out)
+{
+    Dominit0ProcessEnvironment *environment = self;
+    if (out == NULL) return FACET_INVALID_ARGUMENT;
+    *out = (FacetHandle){0};
+    return environment->owned_cwd.platform == NULL ? FACET_INVALID_HANDLE :
+        libfacet_handle_clone(environment->owned_cwd, out);
+}
+
+static FacetResult get_standard_streams(void *self, FacetHandle *input,
+                                        FacetHandle *output,
+                                        FacetHandle *error)
+{
+    Dominit0ProcessEnvironment *environment = self;
+    if (input == NULL || output == NULL || error == NULL)
+        return FACET_INVALID_ARGUMENT;
+    *input = (FacetHandle){0};
+    *output = (FacetHandle){0};
+    *error = (FacetHandle){0};
+    FacetString stdin_name = {.data = "stdin", .length = 5};
+    FacetString stdout_name = {.data = "stdout", .length = 6};
+    FacetString stderr_name = {.data = "stderr", .length = 6};
+    ProcessBinding *stdin_binding = find_binding(environment, &stdin_name);
+    ProcessBinding *stdout_binding = find_binding(environment, &stdout_name);
+    ProcessBinding *stderr_binding = find_binding(environment, &stderr_name);
+    if (stdin_binding == NULL || stdout_binding == NULL ||
+        stderr_binding == NULL)
+        return FACET_INVALID_HANDLE;
+    if (libfacet_handle_clone(stdin_binding->handle, input) != FACET_OK ||
+        libfacet_handle_clone(stdout_binding->handle, output) != FACET_OK ||
+        libfacet_handle_clone(stderr_binding->handle, error) != FACET_OK) {
+        if (input->platform != NULL) (void)libfacet_handle_release(*input);
+        if (output->platform != NULL) (void)libfacet_handle_release(*output);
+        if (error->platform != NULL) (void)libfacet_handle_release(*error);
+        *input = (FacetHandle){0};
+        *output = (FacetHandle){0};
+        *error = (FacetHandle){0};
+        return FACET_OUT_OF_MEMORY;
+    }
+    return FACET_OK;
+}
+
+static FacetResult get_terminal_index(void *self, uint64_t *terminal_index)
+{
+    if (terminal_index == NULL) return FACET_INVALID_ARGUMENT;
+    *terminal_index = ((Dominit0ProcessEnvironment *)self)->terminal_index;
+    return FACET_OK;
+}
+
 static int add_sysv_environment(Dominit0ProcessEnvironment *environment,
                                 const char *value)
 {
     if (environment == NULL || value == NULL || strchr(value, '=') == NULL ||
-        environment->sysv_environment_count == 8)
+        environment->sysv_environment_count == 128)
         return -1;
+    if (environment->sysv_environment_count ==
+        environment->sysv_environment_capacity) {
+        size_t capacity = environment->sysv_environment_capacity == 0 ? 8 :
+            environment->sysv_environment_capacity * 2;
+        FacetString *strings = realloc(environment->sysv_environment,
+                                      capacity * sizeof(*strings));
+        if (strings == NULL) return -1;
+        char **owned = realloc(environment->owned_sysv_environment,
+                               capacity * sizeof(*owned));
+        if (owned == NULL) {
+            environment->sysv_environment = strings;
+            return -1;
+        }
+        environment->sysv_environment = strings;
+        environment->owned_sysv_environment = owned;
+        environment->sysv_environment_capacity = capacity;
+    }
     size_t index = environment->sysv_environment_count;
     char *copy = strdup(value);
     if (copy == NULL) return -1;
@@ -193,19 +265,41 @@ static int add_sysv_environment(Dominit0ProcessEnvironment *environment,
 
 Dominit0ProcessEnvironment *dominit0_process_environment_create(
     Dominit0DomainEnvironment *parent, FacetHandle session,
-    bool bootstrap_authority, Dominit0ProcessProfile profile)
+    bool bootstrap_authority, Dominit0ProcessProfile profile,
+    const FacetArray_string *sysv_environment, FacetHandle cwd)
 {
     if (parent == NULL) return NULL;
     Dominit0ProcessEnvironment *environment = calloc(1, sizeof(*environment));
     if (environment == NULL) return NULL;
     environment->profile = profile;
-    if (add_sysv_environment(environment, "PATH=/FacetOS") != 0 ||
-        add_sysv_environment(environment, "PWD=/") != 0 ||
-        add_sysv_environment(environment, "USER=root") != 0 ||
-        add_sysv_environment(environment, "HOME=/root") != 0 ||
-        add_sysv_environment(environment, "SHELL=/FacetOS/FacetShell") != 0)
+    if (sysv_environment != NULL) {
+        if (sysv_environment->count > 128 ||
+            (sysv_environment->count != 0 &&
+             sysv_environment->data == NULL))
+            goto fail;
+        for (size_t i = 0; i < sysv_environment->count; i++) {
+            const FacetString *value = &sysv_environment->data[i];
+            if (value->data == NULL || value->length == 0 ||
+                value->length > 4096 ||
+                !facet_utf8_is_valid(value->data, value->length))
+                goto fail;
+            char *temporary = malloc(value->length + 1);
+            if (temporary == NULL) goto fail;
+            memcpy(temporary, value->data, value->length);
+            temporary[value->length] = '\0';
+            int added = add_sysv_environment(environment, temporary);
+            free(temporary);
+            if (added != 0) goto fail;
+        }
+    } else if (add_sysv_environment(environment, "PATH=/FacetOS") != 0 ||
+               add_sysv_environment(environment, "PWD=/") != 0 ||
+               add_sysv_environment(environment, "USER=root") != 0 ||
+               add_sysv_environment(environment, "HOME=/root") != 0 ||
+               add_sysv_environment(environment,
+                                    "SHELL=/FacetOS/FacetShell") != 0) {
         goto fail;
-    static const char *delegated[] = {"logger", "files"};
+    }
+    static const char *delegated[] = {"logger", "files", "processes"};
     for (size_t i = 0; profile == DOMINIT0_PROCESS_NATIVE &&
          i < sizeof(delegated) / sizeof(delegated[0]); i++) {
         uuid_t iid;
@@ -216,7 +310,7 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
             goto fail;
     }
     static const char *bootstrap_delegated[] = {
-        "auth", "security", "processes",
+        "auth", "security",
     };
     if (bootstrap_authority && profile == DOMINIT0_PROCESS_NATIVE) {
         for (size_t i = 0;
@@ -237,6 +331,28 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
                  environment->owned_session) != 0)
             goto fail;
     }
+    if (cwd.platform != NULL) {
+        if (libfacet_handle_clone(cwd, &environment->owned_cwd) != FACET_OK)
+            goto fail;
+    } else {
+        FacetString files_name = {.data = "files", .length = 5};
+        ProcessBinding *files_binding = find_binding(environment, &files_name);
+        IFileStore *files = files_binding == NULL ? NULL :
+            libfacet_proxy_from_handle(&IFileStore_MetaData,
+                                       files_binding->handle);
+        FacetString root = {.data = "/", .length = 1};
+        if (files != NULL &&
+            files->open_directory(files->self, &root,
+                                  &environment->owned_cwd) != FACET_OK) {
+            libfacet_free_proxy_client(files);
+            goto fail;
+        }
+        libfacet_free_proxy_client(files);
+    }
+    if (environment->owned_cwd.platform != NULL &&
+        bind(environment, "cwd", IID_IDirectory,
+             environment->owned_cwd) != 0)
+        goto fail;
     environment->interface.self = environment;
     environment->interface.priv = environment;
     environment->interface.getInterface = get_interface;
@@ -246,6 +362,9 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
     environment->interface.get_advertised_iids = advertised_iids;
     environment->interface.list_bindings = list_bindings;
     environment->interface.get_sysv_environment = get_sysv_environment;
+    environment->interface.get_cwd = get_cwd;
+    environment->interface.get_standard_streams = get_standard_streams;
+    environment->interface.get_terminal_index = get_terminal_index;
     if (libfacet_export_interface(&environment->interface,
                                   &IProcessEnvironment_MetaData,
                                   &environment->handle) != FACET_OK)
@@ -272,9 +391,22 @@ int dominit0_process_environment_bind_page_allocator(
     if (environment != NULL &&
         environment->profile == DOMINIT0_PROCESS_PURE_POSIX) {
         environment->private_page_allocator = allocator;
-        return 0;
+        return dominit0_posix_view_bind_page_allocator(
+            environment->posix_view, allocator);
     }
     return bind(environment, "memory.pages", IID_IPageAllocator, allocator);
+}
+
+int dominit0_process_environment_bind_lifecycle(
+    Dominit0ProcessEnvironment *environment, FacetHandle lifecycle)
+{
+    if (environment == NULL || lifecycle.platform == NULL)
+        return -1;
+    if (environment->profile == DOMINIT0_PROCESS_PURE_POSIX)
+        return dominit0_posix_view_bind_lifecycle(environment->posix_view,
+                                                  lifecycle);
+    return bind(environment, "process.lifecycle", IID_IProcessLifecycle,
+                lifecycle);
 }
 
 int dominit0_process_environment_bind_terminal(
@@ -284,7 +416,11 @@ int dominit0_process_environment_bind_terminal(
     (void)terminal;
     if (environment == NULL) return -1;
     if (environment->profile == DOMINIT0_PROCESS_PURE_POSIX) {
-        environment->posix_view = dominit0_posix_view_create(output);
+        FacetString files_name = {.data = "files", .length = 5};
+        ProcessBinding *files = find_binding(environment, &files_name);
+        environment->posix_view = dominit0_posix_view_create(
+            input, output, files == NULL ? (FacetHandle){0} : files->handle,
+            environment->owned_cwd);
         if (environment->posix_view == NULL) return -1;
         return bind(environment, "posix", IID_IPOSIXView,
                     dominit0_posix_view_handle(environment->posix_view));
@@ -294,6 +430,12 @@ int dominit0_process_environment_bind_terminal(
            bind(environment, "stdin", IID_IByteReader, input) ||
            bind(environment, "stdout", IID_IByteWriter, output) ||
            bind(environment, "stderr", IID_IByteWriter, output);
+}
+
+void dominit0_process_environment_set_terminal_index(
+    Dominit0ProcessEnvironment *environment, uint64_t terminal_index)
+{
+    if (environment != NULL) environment->terminal_index = terminal_index;
 }
 
 FacetHandle dominit0_process_environment_root_handle(
@@ -320,10 +462,14 @@ void dominit0_process_environment_destroy(Dominit0ProcessEnvironment *environmen
         (void)libfacet_unexport_interface(environment->handle);
     if (environment->owned_session.platform != NULL)
         (void)libfacet_handle_release(environment->owned_session);
+    if (environment->owned_cwd.platform != NULL)
+        (void)libfacet_handle_release(environment->owned_cwd);
     dominit0_posix_view_destroy(environment->posix_view);
     for (size_t i = 0; i < environment->binding_count; i++)
         free(environment->bindings[i].name);
     for (size_t i = 0; i < environment->sysv_environment_count; i++)
         free(environment->owned_sysv_environment[i]);
+    free(environment->owned_sysv_environment);
+    free(environment->sysv_environment);
     free(environment);
 }

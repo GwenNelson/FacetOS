@@ -8,6 +8,9 @@
 #include <facetos/interfaces/IProcess.h>
 #include <facetos/interfaces/IProcessLifecycle.h>
 #include <facetos/interfaces/IProcessManager.h>
+#include <facetos/interfaces/IProcessEnvironment.h>
+#include <facetos/interfaces/IDirectory.h>
+#include <facetos/interfaces/IFile.h>
 #include <facetos/interfaces/ISession.h>
 
 #include <stdlib.h>
@@ -125,6 +128,8 @@ static FacetResult launch_process(ProcessManager *manager,
                                   FacetHandle session_handle,
                                   bool initial,
                                   uint64_t terminal_index,
+                                  const FacetArray_string *sysv_environment,
+                                  FacetHandle cwd_handle,
                                   FacetHandle *out)
 {
     if (out == NULL || arguments == NULL || arguments->count > 64 ||
@@ -134,6 +139,44 @@ static FacetResult launch_process(ProcessManager *manager,
 
     char *path_copy = copy_string(path);
     if (path_copy == NULL) return FACET_INVALID_ARGUMENT;
+    if (cwd_handle.platform != NULL) {
+        FacetHandle cwd_copy = {0};
+        if (libfacet_handle_clone(cwd_handle, &cwd_copy) != FACET_OK) {
+            free(path_copy);
+            return FACET_INVALID_HANDLE;
+        }
+        IDirectory *cwd = libfacet_proxy_from_handle(&IDirectory_MetaData,
+                                                      cwd_copy);
+        FacetHandle file_handle = {0};
+        FacetString requested = {.data = path_copy,
+                                 .length = strlen(path_copy)};
+        FacetResult opened = cwd == NULL ? FACET_INVALID_HANDLE :
+            cwd->open_file(cwd->self, &requested, &file_handle);
+        libfacet_free_proxy_client(cwd);
+        if (opened != FACET_OK) {
+            free(path_copy);
+            return opened;
+        }
+        IFile *file = libfacet_proxy_from_handle(&IFile_MetaData, file_handle);
+        FacetString canonical = {0};
+        opened = file == NULL ? FACET_INVALID_HANDLE :
+            file->getpath(file->self, &canonical);
+        libfacet_free_proxy_client(file);
+        if (opened != FACET_OK || canonical.data == NULL ||
+            canonical.length == 0) {
+            free((void *)(uintptr_t)canonical.data);
+            free(path_copy);
+            return opened == FACET_OK ? FACET_INVALID_ARGUMENT : opened;
+        }
+        char *resolved = copy_string(&canonical);
+        free((void *)(uintptr_t)canonical.data);
+        if (resolved == NULL) {
+            free(path_copy);
+            return FACET_OUT_OF_MEMORY;
+        }
+        free(path_copy);
+        path_copy = resolved;
+    }
     klog(LOG_DEBUG, "process manager: preparing %s%s\n", path_copy,
          initial ? " as initial process" : "");
     const uint8_t *elf_data;
@@ -181,7 +224,8 @@ static FacetResult launch_process(ProcessManager *manager,
         profile = DOMINIT0_PROCESS_PURE_POSIX;
     process->environment = dominit0_process_environment_create(
         manager->domain->environment,
-        initial ? (FacetHandle){0} : session_handle, initial, profile);
+        initial ? (FacetHandle){0} : session_handle, initial, profile,
+        sysv_environment, cwd_handle);
     if (process->environment == NULL) {
         free(process);
         result = FACET_OUT_OF_MEMORY;
@@ -216,10 +260,8 @@ static FacetResult launch_process(ProcessManager *manager,
     if (libfacet_export_interface(&process->lifecycle,
                                   &IProcessLifecycle_MetaData,
                                   &process->lifecycle_handle) != FACET_OK ||
-        (profile == DOMINIT0_PROCESS_NATIVE &&
-         dominit0_process_environment_bind_named(
-             process->environment, "process.lifecycle",
-             IID_IProcessLifecycle, process->lifecycle_handle) != 0)) {
+        dominit0_process_environment_bind_lifecycle(
+            process->environment, process->lifecycle_handle) != 0) {
         if (process->lifecycle_handle.platform != NULL)
             (void)libfacet_unexport_interface(process->lifecycle_handle);
         (void)libfacet_unexport_interface(process->handle);
@@ -256,20 +298,51 @@ done:
 
 static FacetResult manager_launch(void *self, const FacetString *path,
                                   const FacetArray_string *arguments,
-                                  FacetHandle session_handle,
+                                  FacetHandle environment_handle,
                                   FacetHandle cwd_handle,
                                   FacetHandle *out)
 {
-    (void)cwd_handle;
     ProcessManager *manager = self;
     FacetHandle owned = {0};
-    if (libfacet_handle_clone(session_handle, &owned) != FACET_OK)
+    if (cwd_handle.platform == NULL ||
+        libfacet_handle_clone(environment_handle, &owned) != FACET_OK)
         return FACET_ACCESS_DENIED;
-    ISession *session = libfacet_proxy_from_handle(&ISession_MetaData, owned);
+    IProcessEnvironment *caller = libfacet_proxy_from_handle(
+        &IProcessEnvironment_MetaData, owned);
+    FacetString session_name = {.data = "session", .length = 7};
+    FacetHandle session_handle = {0};
+    FacetArray_string sysv_environment = {0};
+    uint64_t terminal_index = 0;
+    FacetResult result = caller == NULL ? FACET_ACCESS_DENIED :
+        caller->resolve(caller->self, &session_name, &session_handle);
+    if (result == FACET_OK)
+        result = caller->get_sysv_environment(caller->self,
+                                              &sysv_environment);
+    if (result == FACET_OK)
+        result = caller->get_terminal_index(caller->self, &terminal_index);
+    libfacet_free_proxy_client(caller);
+    if (result != FACET_OK) {
+        facet_rpc_release_value(FACET_TYPE_ARRAY,
+                                &FacetArray_string_TypeMeta,
+                                &sysv_environment);
+        if (session_handle.platform != NULL)
+            (void)libfacet_handle_release(session_handle);
+        return FACET_ACCESS_DENIED;
+    }
+    FacetHandle session_copy = {0};
+    if (libfacet_handle_clone(session_handle, &session_copy) != FACET_OK) {
+        facet_rpc_release_value(FACET_TYPE_ARRAY,
+                                &FacetArray_string_TypeMeta,
+                                &sysv_environment);
+        (void)libfacet_handle_release(session_handle);
+        return FACET_ACCESS_DENIED;
+    }
+    ISession *session = libfacet_proxy_from_handle(&ISession_MetaData,
+                                                    session_copy);
     FacetHandle principal = {0};
     uint64_t session_domain_id = UINT64_MAX;
     uint64_t manager_domain_id = UINT64_MAX;
-    FacetResult result = session == NULL ? FACET_ACCESS_DENIED :
+    result = session == NULL ? FACET_ACCESS_DENIED :
         session->get_principal(session->self, &principal);
     if (result == FACET_OK)
         result = session->get_domain_id(session->self, &session_domain_id);
@@ -278,9 +351,20 @@ static FacetResult manager_launch(void *self, const FacetString *path,
             manager->domain->config->self, &manager_domain_id);
     libfacet_free_proxy_client(session);
     if (principal.platform != NULL) (void)libfacet_handle_release(principal);
-    if (result != FACET_OK || session_domain_id != manager_domain_id)
+    if (result != FACET_OK || session_domain_id != manager_domain_id) {
+        facet_rpc_release_value(FACET_TYPE_ARRAY,
+                                &FacetArray_string_TypeMeta,
+                                &sysv_environment);
+        (void)libfacet_handle_release(session_handle);
         return FACET_ACCESS_DENIED;
-    return launch_process(self, path, arguments, session_handle, false, 0, out);
+    }
+    result = launch_process(self, path, arguments, session_handle, false,
+                            terminal_index, &sysv_environment, cwd_handle, out);
+    facet_rpc_release_value(FACET_TYPE_ARRAY,
+                            &FacetArray_string_TypeMeta,
+                            &sysv_environment);
+    (void)libfacet_handle_release(session_handle);
+    return result;
 }
 
 static FacetResult manager_launch_initial(void *self, const FacetString *path,
@@ -289,7 +373,7 @@ static FacetResult manager_launch_initial(void *self, const FacetString *path,
                                           FacetHandle *out)
 {
     return launch_process(self, path, arguments, (FacetHandle){0}, true,
-                          terminal_index, out);
+                          terminal_index, NULL, (FacetHandle){0}, out);
 }
 
 static FacetResult manager_launch_on_terminal(
@@ -312,7 +396,7 @@ static FacetResult manager_launch_on_terminal(
     if (result != FACET_OK || session_domain_id != manager_domain_id)
         return FACET_ACCESS_DENIED;
     return launch_process(manager, path, arguments, session_handle, false,
-                          terminal_index, out);
+                          terminal_index, NULL, (FacetHandle){0}, out);
 }
 
 int dominit0_process_manager_initialize(CurrentDomain *domain)

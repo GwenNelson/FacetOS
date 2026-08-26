@@ -31,6 +31,8 @@ FACET_DOMINIT  := $(SDK_BUILD)/dominit
 FACET_SHELL    := $(SDK_BUILD)/FacetShell
 FACET_LOGIN    := $(SDK_BUILD)/FacetLogin
 FACET_DUMMY    := $(SDK_BUILD)/FacetDummy
+FACET_LS       := $(SDK_BUILD)/ls
+FACET_CAT      := $(SDK_BUILD)/cat
 FACET_DUMMYSH  := $(SDK_BUILD)/dummysh
 FACET_POSIX_LOGIN := $(SDK_BUILD)/facet-posix/PosixLogin
 FACET_SEAT_SERIAL := $(SDK_BUILD)/seat-server-serial
@@ -580,6 +582,9 @@ $(FACET_LOGIN): facet-idlc libfacet-common configure
 $(FACET_DUMMY) $(FACET_DUMMYSH): facet-idlc libfacet-common configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) FacetDummy dummysh
 
+$(FACET_LS) $(FACET_CAT): facet-idlc libfacet-common configure
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) ls cat
+
 
 dominit0: klibc facet-idlc libfacet-common facet-config configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) dominit0 dominit
@@ -597,7 +602,7 @@ libfacet: facet-idlc libfacet-common libfacet-platform-sel4
 
 # Build everything needed to boot FacetOS.
 build: klibc facet-config configure libfacet $(INITRD_DOMINIT0) $(INITRD_SYSTEM) $(INITRD_CHILD)
-	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf dominit0 dominit FacetLogin FacetShell FacetDummy dummysh seat-server-serial seat-server-pc-console
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf dominit0 dominit FacetLogin FacetShell FacetDummy dummysh ls cat seat-server-serial seat-server-pc-console
 
 $(FACET_SEAT_SERIAL) $(FACET_SEAT_PC): facet-idlc libfacet-common configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) seat-server-serial seat-server-pc-console
@@ -609,13 +614,15 @@ $(INITRD_DOMINIT0): $(FACET_SEAT_SERIAL) $(FACET_SEAT_PC)
 	cp $(FACET_SEAT_PC) $(ROOT)/build/initrd/dominit0-root/FacetOS/seat-server-pc-console
 	cd $(ROOT)/build/initrd/dominit0-root && find . -print | sort | cpio --quiet -o -H newc > $@
 
-$(INITRD_SYSTEM): $(ROOT)/initrd/system/README $(FACET_LOGIN) $(FACET_SHELL) $(FACET_DUMMY)
+$(INITRD_SYSTEM): $(ROOT)/initrd/system/README $(FACET_LOGIN) $(FACET_SHELL) $(FACET_DUMMY) $(FACET_LS) $(FACET_CAT)
 	mkdir -p $(dir $@)
 	mkdir -p $(ROOT)/build/initrd/system-root/FacetOS
 	cp $(ROOT)/initrd/system/README $(ROOT)/build/initrd/system-root/README
 	cp $(FACET_LOGIN) $(ROOT)/build/initrd/system-root/FacetOS/FacetLogin
 	cp $(FACET_SHELL) $(ROOT)/build/initrd/system-root/FacetOS/FacetShell
 	cp $(FACET_DUMMY) $(ROOT)/build/initrd/system-root/FacetOS/FacetDummy
+	cp $(FACET_LS) $(ROOT)/build/initrd/system-root/FacetOS/ls
+	cp $(FACET_CAT) $(ROOT)/build/initrd/system-root/FacetOS/cat
 	cd $(ROOT)/build/initrd/system-root && find . -print | sort | cpio --quiet -o -H newc > $@
 
 $(FACET_POSIX_LOGIN): facet-idlc libfacet-common configure

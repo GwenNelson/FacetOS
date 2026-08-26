@@ -166,9 +166,13 @@ int dominit0_terminal_bind_process_environment(
         if (binding->domain != domain ||
             binding->assignment_index != assignment_index)
             continue;
-        return dominit0_process_environment_bind_terminal(
+        int result = dominit0_process_environment_bind_terminal(
             environment, binding->input, binding->output, binding->control,
             binding->terminal);
+        if (result == 0)
+            dominit0_process_environment_set_terminal_index(
+                environment, assignment_index);
+        return result;
     }
     return -1;
 }
