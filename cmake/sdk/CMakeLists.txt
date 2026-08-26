@@ -314,6 +314,8 @@ add_library(facet-platform-sel4-service STATIC
 facetos_configure_target(facet-platform-sel4-service)
 target_link_libraries(facet-platform-sel4-service PRIVATE
     facet_common sel4runtime sel4)
+target_link_libraries(facet-platform-sel4-service PUBLIC
+    facet-platform-sel4-client)
 target_include_directories(facet-platform-sel4-service SYSTEM PRIVATE
     "${CMAKE_BINARY_DIR}/musllibc/build-temp/stage/include"
 )
@@ -354,7 +356,7 @@ target_include_directories(facet-app-platform-sel4 SYSTEM PRIVATE
 add_dependencies(facet-app-platform-sel4 facet-idl-environment-generated)
 target_link_libraries(facet-app-platform-sel4
     PUBLIC facet_common sel4runtime sel4
-    PRIVATE facet-platform-sel4-client)
+    PRIVATE facet-platform-sel4-client facet-platform-sel4-service)
 add_custom_target(facet-platform-sel4
     DEPENDS facet-dominit0-platform-sel4 facet-app-platform-sel4)
 
@@ -438,6 +440,7 @@ add_dependencies(dominit facet-idl-shell-contracts-generated)
 target_link_libraries(dominit PRIVATE
     facet_common
     facet-platform-sel4-client
+    facet-platform-sel4-service
     sel4runtime
     sel4
     muslc

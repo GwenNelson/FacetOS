@@ -7,12 +7,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define SERVICE_EXPORT_MAX 32u
+#define SERVICE_EXPORT_MAX 64u
 
 typedef struct ServiceHandle {
-    seL4_CPtr cap;
-    uint32_t object_id;
+    /* Keep the prefix identical to client.c's ClientHandle.  A process that
+     * both consumes and exports Facet objects must be able to forward either
+     * kind of handle as an IPC attachment. */
+    seL4_CPtr endpoint;
     int owns_cap;
+    uint32_t object_id;
 } ServiceHandle;
 
 typedef struct ServiceExport {
@@ -45,7 +48,7 @@ FacetResult facet_sel4_service_handle_cap(FacetHandle handle,
 {
     ServiceHandle *native = as_handle(handle);
     if (native == NULL || out_cap == NULL) return FACET_INVALID_HANDLE;
-    *out_cap = native->cap;
+    *out_cap = native->endpoint;
     return FACET_OK;
 }
 
@@ -94,9 +97,9 @@ FacetResult libfacet_platform_export(void *context,
         .handle_cap = destination,
     };
     *handle = (ServiceHandle){
-        .cap = destination,
-        .object_id = object_id,
+        .endpoint = destination,
         .owns_cap = 0,
+        .object_id = object_id,
     };
     out_handle->platform = handle;
     return FACET_OK;
@@ -115,67 +118,6 @@ FacetResult libfacet_platform_unexport(FacetHandle handle)
         entry->handle_cap = seL4_CapNull;
     }
     return FACET_OK;
-}
-
-FacetResult libfacet_platform_handle_from(uint64_t value, FacetHandle *out)
-{
-    if (!service_ready || value == 0 || value > UINT32_MAX || out == NULL)
-        return FACET_INVALID_ARGUMENT;
-    ServiceHandle *handle = calloc(1, sizeof(*handle));
-    if (handle == NULL) return FACET_OUT_OF_MEMORY;
-    handle->cap = (seL4_CPtr)value;
-    out->platform = handle;
-    return FACET_OK;
-}
-
-FacetResult libfacet_platform_handle_clone(FacetHandle source,
-                                           FacetHandle *destination)
-{
-    ServiceHandle *native = as_handle(source);
-    if (native == NULL || destination == NULL) return FACET_INVALID_HANDLE;
-    seL4_CPtr slot = service_next_export_slot++;
-    seL4_Error error = seL4_CNode_Copy(
-        service_cnode, slot, service_depth,
-        service_cnode, native->cap, service_depth, seL4_AllRights);
-    if (error != seL4_NoError) return FACET_ERROR;
-    ServiceHandle *copy = calloc(1, sizeof(*copy));
-    if (copy == NULL) {
-        (void)seL4_CNode_Delete(service_cnode, slot, service_depth);
-        return FACET_OUT_OF_MEMORY;
-    }
-    *copy = *native;
-    copy->cap = slot;
-    copy->owns_cap = 1;
-    destination->platform = copy;
-    return FACET_OK;
-}
-
-FacetResult libfacet_platform_handle_release(FacetHandle handle)
-{
-    ServiceHandle *native = as_handle(handle);
-    if (native == NULL) return FACET_INVALID_HANDLE;
-    if (native->owns_cap)
-        (void)seL4_CNode_Delete(service_cnode, native->cap, service_depth);
-    free(native);
-    return FACET_OK;
-}
-
-FacetResult libfacet_platform_method_handle(FacetHandle object,
-                                             uint32_t method_id,
-                                             FacetHandle *out_handle)
-{
-    (void)method_id;
-    return libfacet_platform_handle_clone(object, out_handle);
-}
-
-FacetResult libfacet_platform_call(FacetHandle target,
-                                   const FacetRpcMessage *request,
-                                   FacetRpcMessage *reply)
-{
-    (void)target;
-    (void)request;
-    (void)reply;
-    return FACET_NOT_SUPPORTED;
 }
 
 static FacetResult decode_request(seL4_MessageInfo_t info,
@@ -214,7 +156,7 @@ static FacetResult decode_request(seL4_MessageInfo_t info,
     if (extra == 1) {
         ServiceHandle *handle = calloc(1, sizeof(*handle));
         if (handle == NULL) return FACET_OUT_OF_MEMORY;
-        handle->cap = service_receive_slot;
+        handle->endpoint = service_receive_slot;
         request->attachments[0].kind = FACET_RPC_ATTACHMENT_HANDLE;
         request->attachments[0].handle.platform = handle;
         request->attachment_count = 1;
@@ -256,7 +198,7 @@ static seL4_MessageInfo_t encode_reply(FacetRpcMessage *reply,
     }
     if (reply->attachment_count == 1) {
         ServiceHandle *handle = as_handle(reply->attachments[0].handle);
-        seL4_SetCap(0, handle == NULL ? seL4_CapNull : handle->cap);
+        seL4_SetCap(0, handle == NULL ? seL4_CapNull : handle->endpoint);
     }
     return seL4_MessageInfo_new(0, 0, reply->attachment_count,
                                 3 + reply->word_count + payload_words);

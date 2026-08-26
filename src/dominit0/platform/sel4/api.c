@@ -45,6 +45,8 @@ extern seL4_BootInfo* platform_sel4_bi;
  * The bootstrap allocman itself does not require the former 80 MiB pool. */
 #define ALLOCMAN_BOOTSTRAP_POOL_SIZE (60 * 1024 * 1024)
 #define SEAT_EXPORT_SLOT_COUNT 40u
+#define DOMAIN_CLIENT_RECEIVE_SLOT_COUNT 64u
+#define DOMAIN_SERVICE_EXPORT_SLOT_COUNT 64u
 #define SEAT_VGA_ADDRESS UINT64_C(0x7000000000)
 
 static simple_t sel4_simple;
@@ -77,6 +79,7 @@ typedef struct Sel4ChildPageAllocator {
 typedef struct Sel4DomainState {
     sel4utils_process_t process;
     Sel4ChildPageAllocator page_allocator;
+    vka_object_t service_endpoint;
     Dominit0DomainEnvironment *environment;
 } Sel4DomainState;
 
@@ -279,8 +282,14 @@ child_page_allocator_prepare(sel4utils_process_t *process, void *context,
 static void
 child_page_allocator_cleanup(void *context)
 {
-    if (context != NULL)
-        child_page_allocator_destroy(&((Sel4DomainState *)context)->page_allocator);
+    if (context != NULL) {
+        Sel4DomainState *state = context;
+        if (state->service_endpoint.cptr != seL4_CapNull) {
+            vka_free_object(&sel4_vka, &state->service_endpoint);
+            state->service_endpoint.cptr = seL4_CapNull;
+        }
+        child_page_allocator_destroy(&state->page_allocator);
+    }
 }
 
 static int
@@ -751,6 +760,7 @@ load_and_start_domain(sel4utils_process_t *process,
                       DomainPreSpawnHook pre_spawn,
                       DomainFailureCleanup failure_cleanup,
                       void *hook_context,
+                      vka_object_t *service_endpoint,
                       seL4_CPtr fault_endpoint)
 {
     if (process == NULL || elf_buffer == NULL || elf_size == 0 ||
@@ -841,8 +851,13 @@ load_and_start_domain(sel4utils_process_t *process,
         goto fail;
     }
 
+    /* client.c advances its receive slot after every returned capability.
+     * Reserve the complete client range before copying the optional local
+     * service endpoint, otherwise that copy occupies the first receive slot
+     * and the bootstrap's first getInterface call destroys it. */
     seL4_CPtr child_receive_slot = process->cspace_next_free;
-    FacetAuxvEntry facet_auxv[21] = {
+    process->cspace_next_free += DOMAIN_CLIENT_RECEIVE_SLOT_COUNT;
+    FacetAuxvEntry facet_auxv[24] = {
         {AT_FACET_ABI_VERSION, FACETOS_STARTUP_ABI_VERSION},
         {AT_FACET_ROOT_OBJECT, (uintptr_t)child_bootstrap_endpoint},
         {AT_FACET_RECEIVE_CNODE, SEL4UTILS_CNODE_SLOT},
@@ -850,6 +865,29 @@ load_and_start_domain(sel4utils_process_t *process,
         {AT_FACET_RECEIVE_DEPTH, seL4_WordBits},
     };
     size_t facet_auxc = 5;
+    if (service_endpoint != NULL) {
+        if (vka_alloc_endpoint(&sel4_vka, service_endpoint) != 0) {
+            klog(LOG_ERROR, "load_and_start_domain(): service endpoint allocation failed\n");
+            goto fail;
+        }
+        seL4_CPtr child_service_receive = process->cspace_next_free++;
+        seL4_CPtr child_service = sel4utils_copy_cap_to_process(
+            process, &sel4_vka, service_endpoint->cptr);
+        if (child_service == seL4_CapNull) {
+            klog(LOG_ERROR, "load_and_start_domain(): service endpoint copy failed\n");
+            vka_free_object(&sel4_vka, service_endpoint);
+            service_endpoint->cptr = seL4_CapNull;
+            goto fail;
+        }
+        seL4_CPtr child_service_export = process->cspace_next_free;
+        process->cspace_next_free += DOMAIN_SERVICE_EXPORT_SLOT_COUNT;
+        facet_auxv[facet_auxc++] = (FacetAuxvEntry){
+            AT_FACET_SERVICE_ENDPOINT, child_service};
+        facet_auxv[facet_auxc++] = (FacetAuxvEntry){
+            AT_FACET_SERVICE_RECEIVE_SLOT, child_service_receive};
+        facet_auxv[facet_auxc++] = (FacetAuxvEntry){
+            AT_FACET_SERVICE_EXPORT_SLOT, child_service_export};
+    }
     if (extra_auxc > sizeof(extra_auxv) / sizeof(extra_auxv[0]) ||
         facet_auxc + extra_auxc > sizeof(facet_auxv) / sizeof(facet_auxv[0]))
         goto fail;
@@ -866,6 +904,10 @@ load_and_start_domain(sel4utils_process_t *process,
     return 0;
 
 fail:
+    if (service_endpoint != NULL && service_endpoint->cptr != seL4_CapNull) {
+        vka_free_object(&sel4_vka, service_endpoint);
+        service_endpoint->cptr = seL4_CapNull;
+    }
     if (failure_cleanup != NULL)
         failure_cleanup(hook_context);
     sel4utils_destroy_process(process, &sel4_vka);
@@ -1102,7 +1144,8 @@ void *platform_start_domain(CurrentDomain *current)
                                0, NULL,
                                child_page_allocator_prepare,
                                child_page_allocator_cleanup,
-                               state, seL4_CapNull) != 0) {
+                               state, &state->service_endpoint,
+                               seL4_CapNull) != 0) {
          klog(LOG_ERROR,
               "platform_start_domain(): unable to start dominit for domain %llu (%s)\n",
               (unsigned long long)domain_id, domain_name.data);
@@ -1147,6 +1190,7 @@ void *platform_start_seat(CurrentSeat *seat, const void *elf_data,
     if (load_and_start_domain(&state->process, elf_data, elf_size,
                               seL4_MaxPrio, 1, seat_argv, 0, NULL,
                               seat_prepare, seat_cleanup, state,
+                              NULL,
                               state->fault_endpoint_path.capPtr) != 0) {
         seat_cleanup(state);
         free(state);
@@ -1207,6 +1251,7 @@ void *platform_start_process(CurrentDomain *domain, const void *elf_data,
                               seL4_MaxPrio, argc, argv, envc, envp,
                               program_page_allocator_prepare,
                               program_page_allocator_cleanup, state,
+                              NULL,
                               seL4_CapNull) != 0) {
         free(state);
         return NULL;

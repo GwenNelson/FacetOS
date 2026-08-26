@@ -266,7 +266,9 @@ FacetResult libfacet_platform_call(
     return FACET_OK;
 }
 
-FacetResult libfacet_platform_export(
+/* A service-capable process links service.c as well; its strong definitions
+ * replace these client-only fallbacks without requiring a second handle ABI. */
+__attribute__((weak)) FacetResult libfacet_platform_export(
     void *context,
     FacetPlatformDispatch dispatch,
     FacetHandle *out_handle)
@@ -277,7 +279,7 @@ FacetResult libfacet_platform_export(
     return FACET_NOT_SUPPORTED;
 }
 
-FacetResult libfacet_platform_unexport(FacetHandle handle)
+__attribute__((weak)) FacetResult libfacet_platform_unexport(FacetHandle handle)
 {
     (void)handle;
     return FACET_NOT_SUPPORTED;

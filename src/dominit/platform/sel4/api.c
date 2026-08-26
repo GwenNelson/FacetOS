@@ -3,6 +3,7 @@
 #include <facetos/libc/native.h>
 #include <facetos/interfaces/IProcessEnvironment.h>
 #include <facetos/libfacet/platform/sel4/client.h>
+#include <facetos/libfacet/platform/sel4/service.h>
 
 #include <sel4runtime.h>
 
@@ -10,6 +11,7 @@
 
 static IGenericObject *native_root;
 static IProcessEnvironment *native_environment;
+static int native_service_ready;
 
 static int
 lookup_auxv(uintptr_t type, uintptr_t *value)
@@ -40,6 +42,9 @@ platform_init(int *argc, char ***argv, IGenericObject **out_root)
     uintptr_t receive_cnode = 0;
     uintptr_t receive_slot = 0;
     uintptr_t receive_depth = 0;
+    uintptr_t service_endpoint = 0;
+    uintptr_t service_receive_slot = 0;
+    uintptr_t service_export_slot = 0;
     if (lookup_auxv(AT_FACET_ABI_VERSION, &abi_version) != 0 ||
         abi_version != FACETOS_STARTUP_ABI_VERSION ||
         lookup_auxv(AT_FACET_ROOT_OBJECT, &endpoint) != 0 || endpoint == 0 ||
@@ -55,11 +60,37 @@ platform_init(int *argc, char ***argv, IGenericObject **out_root)
     FacetResult result = facet_sel4_client_init(
         receive_cnode, receive_slot, receive_depth);
     if (result != FACET_OK)
+    {
         return result;
+    }
+
+    /* The service endpoint is optional: ordinary applications remain
+     * client-only, while dominit receives one from dominit0 and can export
+     * domain-local bootstrap services. */
+    int have_service_endpoint =
+        lookup_auxv(AT_FACET_SERVICE_ENDPOINT, &service_endpoint) == 0;
+    int have_service_receive =
+        lookup_auxv(AT_FACET_SERVICE_RECEIVE_SLOT, &service_receive_slot) == 0;
+    int have_service_export =
+        lookup_auxv(AT_FACET_SERVICE_EXPORT_SLOT, &service_export_slot) == 0;
+    if (have_service_endpoint || have_service_receive || have_service_export) {
+        if (service_endpoint == 0 || service_receive_slot == 0 ||
+            service_export_slot == 0) {
+            return FACET_INVALID_ARGUMENT;
+        }
+        result = facet_sel4_service_init(service_endpoint, receive_cnode,
+                                         service_receive_slot,
+                                         service_export_slot, receive_depth);
+        if (result != FACET_OK) {
+            return result;
+        }
+        native_service_ready = 1;
+    }
 
     IGenericObject *root = libfacet_proxy_from(endpoint);
-    if (root == NULL)
+    if (root == NULL) {
         return FACET_ERROR;
+    }
 
     *out_root = root;
     native_root = root;
@@ -83,4 +114,12 @@ FacetResult
 platform_yield(void)
 {
     return facet_sel4_client_yield();
+}
+
+FacetResult
+platform_run_services(void)
+{
+    if (!native_service_ready)
+        return FACET_NOT_SUPPORTED;
+    return facet_sel4_service_run();
 }

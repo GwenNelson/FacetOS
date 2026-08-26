@@ -19,6 +19,11 @@
 #define AT_FACET_RECEIVE_CNODE  (AT_LOOS + 0x002UL)
 #define AT_FACET_RECEIVE_SLOT   (AT_LOOS + 0x003UL)
 #define AT_FACET_RECEIVE_DEPTH  (AT_LOOS + 0x004UL)
+/* Optional local service endpoint.  Domain bootstrap processes use this to
+ * export their domain-owned authority while retaining the common client ABI. */
+#define AT_FACET_SERVICE_ENDPOINT     (AT_LOOS + 0x005UL)
+#define AT_FACET_SERVICE_RECEIVE_SLOT (AT_LOOS + 0x006UL)
+#define AT_FACET_SERVICE_EXPORT_SLOT  (AT_LOOS + 0x007UL)
 
 /* Domain-bootstrap range reserved for future domain-only startup data. */
 #define AT_FACET_DOMAIN_BASE    (AT_LOOS + 0x100UL)

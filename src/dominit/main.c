@@ -203,6 +203,7 @@ int main(int argc, char **argv)
     }
 
     libfacet_free_proxy_client(processes);
-    /* allocator.c retains allocator for all later liballoc page requests. */
-    for (;;) (void)platform_yield();
+    /* allocator.c retains allocator for all later liballoc page requests.
+     * Dominit now services its domain-owned bootstrap interfaces. */
+    return platform_run_services() == FACET_OK ? 0 : 1;
 }
