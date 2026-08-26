@@ -8,6 +8,7 @@
 #include <facetos/interfaces/IProcess.h>
 #include <facetos/interfaces/IProcessEnvironment.h>
 #include <facetos/interfaces/IProcessManager.h>
+#include <facetos/interfaces/IDomainPosixPolicy.h>
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -105,6 +106,62 @@ static FacetResult configured_pid1(IDomainEnvironment *environment,
         FACET_OK : FACET_NOT_FOUND;
 }
 
+typedef struct DomainPosixPolicy {
+    IDomainPosixPolicy interface;
+    FacetHandle handle;
+    const char *backing_root;
+    bool synthetic_etc;
+} DomainPosixPolicy;
+
+static FacetResult policy_get_interface(void *self, uuid_t iid, FacetHandle *out)
+{
+    DomainPosixPolicy *policy = self;
+    if (out == NULL) return FACET_INVALID_ARGUMENT;
+    *out = (FacetHandle){0};
+    if (memcmp(iid.bytes, IID_IGenericObject.bytes, sizeof(iid.bytes)) != 0 &&
+        memcmp(iid.bytes, IID_IDomainPosixPolicy.bytes, sizeof(iid.bytes)) != 0)
+        return FACET_NO_INTERFACE;
+    *out = policy->handle;
+    return FACET_OK;
+}
+
+static FacetResult policy_get_backing_root(void *self, FacetString *out)
+{
+    DomainPosixPolicy *policy = self;
+    if (out == NULL) return FACET_INVALID_ARGUMENT;
+    out->data = policy->backing_root;
+    out->length = strlen(policy->backing_root);
+    return FACET_OK;
+}
+
+static FacetResult policy_get_synthetic_etc(void *self, bool *out)
+{
+    if (out == NULL) return FACET_INVALID_ARGUMENT;
+    *out = ((DomainPosixPolicy *)self)->synthetic_etc;
+    return FACET_OK;
+}
+
+static FacetResult publish_posix_policy(IDomainEnvironment *environment,
+                                        Personality personality)
+{
+    static DomainPosixPolicy policy;
+    policy.backing_root = personality == Personality_Native ? "/posix" : "/";
+    policy.synthetic_etc = personality == Personality_Native;
+    policy.interface.self = &policy;
+    policy.interface.priv = &policy;
+    policy.interface.getInterface = policy_get_interface;
+    policy.interface.getbacking_root = policy_get_backing_root;
+    policy.interface.getsynthetic_etc = policy_get_synthetic_etc;
+    if (libfacet_export_interface(&policy.interface, &IDomainPosixPolicy_MetaData,
+                                  &policy.handle) != FACET_OK)
+        return FACET_OUT_OF_MEMORY;
+    FacetString name = {.data = "posix.policy", .length = 12};
+    FacetResult result = environment->publish_service(environment->self, &name,
+        IID_IDomainPosixPolicy, policy.handle);
+    if (result != FACET_OK) (void)libfacet_unexport_interface(policy.handle);
+    return result;
+}
+
 int main(int argc, char **argv)
 {
     if (libfacet_register_generic_metadata(&IGenericObject_MetaData) != FACET_OK ||
@@ -115,6 +172,7 @@ int main(int argc, char **argv)
         libfacet_register_interface_metadata(&IDomainConfig_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IDomainConsoleConfig_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IProcessManager_MetaData) != FACET_OK ||
+        libfacet_register_interface_metadata(&IDomainPosixPolicy_MetaData) != FACET_OK ||
         libfacet_register_interface_metadata(&IProcess_MetaData) != FACET_OK)
         return 1;
 
@@ -146,6 +204,8 @@ int main(int argc, char **argv)
         Personality personality = Personality_Native;
         if (config != NULL) (void)config->getpersonality(config->self, &personality);
         libfacet_free_proxy_client(config);
+        if (publish_posix_policy(domain, personality) != FACET_OK)
+            child_log(logger, "could not publish POSIX policy");
         if (personality == Personality_Posix) {
             FacetString pid1 = {0};
             FacetHandle process = {0};
