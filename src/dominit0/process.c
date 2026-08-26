@@ -285,6 +285,14 @@ static FacetResult launch_process(ProcessManager *manager,
         result = FACET_OUT_OF_MEMORY;
         goto done;
     }
+    if (manager->domain->parsed == NULL ||
+        dominit0_process_environment_set_domain_id(process->environment,
+            manager->domain->parsed->id) != 0) {
+        dominit0_process_environment_destroy(process->environment);
+        free(process);
+        result = FACET_OUT_OF_MEMORY;
+        goto done;
+    }
     if (profile == DOMINIT0_PROCESS_PURE_POSIX &&
         manager->domain->parsed != NULL &&
         manager->domain->parsed->personality == FACET_CONFIG_PERSONALITY_NATIVE &&

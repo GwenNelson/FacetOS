@@ -114,9 +114,13 @@ static void login_loop(IByteReader *input, IByteWriter *output,
 {
     char username[128];
     char password[256];
-    (void)write_text(output, terminal_index == 0 ?
-        "FacetOS native login (domain 0, seat0.ttyS0)\r\n" :
-        "FacetOS native login (domain 0, seat1.tty1)\r\n");
+    const char *domain = getenv("FACET_DOMAIN_ID");
+    const char *terminal = getenv("FACET_TERMINAL");
+    (void)write_text(output, "FacetOS native login (domain ");
+    (void)write_text(output, domain == NULL ? "unknown" : domain);
+    (void)write_text(output, ", ");
+    (void)write_text(output, terminal == NULL ? "unknown terminal" : terminal);
+    (void)write_text(output, ")\r\n");
     for (;;) {
         (void)write_text(output, "login: ");
         if (read_line(input, output, username, sizeof(username), true) != FACET_OK)

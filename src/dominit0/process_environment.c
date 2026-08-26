@@ -726,6 +726,29 @@ int dominit0_process_environment_set_terminal_name(
     return result;
 }
 
+int dominit0_process_environment_set_domain_id(
+    Dominit0ProcessEnvironment *environment, uint64_t domain_id)
+{
+    if (environment == NULL) return -1;
+    char value[64];
+    int written = snprintf(value, sizeof(value), "FACET_DOMAIN_ID=%llu",
+                           (unsigned long long)domain_id);
+    if (written < 0 || (size_t)written >= sizeof(value)) return -1;
+    size_t prefix = sizeof("FACET_DOMAIN_ID=") - 1;
+    for (size_t i = 0; i < environment->sysv_environment_count; i++) {
+        if (strncmp(environment->owned_sysv_environment[i], "FACET_DOMAIN_ID=",
+                    prefix) != 0) continue;
+        char *replacement = strdup(value);
+        if (replacement == NULL) return -1;
+        free(environment->owned_sysv_environment[i]);
+        environment->owned_sysv_environment[i] = replacement;
+        environment->sysv_environment[i].data = replacement;
+        environment->sysv_environment[i].length = strlen(replacement);
+        return 0;
+    }
+    return add_sysv_environment(environment, value);
+}
+
 FacetHandle dominit0_process_environment_root_handle(
     const Dominit0ProcessEnvironment *environment)
 {

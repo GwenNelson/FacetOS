@@ -61,6 +61,8 @@ void dominit0_process_environment_set_terminal_index(
     Dominit0ProcessEnvironment *environment, uint64_t terminal_index);
 int dominit0_process_environment_set_terminal_name(
     Dominit0ProcessEnvironment *environment, const char *terminal_name);
+int dominit0_process_environment_set_domain_id(
+    Dominit0ProcessEnvironment *environment, uint64_t domain_id);
 int dominit0_process_environment_bind_posix_process_control(
     Dominit0ProcessEnvironment *environment, void *context, uint64_t domain_id, int32_t pid,
     FacetHandle default_session, Dominit0PosixSpawn spawn, Dominit0PosixWait wait);
