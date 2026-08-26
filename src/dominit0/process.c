@@ -184,7 +184,12 @@ static FacetResult launch_process(ProcessManager *manager,
 
     char *path_copy = copy_string(path);
     if (path_copy == NULL) return FACET_INVALID_ARGUMENT;
-    if (cwd_handle.platform != NULL) {
+    /* Absolute POSIX paths are resolved by the caller's POSIX view below;
+     * asking the backing IDirectory to resolve them would leak the native
+     * /posix prefix and, for a CWD rooted at /posix, incorrectly look up
+     * /posix/bin/sh as a child named /bin/sh.  The backing directory is only
+     * used here for relative executable names. */
+    if (cwd_handle.platform != NULL && path_copy[0] != '/') {
         FacetHandle cwd_copy = {0};
         if (libfacet_handle_clone(cwd_handle, &cwd_copy) != FACET_OK) {
             free(path_copy);
@@ -283,6 +288,7 @@ static FacetResult launch_process(ProcessManager *manager,
     if (profile == DOMINIT0_PROCESS_PURE_POSIX &&
         manager->domain->parsed != NULL &&
         manager->domain->parsed->personality == FACET_CONFIG_PERSONALITY_NATIVE &&
+        cwd_handle.platform == NULL &&
         dominit0_process_environment_set_posix_root(process->environment,
                                                      "/posix") != 0) {
         dominit0_process_environment_destroy(process->environment);
@@ -371,10 +377,23 @@ static FacetResult posix_spawn_process(void *context, const FacetString *path,
     if (pid == NULL || error == NULL || parent == NULL) return FACET_INVALID_ARGUMENT;
     *pid = -1; *error = 0;
     FacetHandle process_handle = {0};
+    bool inherited_synthetic_cwd =
+        dominit0_process_environment_posix_synthetic_cwd(parent->environment);
+    FacetHandle cwd = dominit0_process_environment_cwd_handle(
+        parent->environment);
+    if (cwd.platform == NULL) {
+        *error = ENOMEM;
+        return FACET_OK;
+    }
     FacetResult result = launch_process(parent->manager, path, arguments,
-        session, false, parent->terminal_index, NULL, (FacetHandle){0}, true,
+        session, false, parent->terminal_index, NULL, cwd, true,
         &process_handle);
+    if (cwd.platform != NULL) (void)libfacet_handle_release(cwd);
     if (result == FACET_OK) {
+        if (parent->manager->processes != NULL)
+            dominit0_process_environment_set_posix_synthetic_cwd(
+                parent->manager->processes->environment,
+                inherited_synthetic_cwd);
         *pid = parent->manager->processes == NULL ? -1 :
             parent->manager->processes->pid;
         if (process_handle.platform != NULL) (void)libfacet_handle_release(process_handle);

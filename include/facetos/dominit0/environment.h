@@ -50,6 +50,13 @@ int dominit0_process_environment_bind_terminal(
     FacetHandle output, FacetHandle control, FacetHandle terminal);
 int dominit0_process_environment_set_posix_root(
     Dominit0ProcessEnvironment *environment, const char *path);
+/* Returns a retained copy of the process CWD for an inherited child. */
+FacetHandle dominit0_process_environment_cwd_handle(
+    const Dominit0ProcessEnvironment *environment);
+void dominit0_process_environment_set_posix_synthetic_cwd(
+    Dominit0ProcessEnvironment *environment, bool synthetic_etc);
+bool dominit0_process_environment_posix_synthetic_cwd(
+    const Dominit0ProcessEnvironment *environment);
 void dominit0_process_environment_set_terminal_index(
     Dominit0ProcessEnvironment *environment, uint64_t terminal_index);
 int dominit0_process_environment_set_terminal_name(

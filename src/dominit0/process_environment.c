@@ -40,6 +40,7 @@ struct Dominit0ProcessEnvironment {
     FacetHandle private_page_allocator;
     Dominit0ProcessProfile profile;
     Dominit0PosixView *posix_view;
+    bool posix_cwd_synthetic_etc;
     FacetString *sysv_environment;
     char **owned_sysv_environment;
     size_t sysv_environment_count;
@@ -218,6 +219,17 @@ static FacetResult set_cwd(void *self, FacetHandle directory)
     binding->handle = replacement;
     if (previous.platform != NULL) (void)libfacet_handle_release(previous);
     return FACET_OK;
+}
+
+static int sync_posix_cwd(void *context, FacetHandle directory,
+                          bool synthetic_etc)
+{
+    Dominit0ProcessEnvironment *environment = context;
+    if (environment == NULL) return -1;
+    if (!synthetic_etc && set_cwd(environment, directory) != FACET_OK)
+        return -1;
+    environment->posix_cwd_synthetic_etc = synthetic_etc;
+    return 0;
 }
 
 static FacetResult get_standard_streams(void *self, FacetHandle *input,
@@ -612,6 +624,10 @@ int dominit0_process_environment_bind_terminal(
             input, output, files == NULL ? (FacetHandle){0} : files->handle,
             environment->owned_cwd);
         if (environment->posix_view == NULL) return -1;
+        if (dominit0_posix_view_bind_cwd_sync(environment->posix_view,
+                environment, sync_posix_cwd,
+                environment->posix_cwd_synthetic_etc) != 0)
+            return -1;
         return bind(environment, "posix", IID_IPOSIXView,
                     dominit0_posix_view_handle(environment->posix_view));
     }
@@ -649,6 +665,31 @@ int dominit0_process_environment_set_posix_root(
     environment->owned_cwd = root;
     cwd->handle = root;
     return 0;
+}
+
+FacetHandle dominit0_process_environment_cwd_handle(
+    const Dominit0ProcessEnvironment *environment)
+{
+    FacetHandle copy = {0};
+    if (environment == NULL || environment->owned_cwd.platform == NULL ||
+        libfacet_handle_clone(environment->owned_cwd, &copy) != FACET_OK)
+        return (FacetHandle){0};
+    return copy;
+}
+
+void dominit0_process_environment_set_posix_synthetic_cwd(
+    Dominit0ProcessEnvironment *environment, bool synthetic_etc)
+{
+    if (environment == NULL) return;
+    environment->posix_cwd_synthetic_etc = synthetic_etc;
+    dominit0_posix_view_set_synthetic_cwd(environment->posix_view,
+                                          synthetic_etc);
+}
+
+bool dominit0_process_environment_posix_synthetic_cwd(
+    const Dominit0ProcessEnvironment *environment)
+{
+    return environment != NULL && environment->posix_cwd_synthetic_etc;
 }
 
 void dominit0_process_environment_set_terminal_index(

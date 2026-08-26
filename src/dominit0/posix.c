@@ -49,6 +49,10 @@ struct Dominit0PosixView {
     FacetHandle cwd_handle;
     FacetHandle root_handle;
     bool chrooted;
+    /* Synthetic mounts have no backing IDirectory capability.  Keep the
+     * selected mount as process-local CWD state so relative operations have
+     * precisely the same behaviour as ordinary directories. */
+    bool cwd_synthetic_etc;
     FacetHandle page_allocator_handle;
     FacetHandle lifecycle_handle;
     uint64_t domain_id;
@@ -57,8 +61,52 @@ struct Dominit0PosixView {
     FacetHandle default_session;
     Dominit0PosixSpawn spawn;
     Dominit0PosixWait wait;
+    void *cwd_context;
+    Dominit0PosixCwdChanged cwd_changed;
     PosixDescriptor descriptors[POSIX_DESCRIPTOR_COUNT];
 };
+
+static bool string_equals(const FacetString *value, const char *literal)
+{
+    size_t length = strlen(literal);
+    return value != NULL && value->data != NULL && value->length == length &&
+        memcmp(value->data, literal, length) == 0;
+}
+
+static const char *synthetic_file(Dominit0PosixView *view,
+                                  const FacetString *path)
+{
+    if (!view->chrooted || path == NULL) return NULL;
+    if (string_equals(path, "/etc/passwd") ||
+        (view->cwd_synthetic_etc && string_equals(path, "passwd")))
+        return virtual_passwd;
+    if (string_equals(path, "/etc/shadow") ||
+        (view->cwd_synthetic_etc && string_equals(path, "shadow")))
+        return virtual_shadow;
+    if (string_equals(path, "/etc/fstab") ||
+        (view->cwd_synthetic_etc && string_equals(path, "fstab")))
+        return virtual_fstab;
+    return NULL;
+}
+
+static FacetResult synthetic_etc_entries(FacetArray_string *entries)
+{
+    static const char *names[] = {"fstab", "passwd", "shadow"};
+    FacetString *copy = calloc(sizeof(names) / sizeof(names[0]), sizeof(*copy));
+    if (copy == NULL) return FACET_OUT_OF_MEMORY;
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        copy[i].data = strdup(names[i]);
+        copy[i].length = strlen(names[i]);
+        if (copy[i].data == NULL) {
+            while (i != 0) free((void *)(uintptr_t)copy[--i].data);
+            free(copy);
+            return FACET_OUT_OF_MEMORY;
+        }
+    }
+    entries->data = copy;
+    entries->count = sizeof(names) / sizeof(names[0]);
+    return FACET_OK;
+}
 
 static void *proxy_from_borrowed(const FacetInterfaceMeta *metadata,
                                  FacetHandle handle);
@@ -101,6 +149,12 @@ static FacetResult posix_get_cwd(void *self, FacetString *path, int32_t *error)
     Dominit0PosixView *view = self;
     if (path == NULL || error == NULL) return FACET_INVALID_ARGUMENT;
     *path = (FacetString){0}; *error = 0;
+    if (view->cwd_synthetic_etc) {
+        path->data = strdup("/etc");
+        if (path->data == NULL) return FACET_OUT_OF_MEMORY;
+        path->length = sizeof("/etc") - 1;
+        return FACET_OK;
+    }
     IDirectory *cwd = proxy_from_borrowed(&IDirectory_MetaData, view->cwd_handle);
     FacetResult result = cwd == NULL ? FACET_INVALID_HANDLE :
         cwd->getpath(cwd->self, path);
@@ -133,6 +187,30 @@ static FacetResult posix_change_directory(void *self, const FacetString *path,
     Dominit0PosixView *view = self;
     if (path == NULL || error == NULL) return FACET_INVALID_ARGUMENT;
     *error = 0;
+    if (view->chrooted &&
+        (string_equals(path, "/etc") ||
+         (view->cwd_synthetic_etc && string_equals(path, ".")))) {
+        view->cwd_synthetic_etc = true;
+        if (view->cwd_changed != NULL &&
+            view->cwd_changed(view->cwd_context, view->cwd_handle, true) != 0)
+            return FACET_ERROR;
+        return FACET_OK;
+    }
+    if (view->cwd_synthetic_etc &&
+        (string_equals(path, "..") || string_equals(path, "/"))) {
+        FacetHandle root = {0};
+        if (libfacet_handle_clone(view->root_handle, &root) != FACET_OK)
+            return FACET_INVALID_HANDLE;
+        view->cwd_synthetic_etc = false;
+        if (view->cwd_handle.platform != NULL)
+            (void)libfacet_handle_release(view->cwd_handle);
+        view->cwd_handle = root;
+        if (view->cwd_changed != NULL &&
+            view->cwd_changed(view->cwd_context, root, false) != 0)
+            return FACET_ERROR;
+        return FACET_OK;
+    }
+    if (view->cwd_synthetic_etc) { *error = ENOTDIR; return FACET_OK; }
     FacetString relative = {0};
     IDirectory *cwd = directory_for_path(view, path, &relative);
     FacetHandle next = {0};
@@ -144,6 +222,9 @@ static FacetResult posix_change_directory(void *self, const FacetString *path,
     if (result != FACET_OK) return result;
     if (view->cwd_handle.platform != NULL) (void)libfacet_handle_release(view->cwd_handle);
     view->cwd_handle = next;
+    if (view->cwd_changed != NULL &&
+        view->cwd_changed(view->cwd_context, next, false) != 0)
+        return FACET_ERROR;
     return FACET_OK;
 }
 
@@ -198,6 +279,11 @@ static FacetResult posix_list_directory(void *self, const FacetString *path,
     Dominit0PosixView *view = self;
     if (path == NULL || entries == NULL || error == NULL) return FACET_INVALID_ARGUMENT;
     *entries = (FacetArray_string){0}; *error = 0;
+    if (view->chrooted &&
+        (string_equals(path, "/etc") ||
+         (view->cwd_synthetic_etc && string_equals(path, "."))))
+        return synthetic_etc_entries(entries);
+    if (view->cwd_synthetic_etc) { *error = ENOTDIR; return FACET_OK; }
     FacetString relative = {0};
     IDirectory *cwd = directory_for_path(view, path, &relative);
     FacetHandle handle = {0};
@@ -213,12 +299,20 @@ static FacetResult posix_list_directory(void *self, const FacetString *path,
         directory->list(directory->self, 0, 128, &raw, &next, &end);
     libfacet_free_proxy_client(directory);
     if (result != FACET_OK) return result;
-    size_t count = raw.count;
+    bool include_etc = view->chrooted &&
+        (string_equals(path, "/") ||
+         (!view->cwd_synthetic_etc && string_equals(path, ".")));
+    size_t count = raw.count + (include_etc ? 1 : 0);
     FacetString *copy = calloc(count, sizeof(*copy));
     if (count != 0 && copy == NULL) { facet_rpc_release_value(FACET_TYPE_ARRAY, &FacetArray_Entry_TypeMeta, &raw); return FACET_OUT_OF_MEMORY; }
     for (size_t i = 0; i < count; i++) {
-        copy[i].data = strdup(raw.data[i].name.data);
-        copy[i].length = raw.data[i].name.length;
+        if (include_etc && i == raw.count) {
+            copy[i].data = strdup("etc");
+            copy[i].length = sizeof("etc") - 1;
+        } else {
+            copy[i].data = strdup(raw.data[i].name.data);
+            copy[i].length = raw.data[i].name.length;
+        }
         if (copy[i].data == NULL) { for (size_t j=0;j<i;j++) free((void*)copy[j].data); free(copy); facet_rpc_release_value(FACET_TYPE_ARRAY,&FacetArray_Entry_TypeMeta,&raw); return FACET_OUT_OF_MEMORY; }
     }
     facet_rpc_release_value(FACET_TYPE_ARRAY, &FacetArray_Entry_TypeMeta, &raw);
@@ -365,21 +459,13 @@ static FacetResult posix_open(void *self, const FacetString *path,
     for (int i = 3; i < POSIX_DESCRIPTOR_COUNT; i++)
         if (view->descriptors[i].kind == DESCRIPTOR_UNUSED) { slot = i; break; }
     if (slot < 0) { *error = EMFILE; return FACET_OK; }
-    if (view->chrooted) {
-        const char *memory = NULL;
-        if (path->length == sizeof("/etc/passwd") - 1 &&
-            memcmp(path->data, "/etc/passwd", path->length) == 0) memory = virtual_passwd;
-        else if (path->length == sizeof("/etc/shadow") - 1 &&
-                 memcmp(path->data, "/etc/shadow", path->length) == 0) memory = virtual_shadow;
-        else if (path->length == sizeof("/etc/fstab") - 1 &&
-                 memcmp(path->data, "/etc/fstab", path->length) == 0) memory = virtual_fstab;
-        if (memory != NULL) {
-            view->descriptors[slot] = (PosixDescriptor){
-                .kind = DESCRIPTOR_MEMORY, .memory = (const uint8_t *)memory,
-                .memory_size = strlen(memory)};
-            *fd = slot;
-            return FACET_OK;
-        }
+    const char *memory = synthetic_file(view, path);
+    if (memory != NULL) {
+        view->descriptors[slot] = (PosixDescriptor){
+            .kind = DESCRIPTOR_MEMORY, .memory = (const uint8_t *)memory,
+            .memory_size = strlen(memory)};
+        *fd = slot;
+        return FACET_OK;
     }
     FacetHandle cwd_copy = {0};
     if (libfacet_handle_clone(view->cwd_handle, &cwd_copy) != FACET_OK)
@@ -595,6 +681,22 @@ int dominit0_posix_view_bind_process_control(Dominit0PosixView *view,
     view->spawn = spawn;
     view->wait = wait;
     return 0;
+}
+
+int dominit0_posix_view_bind_cwd_sync(Dominit0PosixView *view,
+    void *context, Dominit0PosixCwdChanged changed, bool synthetic_etc)
+{
+    if (view == NULL || changed == NULL || view->cwd_changed != NULL) return -1;
+    view->cwd_context = context;
+    view->cwd_changed = changed;
+    view->cwd_synthetic_etc = synthetic_etc;
+    return 0;
+}
+
+void dominit0_posix_view_set_synthetic_cwd(Dominit0PosixView *view,
+                                           bool synthetic_etc)
+{
+    if (view != NULL) view->cwd_synthetic_etc = synthetic_etc;
 }
 
 FacetHandle dominit0_posix_view_handle(const Dominit0PosixView *view)

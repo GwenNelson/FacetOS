@@ -9,6 +9,19 @@ static int list(const char *path)
     FacetArray_string entries = {0}; int32_t error = 0;
     IPOSIXView *view = facet_posix_view();
     if (!view || view->list_directory(view->self, &p, &entries, &error) != FACET_OK || error) {
+        /* IPOSIXView deliberately has no broad native-stat capability.  A
+         * successful read-only open is enough to distinguish a regular file
+         * operand from a missing path for this small ls implementation. */
+        int32_t fd = -1;
+        int32_t open_error = 0;
+        if (view != NULL &&
+            view->open_fd(view->self, &p, 0, 0, &fd, &open_error) == FACET_OK &&
+            open_error == 0) {
+            (void)view->close_fd(view->self, fd, &(int32_t){0}, &open_error);
+            (void)write(1, path, strlen(path));
+            (void)write(1, "\n", 1);
+            return 0;
+        }
         (void)write(2, "ls: cannot access ", 18);
         (void)write(2, path, strlen(path));
         (void)write(2, "\n", 1);
