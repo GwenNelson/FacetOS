@@ -275,7 +275,7 @@ static IProcessEnvironment *make_environment(Dominit0SystemConfig *system,
 {
     Dominit0ProcessEnvironment *server = dominit0_process_environment_create(
         system->current_domains[domain]->environment, (FacetHandle){0}, false,
-        DOMINIT0_PROCESS_NATIVE, NULL, (FacetHandle){0});
+        DOMINIT0_PROCESS_NATIVE, NULL, (FacetHandle){0}, NULL);
     assert(server != NULL);
     assert(dominit0_terminal_bind_process_environment(
                system->current_domains[domain], assignment, server) == 0);
@@ -380,7 +380,7 @@ int main(void)
     Dominit0ProcessEnvironment *posix_server =
         dominit0_process_environment_create(
             system.current_domains[1]->environment, (FacetHandle){0}, true,
-            DOMINIT0_PROCESS_PURE_POSIX, NULL, (FacetHandle){0});
+            DOMINIT0_PROCESS_PURE_POSIX, NULL, (FacetHandle){0}, NULL);
     assert(posix_server != NULL);
     assert(dominit0_terminal_bind_process_environment(
                system.current_domains[1], 0, posix_server) == 0);

@@ -59,7 +59,6 @@ struct Dominit0PosixView {
     uint64_t domain_id;
     int32_t pid;
     void *process_context;
-    FacetHandle default_session;
     Dominit0PosixSpawn spawn;
     Dominit0PosixWait wait;
     bool admin;
@@ -248,7 +247,7 @@ static FacetResult posix_spawn(void *self, const FacetString *p,
     if (pid == NULL || error == NULL) return FACET_INVALID_ARGUMENT;
     *pid = -1; *error = 0;
     if (view->spawn == NULL) { *error = ENOSYS; return FACET_OK; }
-    if (s.platform == NULL) s = view->default_session;
+    if (s.platform == NULL) { *error = EACCES; return FACET_OK; }
     return view->spawn(view->process_context, p, a, s, pid, error);
 }
 
@@ -259,11 +258,11 @@ static FacetResult posix_spawn_inherited(void *self, const FacetString *p,
     if (pid == NULL || error == NULL) return FACET_INVALID_ARGUMENT;
     *pid = -1;
     *error = 0;
-    if (view->spawn == NULL || view->default_session.platform == NULL) {
+    if (view->spawn == NULL) {
         *error = ENOSYS;
         return FACET_OK;
     }
-    return view->spawn(view->process_context, p, a, view->default_session,
+    return view->spawn(view->process_context, p, a, (FacetHandle){0},
                        pid, error);
 }
 static FacetResult posix_wait(void *self, int32_t pid, int32_t *status, int32_t *error)
@@ -695,33 +694,17 @@ int dominit0_posix_view_bind_lifecycle(Dominit0PosixView *view,
 }
 
 int dominit0_posix_view_bind_process_control(Dominit0PosixView *view,
-    void *context, uint64_t domain_id, int32_t pid, FacetHandle default_session, Dominit0PosixSpawn spawn,
+    void *context, uint64_t domain_id, int32_t pid, bool admin,
+    Dominit0PosixSpawn spawn,
     Dominit0PosixWait wait)
 {
     if (view == NULL || spawn == NULL || wait == NULL) return -1;
     view->process_context = context;
     view->domain_id = domain_id;
     view->pid = pid;
-    if (default_session.platform != NULL &&
-        libfacet_handle_clone(default_session, &view->default_session) != FACET_OK)
-        return -1;
     view->spawn = spawn;
     view->wait = wait;
-    view->admin = false;
-    if (default_session.platform != NULL) {
-        FacetHandle session_handle = {0};
-        if (libfacet_handle_clone(default_session, &session_handle) != FACET_OK)
-            return -1;
-        ISession *session = libfacet_proxy_from_handle(&ISession_MetaData,
-                                                        session_handle);
-        uint32_t uid = 0, gid = 0;
-        bool admin = false;
-        FacetResult result = session == NULL ? FACET_INVALID_HANDLE :
-            session->get_credentials(session->self, &uid, &gid, &admin);
-        libfacet_free_proxy_client(session);
-        if (result != FACET_OK) return -1;
-        view->admin = admin;
-    }
+    view->admin = admin;
     return 0;
 }
 
@@ -758,7 +741,5 @@ void dominit0_posix_view_destroy(Dominit0PosixView *view)
         (void)libfacet_handle_release(view->cwd_handle);
     if (view->root_handle.platform != NULL)
         (void)libfacet_handle_release(view->root_handle);
-    if (view->default_session.platform != NULL)
-        (void)libfacet_handle_release(view->default_session);
     free(view);
 }

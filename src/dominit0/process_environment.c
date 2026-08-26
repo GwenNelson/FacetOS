@@ -409,7 +409,8 @@ fail:
 Dominit0ProcessEnvironment *dominit0_process_environment_create(
     Dominit0DomainEnvironment *parent, FacetHandle session,
     bool bootstrap_authority, Dominit0ProcessProfile profile,
-    const FacetArray_string *sysv_environment, FacetHandle cwd)
+    const FacetArray_string *sysv_environment, FacetHandle cwd,
+    const Dominit0ProcessEnvironment *identity_source)
 {
     if (parent == NULL) return NULL;
     const char *failure_stage = "allocate environment";
@@ -418,9 +419,19 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
     environment->profile = profile;
     char *user_name = NULL, *home_path = NULL, *shell_path = NULL;
     failure_stage = "read session identity";
-    if (session_identity(session, &environment->uid, &environment->gid,
-                         &environment->admin, &user_name, &home_path,
-                         &shell_path) != 0)
+    if (identity_source != NULL) {
+        environment->uid = identity_source->uid;
+        environment->gid = identity_source->gid;
+        environment->admin = identity_source->admin;
+        /* Callers which inherit credentials also inherit SysV environment,
+         * so these are only placeholders for the common cleanup path. */
+        user_name = strdup("root"); home_path = strdup("/");
+        shell_path = strdup("/bin/sh");
+        if (user_name == NULL || home_path == NULL || shell_path == NULL)
+            goto fail;
+    } else if (session_identity(session, &environment->uid, &environment->gid,
+                                &environment->admin, &user_name, &home_path,
+                                &shell_path) != 0)
         goto fail;
     failure_stage = "copy process environment";
     if (sysv_environment != NULL) {
@@ -603,12 +614,12 @@ int dominit0_process_environment_bind_lifecycle(
 
 int dominit0_process_environment_bind_posix_process_control(
     Dominit0ProcessEnvironment *environment, void *context, uint64_t domain_id, int32_t pid,
-    FacetHandle default_session, Dominit0PosixSpawn spawn, Dominit0PosixWait wait)
+    bool admin, Dominit0PosixSpawn spawn, Dominit0PosixWait wait)
 {
     if (environment == NULL || environment->profile != DOMINIT0_PROCESS_PURE_POSIX)
         return -1;
     return dominit0_posix_view_bind_process_control(environment->posix_view,
-                                                    context, domain_id, pid, default_session,
+                                                    context, domain_id, pid, admin,
                                                     spawn, wait);
 }
 
@@ -730,6 +741,18 @@ bool dominit0_process_environment_posix_synthetic_cwd(
     const Dominit0ProcessEnvironment *environment)
 {
     return environment != NULL && environment->posix_cwd_synthetic_etc;
+}
+
+int dominit0_process_environment_get_credentials(
+    const Dominit0ProcessEnvironment *environment, uint32_t *uid,
+    uint32_t *gid, bool *admin)
+{
+    if (environment == NULL || uid == NULL || gid == NULL || admin == NULL)
+        return -1;
+    *uid = environment->uid;
+    *gid = environment->gid;
+    *admin = environment->admin;
+    return 0;
 }
 
 void dominit0_process_environment_set_terminal_index(

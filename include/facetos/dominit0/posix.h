@@ -22,7 +22,8 @@ int dominit0_posix_view_bind_page_allocator(Dominit0PosixView *view,
 int dominit0_posix_view_bind_lifecycle(Dominit0PosixView *view,
                                        FacetHandle lifecycle);
 int dominit0_posix_view_bind_process_control(Dominit0PosixView *view,
-    void *context, uint64_t domain_id, int32_t pid, FacetHandle default_session, Dominit0PosixSpawn spawn,
+    void *context, uint64_t domain_id, int32_t pid, bool admin,
+    Dominit0PosixSpawn spawn,
     Dominit0PosixWait wait);
 int dominit0_posix_view_bind_cwd_sync(Dominit0PosixView *view,
     void *context, Dominit0PosixCwdChanged changed, bool synthetic_etc);

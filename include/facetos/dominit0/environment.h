@@ -37,7 +37,8 @@ FacetInitrd *dominit0_environment_initrd(
 Dominit0ProcessEnvironment *dominit0_process_environment_create(
     Dominit0DomainEnvironment *parent, FacetHandle session,
     bool bootstrap_authority, Dominit0ProcessProfile profile,
-    const FacetArray_string *sysv_environment, FacetHandle cwd);
+    const FacetArray_string *sysv_environment, FacetHandle cwd,
+    const Dominit0ProcessEnvironment *identity_source);
 int dominit0_process_environment_bind_named(
     Dominit0ProcessEnvironment *environment, const char *name,
     uuid_t primary_iid, FacetHandle object);
@@ -71,11 +72,14 @@ int dominit0_process_environment_set_domain_id(
     Dominit0ProcessEnvironment *environment, uint64_t domain_id);
 int dominit0_process_environment_bind_posix_process_control(
     Dominit0ProcessEnvironment *environment, void *context, uint64_t domain_id, int32_t pid,
-    FacetHandle default_session, Dominit0PosixSpawn spawn, Dominit0PosixWait wait);
+    bool admin, Dominit0PosixSpawn spawn, Dominit0PosixWait wait);
 FacetHandle dominit0_process_environment_root_handle(
     const Dominit0ProcessEnvironment *environment);
 int dominit0_process_environment_get_sysv(
     const Dominit0ProcessEnvironment *environment, size_t *count,
     const char *const **values);
+int dominit0_process_environment_get_credentials(
+    const Dominit0ProcessEnvironment *environment, uint32_t *uid,
+    uint32_t *gid, bool *admin);
 void dominit0_process_environment_destroy(
     Dominit0ProcessEnvironment *environment);

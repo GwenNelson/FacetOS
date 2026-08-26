@@ -160,17 +160,27 @@ static FacetResult launch_process(ProcessManager *manager,
                                   FacetHandle cwd_handle,
                                   bool force_posix,
                                   const FacetString *posix_root,
+                                  const Dominit0ProcessEnvironment *identity_source,
                                   FacetHandle *out)
 {
     if (out == NULL || arguments == NULL || arguments->count > 64 ||
-        (!initial && session_handle.platform == NULL))
+        (!initial && session_handle.platform == NULL && identity_source == NULL))
         return FACET_INVALID_ARGUMENT;
     *out = (FacetHandle){0};
 
     uint32_t uid = 0, gid = 0;
     bool admin = true;
-    FacetResult result = session_credentials(session_handle, &uid, &gid,
-                                             &admin);
+    FacetResult result = identity_source != NULL ? FACET_OK :
+        session_credentials(session_handle, &uid, &gid, &admin);
+    if (identity_source != NULL) {
+        /* The child cannot retain an RPC-delivered session capability.  Its
+         * parent has already authenticated it, so inherit the parent's
+         * credential view instead. */
+        if (dominit0_process_environment_get_credentials(identity_source,
+                                                         &uid, &gid,
+                                                         &admin) != 0)
+            return FACET_INVALID_ARGUMENT;
+    }
     if (result != FACET_OK) return FACET_ACCESS_DENIED;
 
     char *path_copy = copy_string(path);
@@ -262,7 +272,7 @@ static FacetResult launch_process(ProcessManager *manager,
     process->environment = dominit0_process_environment_create(
         manager->domain->environment,
         session_handle, initial && session_handle.platform == NULL, profile,
-        sysv_environment, cwd_handle);
+        sysv_environment, cwd_handle, identity_source);
     if (process->environment == NULL) {
         free(process);
         result = FACET_OUT_OF_MEMORY;
@@ -306,7 +316,8 @@ static FacetResult launch_process(ProcessManager *manager,
     if (profile == DOMINIT0_PROCESS_PURE_POSIX &&
         dominit0_process_environment_bind_posix_process_control(
             process->environment, process, manager->domain->parsed->id,
-            process->pid, session_handle, posix_spawn_process,
+            process->pid, admin,
+            posix_spawn_process,
             posix_wait_process) != 0) {
         dominit0_process_environment_destroy(process->environment);
         free(process); result = FACET_ERROR; goto done;
@@ -373,6 +384,7 @@ static FacetResult posix_spawn_process(void *context, const FacetString *path,
 {
     RunningProcess *parent = context;
     if (pid == NULL || error == NULL || parent == NULL) return FACET_INVALID_ARGUMENT;
+    (void)session;
     *pid = -1; *error = 0;
     FacetHandle process_handle = {0};
     bool inherited_synthetic_cwd =
@@ -387,9 +399,27 @@ static FacetResult posix_spawn_process(void *context, const FacetString *path,
         dominit0_process_environment_posix_namespace_root(parent->environment);
     FacetString root = {.data = namespace_root,
                         .length = namespace_root == NULL ? 0 : strlen(namespace_root)};
+    size_t sysv_count = 0;
+    const char *const *sysv_values = NULL;
+    (void)dominit0_process_environment_get_sysv(parent->environment,
+                                                  &sysv_count, &sysv_values);
+    FacetString *sysv = sysv_count == 0 ? NULL : calloc(sysv_count, sizeof(*sysv));
+    if (sysv_count != 0 && sysv == NULL) {
+        (void)libfacet_handle_release(cwd);
+        *error = ENOMEM;
+        return FACET_OK;
+    }
+    for (size_t i = 0; i < sysv_count; i++)
+        sysv[i] = (FacetString){.data = sysv_values[i],
+                                .length = strlen(sysv_values[i])};
+    FacetArray_string inherited_sysv = {.data = sysv, .count = sysv_count};
+    /* An attached session cap is scoped to the RPC dispatch.  A child keeps
+     * its parent's credential snapshot rather than a borrowed cap slot. */
     FacetResult result = launch_process(parent->manager, path, arguments,
-        session, false, parent->terminal_index, NULL, cwd, true,
-        namespace_root == NULL ? NULL : &root, &process_handle);
+        (FacetHandle){0}, false, parent->terminal_index, &inherited_sysv, cwd, true,
+        namespace_root == NULL ? NULL : &root, parent->environment,
+        &process_handle);
+    free(sysv);
     if (cwd.platform != NULL) (void)libfacet_handle_release(cwd);
     if (result == FACET_OK) {
         if (parent->manager->processes != NULL)
@@ -401,8 +431,10 @@ static FacetResult posix_spawn_process(void *context, const FacetString *path,
         if (process_handle.platform != NULL) (void)libfacet_handle_release(process_handle);
         return FACET_OK;
     }
-    klog(LOG_ERROR, "POSIX spawn %.*s failed: %d\n", (int)path->length,
-         path->data, (int)result);
+    /* klog deliberately supports a small printf subset, so do not use a
+     * precision-qualified string here.  Retain the result code; the caller
+     * already knows the requested program and can map this to errno. */
+    klog(LOG_ERROR, "POSIX spawn failed: %d\n", (int)result);
     *error = result == FACET_ACCESS_DENIED ? EACCES :
              result == FACET_NOT_FOUND ? ENOENT : EIO;
     return FACET_OK;
@@ -509,7 +541,8 @@ static FacetResult manager_launch(void *self, const FacetString *path,
         return FACET_ACCESS_DENIED;
     }
     result = launch_process(self, path, arguments, session_handle, false,
-                            terminal_index, &sysv_environment, cwd_handle, false, NULL, out);
+                            terminal_index, &sysv_environment, cwd_handle, false, NULL,
+                            NULL, out);
     if (result != FACET_OK)
         klog(LOG_ERROR, "process manager: child launch failed (%d)\n",
              (int)result);
@@ -546,7 +579,7 @@ static FacetResult manager_launch_initial(void *self, const FacetString *path,
     FacetResult result = launch_process(self, path, arguments, session, true,
                                         terminal_index, NULL,
                                         (FacetHandle){0}, posix_profile,
-                                        posix_profile ? posix_root : NULL, out);
+                                        posix_profile ? posix_root : NULL, NULL, out);
     if (session.platform != NULL) (void)libfacet_handle_release(session);
     return result;
 }
@@ -571,7 +604,8 @@ static FacetResult manager_launch_on_terminal(
     if (result != FACET_OK || session_domain_id != manager_domain_id)
         return FACET_ACCESS_DENIED;
     return launch_process(manager, path, arguments, session_handle, false,
-                          terminal_index, NULL, (FacetHandle){0}, false, NULL, out);
+                          terminal_index, NULL, (FacetHandle){0}, false, NULL,
+                          NULL, out);
 }
 
 int dominit0_process_manager_initialize(CurrentDomain *domain)
