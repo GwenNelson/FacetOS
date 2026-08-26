@@ -8,6 +8,7 @@
 #include <facetos/interfaces/IByteReader.h>
 #include <facetos/interfaces/IByteWriter.h>
 #include <facetos/interfaces/IProcessEnvironment.h>
+#include <facetos/interfaces/IProcessLifecycle.h>
 #include <facetos/interfaces/IPOSIXView.h>
 #include <facetos/interfaces/ITerminal.h>
 #include <facetos/interfaces/ITerminalControl.h>
@@ -141,6 +142,29 @@ typedef struct CredentialChange {
     bool set_gid;
     unsigned calls;
 } CredentialChange;
+
+typedef struct ExitRecorder {
+    IProcessLifecycle interface;
+    int32_t status;
+    unsigned calls;
+} ExitRecorder;
+
+static FacetResult record_lifecycle_interface(void *self, uuid_t iid,
+                                              FacetHandle *out)
+{
+    (void)self;
+    (void)iid;
+    if (out != NULL) *out = (FacetHandle){0};
+    return FACET_NO_INTERFACE;
+}
+
+static FacetResult record_lifecycle_exit(void *self, int32_t status)
+{
+    ExitRecorder *recorder = self;
+    recorder->status = status;
+    recorder->calls++;
+    return FACET_OK;
+}
 
 static FacetResult unused_posix_spawn(void *context, const FacetString *path,
                                       const FacetArray_string *arguments,
@@ -432,6 +456,17 @@ int main(void)
                posix_server, &credential_change, 1, 42, true,
                unused_posix_spawn, unused_posix_wait,
                record_credential_change) == 0);
+    ExitRecorder lifecycle = {
+        .interface = {.self = &lifecycle, .priv = &lifecycle,
+                      .getInterface = record_lifecycle_interface,
+                      .notify_exit = record_lifecycle_exit},
+    };
+    FacetHandle lifecycle_handle = {0};
+    assert(libfacet_export_interface(&lifecycle.interface,
+                                     &IProcessLifecycle_MetaData,
+                                     &lifecycle_handle) == FACET_OK);
+    assert(dominit0_process_environment_bind_lifecycle(posix_server,
+                                                        lifecycle_handle) == 0);
     FacetHandle posix_root_handle = {0};
     assert(libfacet_handle_clone(
                dominit0_process_environment_root_handle(posix_server),
@@ -482,9 +517,12 @@ int main(void)
     assert(posix->write_fd(posix->self, 9, &hello, &posix_result,
                            &posix_error) == FACET_OK);
     assert(posix_result == -1 && posix_error != 0);
+    assert(posix->exit_process(posix->self, 23) == FACET_OK);
+    assert(lifecycle.calls == 1 && lifecycle.status == 23);
     libfacet_free_proxy_client(posix);
     libfacet_free_proxy_client(posix_environment);
     dominit0_process_environment_destroy(posix_server);
+    assert(libfacet_unexport_interface(lifecycle_handle) == FACET_OK);
 
     libfacet_free_proxy_client(tty2_output);
     libfacet_free_proxy_client(tty2_input);

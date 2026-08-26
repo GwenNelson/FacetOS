@@ -642,7 +642,10 @@ int dominit0_process_environment_bind_lifecycle(
 {
     if (environment == NULL || lifecycle.platform == NULL)
         return -1;
-    if (!environment->native_capabilities)
+    /* A native domain may still launch a POSIX-view process.  Its exit path
+     * is IPOSIXView::exit_process, so the lifecycle must be available through
+     * that view regardless of the domain's broader native-capability set. */
+    if (environment->posix_view != NULL)
         return dominit0_posix_view_bind_lifecycle(environment->posix_view,
                                                   lifecycle);
     return bind(environment, "process.lifecycle", IID_IProcessLifecycle,
