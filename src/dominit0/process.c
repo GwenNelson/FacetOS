@@ -15,6 +15,7 @@
 #include <facetos/interfaces/ISession.h>
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <errno.h>
 
@@ -221,50 +222,6 @@ static FacetResult launch_process(ProcessManager *manager,
         free(path_copy);
         path_copy = resolved;
     }
-    klog(LOG_DEBUG, "process manager: preparing %s%s\n", path_copy,
-         initial ? " as initial process" : "");
-    result = facet_initrd_check_execute(manager->domain->initrd, path_copy,
-                                        uid, gid, admin);
-    if (result != FACET_OK) {
-        free(path_copy);
-        return result;
-    }
-    const uint8_t *elf_data;
-    size_t elf_size;
-    result = facet_initrd_find_file(manager->domain->initrd, path_copy,
-                                    &elf_data, &elf_size);
-    if (result != FACET_OK) {
-        free(path_copy);
-        return result;
-    }
-
-    size_t argc = arguments->count == 0 ? 1 : arguments->count;
-    char **argv = calloc(argc, sizeof(*argv));
-    if (argv == NULL) {
-        free(path_copy);
-        return FACET_OUT_OF_MEMORY;
-    }
-    if (arguments->count == 0) {
-        argv[0] = strdup(path_copy);
-    } else {
-        for (size_t i = 0; i < argc; i++) {
-            argv[i] = copy_string(&arguments->data[i]);
-            if (argv[i] == NULL) break;
-        }
-    }
-    for (size_t i = 0; i < argc; i++) {
-        if (argv[i] != NULL) continue;
-        for (size_t j = 0; j < argc; j++) free(argv[j]);
-        free(argv);
-        free(path_copy);
-        return FACET_OUT_OF_MEMORY;
-    }
-
-    RunningProcess *process = calloc(1, sizeof(*process));
-    if (process == NULL) {
-        result = FACET_OUT_OF_MEMORY;
-        goto done;
-    }
     Dominit0ProcessProfile profile = DOMINIT0_PROCESS_NATIVE;
     if (force_posix || is_posix_program(path_copy) ||
         (manager->domain->parsed != NULL &&
@@ -274,6 +231,42 @@ static FacetResult launch_process(ProcessManager *manager,
           manager->domain->parsed->terminals[terminal_index].view ==
               FACET_CONFIG_TERMINAL_VIEW_POSIX))))
         profile = DOMINIT0_PROCESS_PURE_POSIX;
+    /* A native+POSIX domain stores its POSIX tree below /posix.  The caller
+     * still names the executable in its own POSIX namespace. */
+    if (profile == DOMINIT0_PROCESS_PURE_POSIX &&
+        manager->domain->parsed != NULL &&
+        manager->domain->parsed->personality == FACET_CONFIG_PERSONALITY_NATIVE &&
+        (strncmp(path_copy, "/bin/", 5) == 0 || strncmp(path_copy, "/sbin/", 6) == 0)) {
+        size_t length = strlen("/posix") + strlen(path_copy) + 1;
+        char *backing = malloc(length);
+        if (backing == NULL) { free(path_copy); return FACET_OUT_OF_MEMORY; }
+        snprintf(backing, length, "/posix%s", path_copy);
+        free(path_copy);
+        path_copy = backing;
+    }
+    klog(LOG_DEBUG, "process manager: preparing %s%s\n", path_copy,
+         initial ? " as initial process" : "");
+    result = facet_initrd_check_execute(manager->domain->initrd, path_copy,
+                                        uid, gid, admin);
+    if (result != FACET_OK) { free(path_copy); return result; }
+    const uint8_t *elf_data;
+    size_t elf_size;
+    result = facet_initrd_find_file(manager->domain->initrd, path_copy,
+                                    &elf_data, &elf_size);
+    if (result != FACET_OK) { free(path_copy); return result; }
+    size_t argc = arguments->count == 0 ? 1 : arguments->count;
+    char **argv = calloc(argc, sizeof(*argv));
+    if (argv == NULL) { free(path_copy); return FACET_OUT_OF_MEMORY; }
+    if (arguments->count == 0) argv[0] = strdup(path_copy);
+    else for (size_t i = 0; i < argc; i++) {
+        argv[i] = copy_string(&arguments->data[i]); if (argv[i] == NULL) break;
+    }
+    for (size_t i = 0; i < argc; i++) if (argv[i] == NULL) {
+        for (size_t j = 0; j < argc; j++) free(argv[j]);
+        free(argv); free(path_copy); return FACET_OUT_OF_MEMORY;
+    }
+    RunningProcess *process = calloc(1, sizeof(*process));
+    if (process == NULL) { result = FACET_OUT_OF_MEMORY; goto done; }
     process->pid = manager->next_pid++;
     if (process->pid <= 0) process->pid = manager->next_pid = 1;
     process->terminal_index = terminal_index;

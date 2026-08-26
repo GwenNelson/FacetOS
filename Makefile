@@ -678,11 +678,11 @@ $(INITRD_SYSTEM): $(FACET_INITRD_TOOL) $(shell find $(ROOT)/initrd/system -type 
 	cp $(FACET_LS) $(ROOT)/build/initrd/system-root/FacetOS/ls
 	cp $(FACET_CAT) $(ROOT)/build/initrd/system-root/FacetOS/cat
 	cp $(FACET_TEST_PERMS) $(ROOT)/build/initrd/system-root/FacetOS/TestPerms
-	mkdir -p $(ROOT)/build/initrd/system-root/bin
-	cp $(FACET_POSIX_LOGIN) $(ROOT)/build/initrd/system-root/bin/login
-	cp $(FACET_POSIX_SH) $(ROOT)/build/initrd/system-root/bin/sh
-	cp $(FACET_POSIX_LS) $(ROOT)/build/initrd/system-root/bin/ls
-	cp $(FACET_POSIX_CAT) $(ROOT)/build/initrd/system-root/bin/cat
+	mkdir -p $(ROOT)/build/initrd/system-root/posix/bin
+	cp $(FACET_POSIX_LOGIN) $(ROOT)/build/initrd/system-root/posix/bin/login
+	cp $(FACET_POSIX_SH) $(ROOT)/build/initrd/system-root/posix/bin/sh
+	cp $(FACET_POSIX_LS) $(ROOT)/build/initrd/system-root/posix/bin/ls
+	cp $(FACET_POSIX_CAT) $(ROOT)/build/initrd/system-root/posix/bin/cat
 	mkdir -p $(ROOT)/build/initrd/system-root/home/user $(FACET_OVERLAY_ROOT)/system
 	$(FACET_INITRD_TOOL) pack $@ $(ROOT)/build/initrd/system-root \
 		--overlay $(FACET_OVERLAY_ROOT)/system
