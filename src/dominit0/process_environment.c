@@ -622,6 +622,35 @@ int dominit0_process_environment_bind_terminal(
            bind(environment, "stderr", IID_IByteWriter, output);
 }
 
+int dominit0_process_environment_set_posix_root(
+    Dominit0ProcessEnvironment *environment, const char *path)
+{
+    if (environment == NULL || path == NULL || path[0] != '/' ||
+        environment->profile != DOMINIT0_PROCESS_PURE_POSIX)
+        return -1;
+    FacetString files_name = {.data = "files", .length = 5};
+    ProcessBinding *files_binding = find_binding(environment, &files_name);
+    FacetHandle files_handle = {0}, root = {0};
+    if (files_binding == NULL ||
+        libfacet_handle_clone(files_binding->handle, &files_handle) != FACET_OK)
+        return -1;
+    IFileStore *files = libfacet_proxy_from_handle(&IFileStore_MetaData,
+                                                    files_handle);
+    FacetString requested = {.data = path, .length = strlen(path)};
+    FacetResult result = files == NULL ? FACET_INVALID_HANDLE :
+        files->open_directory(files->self, &requested, &root);
+    libfacet_free_proxy_client(files);
+    if (result != FACET_OK) return -1;
+    ProcessBinding *cwd = find_binding(environment,
+        &(FacetString){.data = "cwd", .length = 3});
+    if (cwd == NULL) { (void)libfacet_handle_release(root); return -1; }
+    if (environment->owned_cwd.platform != NULL)
+        (void)libfacet_handle_release(environment->owned_cwd);
+    environment->owned_cwd = root;
+    cwd->handle = root;
+    return 0;
+}
+
 void dominit0_process_environment_set_terminal_index(
     Dominit0ProcessEnvironment *environment, uint64_t terminal_index)
 {

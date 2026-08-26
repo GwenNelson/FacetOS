@@ -280,6 +280,16 @@ static FacetResult launch_process(ProcessManager *manager,
         result = FACET_OUT_OF_MEMORY;
         goto done;
     }
+    if (profile == DOMINIT0_PROCESS_PURE_POSIX &&
+        manager->domain->parsed != NULL &&
+        manager->domain->parsed->personality == FACET_CONFIG_PERSONALITY_NATIVE &&
+        dominit0_process_environment_set_posix_root(process->environment,
+                                                     "/posix") != 0) {
+        dominit0_process_environment_destroy(process->environment);
+        free(process);
+        result = FACET_NOT_FOUND;
+        goto done;
+    }
     if (terminal_index > SIZE_MAX ||
         dominit0_terminal_bind_process_environment(
             manager->domain, (size_t)terminal_index,

@@ -47,6 +47,8 @@ struct Dominit0PosixView {
     IPOSIXView interface;
     FacetHandle handle;
     FacetHandle cwd_handle;
+    FacetHandle root_handle;
+    bool chrooted;
     FacetHandle page_allocator_handle;
     FacetHandle lifecycle_handle;
     uint64_t domain_id;
@@ -60,6 +62,25 @@ struct Dominit0PosixView {
 
 static void *proxy_from_borrowed(const FacetInterfaceMeta *metadata,
                                  FacetHandle handle);
+
+static IDirectory *directory_for_path(Dominit0PosixView *view,
+                                      const FacetString *path,
+                                      FacetString *relative)
+{
+    if (path == NULL || relative == NULL) return NULL;
+    FacetHandle handle = view->cwd_handle;
+    *relative = *path;
+    if (view->chrooted && path->length != 0 && path->data[0] == '/') {
+        handle = view->root_handle;
+        relative->data = path->data + 1;
+        relative->length = path->length - 1;
+        if (relative->length == 0) {
+            relative->data = ".";
+            relative->length = 1;
+        }
+    }
+    return proxy_from_borrowed(&IDirectory_MetaData, handle);
+}
 
 static FacetResult posix_get_domain_id(void *self, uint64_t *domain_id)
 {
@@ -85,6 +106,24 @@ static FacetResult posix_get_cwd(void *self, FacetString *path, int32_t *error)
         cwd->getpath(cwd->self, path);
     libfacet_free_proxy_client(cwd);
     if (result == FACET_ACCESS_DENIED) { *error = EACCES; return FACET_OK; }
+    if (result == FACET_OK && view->chrooted && path->length >= 6 &&
+        memcmp(path->data, "/posix", 6) == 0 &&
+        (path->length == 6 || path->data[6] == '/')) {
+        size_t offset = 6;
+        if (path->length == offset) {
+            char *logical = strdup("/");
+            free((void *)(uintptr_t)path->data);
+            if (logical == NULL) return FACET_OUT_OF_MEMORY;
+            path->data = logical;
+            path->length = 1;
+        } else {
+            char *logical = strdup(path->data + offset);
+            free((void *)(uintptr_t)path->data);
+            path->data = logical;
+            path->length = logical == NULL ? 0 : strlen(logical);
+            if (logical == NULL) return FACET_OUT_OF_MEMORY;
+        }
+    }
     return result;
 }
 
@@ -94,10 +133,11 @@ static FacetResult posix_change_directory(void *self, const FacetString *path,
     Dominit0PosixView *view = self;
     if (path == NULL || error == NULL) return FACET_INVALID_ARGUMENT;
     *error = 0;
-    IDirectory *cwd = proxy_from_borrowed(&IDirectory_MetaData, view->cwd_handle);
+    FacetString relative = {0};
+    IDirectory *cwd = directory_for_path(view, path, &relative);
     FacetHandle next = {0};
     FacetResult result = cwd == NULL ? FACET_INVALID_HANDLE :
-        cwd->open_directory(cwd->self, path, &next);
+        cwd->open_directory(cwd->self, &relative, &next);
     libfacet_free_proxy_client(cwd);
     if (result == FACET_NOT_FOUND) { *error = ENOENT; return FACET_OK; }
     if (result == FACET_ACCESS_DENIED) { *error = EACCES; return FACET_OK; }
@@ -158,10 +198,11 @@ static FacetResult posix_list_directory(void *self, const FacetString *path,
     Dominit0PosixView *view = self;
     if (path == NULL || entries == NULL || error == NULL) return FACET_INVALID_ARGUMENT;
     *entries = (FacetArray_string){0}; *error = 0;
-    IDirectory *cwd = proxy_from_borrowed(&IDirectory_MetaData, view->cwd_handle);
+    FacetString relative = {0};
+    IDirectory *cwd = directory_for_path(view, path, &relative);
     FacetHandle handle = {0};
     FacetResult result = cwd == NULL ? FACET_INVALID_HANDLE :
-        cwd->open_directory(cwd->self, path, &handle);
+        cwd->open_directory(cwd->self, &relative, &handle);
     libfacet_free_proxy_client(cwd);
     if (result == FACET_NOT_FOUND) { *error = ENOENT; return FACET_OK; }
     if (result == FACET_ACCESS_DENIED) { *error = EACCES; return FACET_OK; }
@@ -324,7 +365,7 @@ static FacetResult posix_open(void *self, const FacetString *path,
     for (int i = 3; i < POSIX_DESCRIPTOR_COUNT; i++)
         if (view->descriptors[i].kind == DESCRIPTOR_UNUSED) { slot = i; break; }
     if (slot < 0) { *error = EMFILE; return FACET_OK; }
-    if (view->domain_id == 0) {
+    if (view->chrooted) {
         const char *memory = NULL;
         if (path->length == sizeof("/etc/passwd") - 1 &&
             memcmp(path->data, "/etc/passwd", path->length) == 0) memory = virtual_passwd;
@@ -345,9 +386,14 @@ static FacetResult posix_open(void *self, const FacetString *path,
         return FACET_INVALID_HANDLE;
     IDirectory *cwd = libfacet_proxy_from_handle(&IDirectory_MetaData,
                                                   cwd_copy);
+    FacetString relative = *path;
+    if (view->chrooted && path->length != 0 && path->data[0] == '/') {
+        libfacet_free_proxy_client(cwd);
+        cwd = directory_for_path(view, path, &relative);
+    }
     FacetHandle file_handle = {0};
     FacetResult opened = cwd == NULL ? FACET_INVALID_HANDLE :
-        cwd->open_file(cwd->self, path, &file_handle);
+        cwd->open_file(cwd->self, &relative, &file_handle);
     libfacet_free_proxy_client(cwd);
     if (opened == FACET_NOT_FOUND) { *error = ENOENT; return FACET_OK; }
     if (opened == FACET_ACCESS_DENIED) { *error = EACCES; return FACET_OK; }
@@ -475,6 +521,21 @@ Dominit0PosixView *dominit0_posix_view_create(
         free(view);
         return NULL;
     }
+    if (cwd_handle.platform != NULL &&
+        libfacet_handle_clone(cwd_handle, &view->root_handle) != FACET_OK) {
+        (void)libfacet_handle_release(view->cwd_handle);
+        free(view);
+        return NULL;
+    }
+    IDirectory *initial = proxy_from_borrowed(&IDirectory_MetaData,
+                                               cwd_handle);
+    FacetString physical = {0};
+    if (initial != NULL && initial->getpath(initial->self, &physical) == FACET_OK &&
+        physical.length == sizeof("/posix") - 1 &&
+        memcmp(physical.data, "/posix", physical.length) == 0)
+        view->chrooted = true;
+    free((void *)(uintptr_t)physical.data);
+    libfacet_free_proxy_client(initial);
     view->descriptors[0] = (PosixDescriptor){.kind=DESCRIPTOR_INPUT,.handle=stdin_handle};
     view->descriptors[1] = (PosixDescriptor){.kind=DESCRIPTOR_OUTPUT,.handle=stdout_handle};
     view->descriptors[2] = (PosixDescriptor){.kind=DESCRIPTOR_OUTPUT,.handle=stdout_handle};
@@ -551,6 +612,8 @@ void dominit0_posix_view_destroy(Dominit0PosixView *view)
             (void)libfacet_handle_release(view->descriptors[fd].handle);
     if (view->cwd_handle.platform != NULL)
         (void)libfacet_handle_release(view->cwd_handle);
+    if (view->root_handle.platform != NULL)
+        (void)libfacet_handle_release(view->root_handle);
     if (view->default_session.platform != NULL)
         (void)libfacet_handle_release(view->default_session);
     free(view);

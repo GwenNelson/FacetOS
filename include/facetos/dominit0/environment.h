@@ -48,6 +48,8 @@ int dominit0_process_environment_bind_lifecycle(
 int dominit0_process_environment_bind_terminal(
     Dominit0ProcessEnvironment *environment, FacetHandle input,
     FacetHandle output, FacetHandle control, FacetHandle terminal);
+int dominit0_process_environment_set_posix_root(
+    Dominit0ProcessEnvironment *environment, const char *path);
 void dominit0_process_environment_set_terminal_index(
     Dominit0ProcessEnvironment *environment, uint64_t terminal_index);
 int dominit0_process_environment_set_terminal_name(
