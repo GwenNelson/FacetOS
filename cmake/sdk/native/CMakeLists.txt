@@ -11,7 +11,8 @@ function(configure_facet_native target)
     set_target_properties(${target} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
     target_include_directories(${target} BEFORE PRIVATE
-        "${FACET_GENERATED_INCLUDE}")
+        "${FACET_GENERATED_INCLUDE}"
+        "${FACETOS_ROOT}/src/apps")
     add_dependencies(${target} facet-idl-page-allocator-generated)
     add_dependencies(${target} facet-idl-environment-generated)
     add_dependencies(${target} facet-idl-shell-contracts-generated)
@@ -19,16 +20,21 @@ endfunction()
 
 function(add_facet_native_program target source)
     add_executable(${target} ${FACET_NATIVE_CRT}
-        "${FACETOS_ROOT}/src/apps/${source}")
+        "${FACETOS_ROOT}/src/apps/native/${source}")
     configure_facet_native(${target})
     target_link_libraries(${target} PRIVATE facet_common
         facet-app-platform-sel4 libc-native)
+    target_link_options(${target} PRIVATE
+        "-Wl,-Map,${CMAKE_BINARY_DIR}/${target}.map")
 endfunction()
 
 add_facet_native_program(FacetShell facet_shell.c)
+target_sources(FacetShell PRIVATE
+    "${FACETOS_ROOT}/src/apps/native/shell_parser.c")
 add_facet_native_program(FacetLogin facet_login.c)
 add_facet_native_program(ls facet_ls.c)
 add_facet_native_program(cat facet_cat.c)
+add_facet_native_program(TestPerms facet_test_perms.c)
 
 function(add_facet_seat_server target definition)
     add_executable(${target} ${FACET_NATIVE_CRT}

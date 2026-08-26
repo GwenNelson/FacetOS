@@ -203,6 +203,11 @@ int main(void)
     uint64_t domain_id = UINT64_MAX;
     assert(session->get_domain_id(session->self, &domain_id) == FACET_OK);
     assert(domain_id == 0);
+    uint32_t uid = UINT32_MAX, gid = UINT32_MAX;
+    bool admin = false;
+    assert(session->get_credentials(session->self, &uid, &gid, &admin) ==
+           FACET_OK);
+    assert(uid == 0 && gid == 0 && admin);
     FacetHandle principal_handle = {0};
     assert(session->get_principal(session->self, &principal_handle) == FACET_OK);
     IPrincipal *principal = libfacet_new_proxy_client(&IPrincipal_MetaData,
@@ -224,6 +229,21 @@ int main(void)
     libfacet_free_proxy_client(human);
     libfacet_free_proxy_client(principal);
     libfacet_free_proxy_client(session);
+
+    FacetHandle user_session_handle = {0};
+    assert(dominit0_auth_session_for_user(0, "user", &user_session_handle) ==
+           FACET_OK);
+    ISession *user_session = libfacet_new_proxy_client(
+        &ISession_MetaData, user_session_handle);
+    assert(user_session != NULL);
+    uid = gid = UINT32_MAX;
+    admin = true;
+    assert(user_session->get_credentials(user_session->self, &uid, &gid,
+                                         &admin) == FACET_OK);
+    assert(uid == 1000 && gid == 1000 && !admin);
+    libfacet_free_proxy_client(user_session);
+    assert(dominit0_auth_session_for_user(0, "missing", &user_session_handle) ==
+           FACET_NOT_FOUND);
     (void)libfacet_handle_release(proof);
     libfacet_free_proxy_client(security1);
     libfacet_free_proxy_client(domain1);

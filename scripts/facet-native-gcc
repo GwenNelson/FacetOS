@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+facet_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+sdk="$facet_root/build/sdk"
+generated="$facet_root/build/facetos/generated/include"
+musl_headers="$sdk/musllibc/build-temp/stage/include"
+
+if [[ ! -f "$sdk/libc-native.a" ]]; then
+    make -C "$facet_root" configure libfacet
+    ninja -C "$sdk" libc-native facet-app-platform-sel4
+fi
+
+compile_only=0
+for argument in "$@"; do
+    case "$argument" in -c|-E|-S) compile_only=1;; esac
+done
+
+common=(--sysroot="$sdk" -m64 -march=nehalem -ffreestanding
+        -fno-stack-protector -fno-pie -mno-red-zone
+        -I"$generated" -I"$facet_root/include" -I"$musl_headers"
+        -I"$facet_root/src/apps"
+        -I"$facet_root/external/sel4runtime/include"
+        -I"$facet_root/external/sel4runtime/include/mode/64"
+        -I"$facet_root/external/sel4runtime/include/arch/x86"
+        -I"$facet_root/external/sel4runtime/include/sel4_arch/x86_64"
+        -I"$facet_root/external/seL4/libsel4/include"
+        -I"$facet_root/external/seL4/libsel4/arch_include/x86"
+        -I"$facet_root/external/seL4/libsel4/sel4_arch_include/x86_64"
+        -I"$facet_root/external/seL4/libsel4/sel4_plat_include/pc99"
+        -I"$facet_root/external/seL4/libsel4/mode_include/64"
+        -I"$sdk/libsel4/include" -I"$sdk/libsel4/arch_include/x86"
+        -I"$sdk/libsel4/sel4_arch_include/x86_64"
+        -I"$sdk/libsel4/autoconf" -I"$sdk/kernel/gen_config"
+        -I"$sdk/libsel4/gen_config")
+if (( compile_only )); then
+    exec gcc "${common[@]}" "$@"
+fi
+
+exec gcc "${common[@]}" -static -nostdlib -Wl,-m,elf_x86_64 \
+    -Wl,-z,max-page-size=0x1000 \
+    "$facet_root/src/libc/native/start.S" \
+    "$facet_root/src/libc/native/start.c" "$@" \
+    -Wl,--start-group -lgcc -lgcc_eh \
+    "$facet_root/build/facetos/libfacet/common/libfacet-common.a" \
+    "$sdk/libfacet-platform-sel4.a" "$sdk/libc-native.a" \
+    "$sdk/libfacet-platform-sel4-client.a" \
+    "$sdk/sel4runtime/libsel4runtime.a" "$sdk/libsel4/libsel4.a" \
+    -Wl,--end-group

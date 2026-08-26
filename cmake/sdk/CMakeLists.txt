@@ -368,6 +368,7 @@ add_library(libc-native STATIC
     "${FACETOS_ROOT}/src/libc/common/string.c"
     "${FACETOS_ROOT}/src/libc/common/runtime.c"
     "${FACETOS_ROOT}/src/libc/common/format.c"
+    "${FACETOS_ROOT}/src/libc/native/exit.c"
 )
 set_target_properties(libc-native PROPERTIES OUTPUT_NAME "c-native")
 facetos_configure_target(libc-native)
@@ -391,6 +392,7 @@ add_library(libc-posix STATIC
     "${FACETOS_ROOT}/src/posix/libc/read.c"
     "${FACETOS_ROOT}/src/posix/libc/files.c"
     "${FACETOS_ROOT}/src/posix/libc/stdio.c"
+    "${FACETOS_ROOT}/src/posix/libc/exit.c"
 )
 set_target_properties(libc-posix PROPERTIES OUTPUT_NAME "c-posix")
 facetos_configure_target(libc-posix)

@@ -18,6 +18,7 @@
 #include <string.h>
 
 #include "platform/allocator.h"
+#include "shell_parser.h"
 
 static FacetResult write_text(IByteWriter *output, const char *text)
 {
@@ -144,51 +145,6 @@ static void command_cd(IDirectory **cwd, IByteWriter *output, const char *path)
     *cwd = replacement;
 }
 
-static int parse_command(char *line, char *arguments[], size_t capacity,
-                         size_t *count)
-{
-    char *source = line;
-    char *destination = line;
-    *count = 0;
-    while (*source != '\0') {
-        while (*source == ' ' || *source == '\t') source++;
-        if (*source == '\0') break;
-        if (*count == capacity) return -1;
-        arguments[(*count)++] = destination;
-        char quote = 0;
-        for (;;) {
-            char byte = *source;
-            if (byte == '\0') {
-                if (quote != 0) return -1;
-                break;
-            }
-            if (byte == '\\') {
-                source++;
-                if (*source == '\0') return -1;
-                *destination++ = *source++;
-                continue;
-            }
-            if (quote != 0) {
-                source++;
-                if (byte == quote) quote = 0;
-                else *destination++ = byte;
-                continue;
-            }
-            if (byte == '\'' || byte == '"') {
-                quote = byte;
-                source++;
-                continue;
-            }
-            if (byte == ' ' || byte == '\t') break;
-            *destination++ = byte;
-            source++;
-        }
-        while (*source == ' ' || *source == '\t') source++;
-        *destination++ = '\0';
-    }
-    return 0;
-}
-
 static bool file_exists(IDirectory *cwd, const char *path)
 {
     FacetString name = {.data = path, .length = strlen(path)};
@@ -218,24 +174,12 @@ static char *resolve_program(IDirectory *cwd, const char *command,
     if (strchr(command, '/') != NULL)
         return file_exists(cwd, command) ? strdup(command) : NULL;
     if (path == NULL || *path == '\0') path = "/FacetOS";
-    const char *cursor = path;
-    while (true) {
-        const char *end = strchr(cursor, ':');
-        size_t directory_length = end == NULL ? strlen(cursor) :
-            (size_t)(end - cursor);
-        const char *directory = directory_length == 0 ? "." : cursor;
-        if (directory_length == 0) directory_length = 1;
-        size_t needed = directory_length + 1 + strlen(command) + 1;
-        char *candidate = malloc(needed);
-        if (candidate == NULL) return NULL;
-        memcpy(candidate, directory, directory_length);
-        size_t used = directory_length;
-        if (used == 0 || candidate[used - 1] != '/') candidate[used++] = '/';
-        strcpy(&candidate[used], command);
+    size_t offset = 0;
+    while (offset != SIZE_MAX) {
+        char *candidate = facet_shell_path_candidate(path, &offset, command);
+        if (candidate == NULL) break;
         if (file_exists(cwd, candidate)) return candidate;
         free(candidate);
-        if (end == NULL) break;
-        cursor = end + 1;
     }
     return NULL;
 }
@@ -261,6 +205,13 @@ static void execute_program(IProcessManager *processes,
         (void)write_text(output, "unable to capture process context\r\n");
         return;
     }
+    if (environment->set_cwd(environment->self, cwd_handle) != FACET_OK) {
+        (void)libfacet_handle_release(environment_handle);
+        (void)libfacet_handle_release(cwd_handle);
+        free(program);
+        (void)write_text(output, "unable to update current directory\r\n");
+        return;
+    }
     FacetString executable = {.data = program, .length = strlen(program)};
     FacetString values[32];
     for (size_t i = 0; i < count; i++)
@@ -269,13 +220,17 @@ static void execute_program(IProcessManager *processes,
     values[0] = executable;
     FacetArray_string argv = {.data = values, .count = count};
     FacetResult result = processes->launch(
-        processes->self, &executable, &argv, environment_handle, cwd_handle,
+        processes->self, &executable, &argv, environment_handle,
         &process_handle);
     (void)libfacet_handle_release(environment_handle);
     (void)libfacet_handle_release(cwd_handle);
     free(program);
     if (result != FACET_OK) {
-        (void)write_text(output, "unable to start program\r\n");
+        char code[] = "unable to start program (-00)\r\n";
+        unsigned value = (unsigned)(result < 0 ? -result : result);
+        code[26] = value >= 10 ? (char)('0' + value / 10) : ' ';
+        code[27] = (char)('0' + value % 10);
+        (void)write_text(output, code);
         return;
     }
     IProcess *process = libfacet_proxy_from_handle(&IProcess_MetaData,
@@ -313,7 +268,7 @@ static void shell_loop(IByteReader *input, IByteWriter *output,
         if (read_line(input, output, line, sizeof(line)) != FACET_OK) break;
         char *arguments[32];
         size_t count = 0;
-        if (parse_command(line, arguments, 32, &count) != 0) {
+        if (facet_shell_parse_command(line, arguments, 32, &count) != 0) {
             (void)write_text(output, "syntax error: unmatched quote or escape\r\n");
             continue;
         }

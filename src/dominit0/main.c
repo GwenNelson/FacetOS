@@ -10,6 +10,8 @@
 #include <facetos/dominit0/terminal.h>
 #include <facetos/dominit0/process.h>
 #include <facetos/initrd.h>
+#include <facetos/interfaces/IGenericObject.h>
+#include <facetos/interfaces/IHumanUser.h>
 
 #ifdef DEBUG
 void test_kmalloc(void) {
@@ -86,7 +88,9 @@ static void launch_configured_domains(Dominit0SystemConfig *system)
           FacetResult store_result = current->initrd == NULL ? FACET_ERROR :
               facet_initrd_export(current->initrd, &file_store);
           int bind_result = store_result == FACET_OK ?
-              dominit0_environment_bind_file_store(current->environment, file_store) : -1;
+              dominit0_environment_bind_file_store(current->environment,
+                                                    current->initrd,
+                                                    file_store) : -1;
           if (current->initrd == NULL || store_result != FACET_OK || bind_result != 0) {
                klog(LOG_ERROR, "Unable to prepare initrd %s for domain %llu\n",
                     parsed->initrd, (unsigned long long)parsed->id);
@@ -133,6 +137,9 @@ void main(int argc, char **argv, char **envp) {
         test_kmalloc();
      #endif
      platform_init();
+     if (libfacet_register_generic_metadata(&IGenericObject_MetaData) != FACET_OK ||
+         libfacet_register_interface_metadata(&IHumanUser_MetaData) != FACET_OK)
+          kpanic("Unable to register dominit0 interface metadata!");
 
      PlatformConfigSource source;
      PlatformConfigSourceStatus source_status =

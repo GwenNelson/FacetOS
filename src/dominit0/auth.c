@@ -50,6 +50,10 @@ struct AuthAuthority {
 static AuthAuthority *authorities;
 static size_t authority_count;
 
+static FacetResult create_session_for_user(AuthAuthority *authority,
+                                           AuthUser *user,
+                                           FacetHandle *out);
+
 static bool iid_equal(uuid_t left, uuid_t right)
 {
     return memcmp(left.bytes, right.bytes, sizeof(left.bytes)) == 0;
@@ -366,14 +370,27 @@ static FacetResult security_create(void *self, FacetHandle authenticated,
         if (principal.platform != NULL) (void)libfacet_handle_release(principal);
         return FACET_ACCESS_DENIED;
     }
+    (void)libfacet_handle_release(principal);
+    return create_session_for_user(authority, authenticated_user, out);
+}
+
+static FacetResult create_session_for_user(AuthAuthority *authority,
+                                           AuthUser *user,
+                                           FacetHandle *out)
+{
+    if (out == NULL) return FACET_INVALID_ARGUMENT;
+    *out = (FacetHandle){0};
+    if (authority == NULL || user == NULL || export_user(user) != 0)
+        return FACET_OUT_OF_MEMORY;
     Session *session = calloc(1, sizeof(*session));
-    if (session == NULL) {
-        (void)libfacet_handle_release(principal);
+    if (session == NULL) return FACET_OUT_OF_MEMORY;
+    if (libfacet_handle_clone(user->principal_handle, &session->principal) !=
+        FACET_OK) {
+        free(session);
         return FACET_OUT_OF_MEMORY;
     }
-    session->principal = principal;
     session->domain_id = authority->domain_id;
-    session->user = authenticated_user->config;
+    session->user = user->config;
     session->interface.self = session;
     session->interface.priv = session;
     session->interface.getInterface = session_get_interface;
@@ -382,13 +399,32 @@ static FacetResult security_create(void *self, FacetHandle authenticated,
     session->interface.get_credentials = session_credentials;
     if (libfacet_export_interface(&session->interface, &ISession_MetaData,
                                   &session->handle) != FACET_OK) {
-        (void)libfacet_handle_release(principal);
+        (void)libfacet_handle_release(session->principal);
         free(session);
         return FACET_OUT_OF_MEMORY;
     }
     session->next = authority->sessions;
     authority->sessions = session;
     return clone_handle(session->handle, out);
+}
+
+FacetResult dominit0_auth_session_for_user(uint64_t domain_id,
+                                           const char *name,
+                                           FacetHandle *out)
+{
+    if (name == NULL || out == NULL) return FACET_INVALID_ARGUMENT;
+    *out = (FacetHandle){0};
+    for (size_t i = 0; i < authority_count; i++) {
+        AuthAuthority *authority = &authorities[i];
+        if (authority->domain_id != domain_id) continue;
+        for (size_t j = 0; j < authority->user_count; j++) {
+            AuthUser *user = &authority->users[j];
+            if (strcmp(user->config->name, name) == 0)
+                return create_session_for_user(authority, user, out);
+        }
+        return FACET_NOT_FOUND;
+    }
+    return FACET_NOT_FOUND;
 }
 
 static void destroy_authority(AuthAuthority *authority)

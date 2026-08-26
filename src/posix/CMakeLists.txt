@@ -7,7 +7,7 @@ set(CMAKE_C_LINK_EXECUTABLE
 add_executable(PosixLogin
     "${CMAKE_CURRENT_LIST_DIR}/crt/start.S"
     "${CMAKE_CURRENT_LIST_DIR}/crt/start.c"
-    "${CMAKE_CURRENT_LIST_DIR}/bin/login/main.c"
+    "${FACETOS_ROOT}/src/apps/posix/login.c"
 )
 facetos_configure_target(PosixLogin)
 target_include_directories(PosixLogin BEFORE PRIVATE
@@ -19,4 +19,25 @@ target_include_directories(PosixLogin SYSTEM PRIVATE
 )
 add_dependencies(PosixLogin facet-idl-shell-contracts-generated)
 target_link_libraries(PosixLogin PRIVATE
-    facet_common facet-platform-sel4-client libc-posix sel4runtime sel4)
+    facet_common facet-app-platform-sel4 libc-posix)
+target_link_options(PosixLogin PRIVATE
+    "-Wl,-Map,${CMAKE_BINARY_DIR}/PosixLogin.map")
+
+add_executable(PosixTestPerms
+    "${CMAKE_CURRENT_LIST_DIR}/crt/start.S"
+    "${CMAKE_CURRENT_LIST_DIR}/crt/start.c"
+    "${FACETOS_ROOT}/src/apps/posix/test_perms.c"
+)
+facetos_configure_target(PosixTestPerms)
+target_include_directories(PosixTestPerms BEFORE PRIVATE
+    "${FACET_GENERATED_INCLUDE}"
+    "${CMAKE_CURRENT_LIST_DIR}/include"
+)
+target_include_directories(PosixTestPerms SYSTEM PRIVATE
+    "${CMAKE_BINARY_DIR}/musllibc/build-temp/stage/include"
+)
+add_dependencies(PosixTestPerms facet-idl-shell-contracts-generated)
+target_link_libraries(PosixTestPerms PRIVATE
+    facet_common facet-app-platform-sel4 libc-posix)
+target_link_options(PosixTestPerms PRIVATE
+    "-Wl,-Map,${CMAKE_BINARY_DIR}/PosixTestPerms.map")

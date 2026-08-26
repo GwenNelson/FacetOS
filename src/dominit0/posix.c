@@ -79,6 +79,10 @@ static FacetResult posix_write(void *self, int32_t fd,
     uint32_t written = 0;
     FacetResult transport = writer->write_bytes(writer->self, data, &written);
     libfacet_free_proxy_client(writer);
+    if (transport == FACET_ACCESS_DENIED) {
+        *error = EACCES;
+        return FACET_OK;
+    }
     if (transport != FACET_OK) return transport;
     *result = written;
     return FACET_OK;
@@ -119,6 +123,10 @@ static FacetResult posix_read(void *self, int32_t fd, uint32_t maximum,
         *error = EBADF;
         return FACET_OK;
     }
+    if (transport == FACET_ACCESS_DENIED) {
+        *error = EACCES;
+        return FACET_OK;
+    }
     if (transport != FACET_OK) return transport;
     *result = (int64_t)data->count;
     return FACET_OK;
@@ -154,6 +162,7 @@ static FacetResult posix_open(void *self, const FacetString *path,
         cwd->open_file(cwd->self, path, &file_handle);
     libfacet_free_proxy_client(cwd);
     if (opened == FACET_NOT_FOUND) { *error = ENOENT; return FACET_OK; }
+    if (opened == FACET_ACCESS_DENIED) { *error = EACCES; return FACET_OK; }
     if (opened != FACET_OK) return opened;
     view->descriptors[slot] = (PosixDescriptor){
         .kind = DESCRIPTOR_FILE, .handle = file_handle, .offset = 0,

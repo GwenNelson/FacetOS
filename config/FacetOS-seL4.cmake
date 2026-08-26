@@ -31,3 +31,6 @@ set(KernelNumDomains 16 CACHE STRING "")
 set(KernelRootCNodeSizeBits 19 CACHE STRING "")
 set(KernelMaxNumBootinfoUntypedCaps 230 CACHE STRING "")
 set(KernelFSGSBase "msr" CACHE STRING "")
+# Keep development images runnable under QEMU's TCG fallback as well as KVM.
+# PCID is an optional TLB optimisation and TCG does not emulate it.
+set(KernelSupportPCID OFF CACHE BOOL "" FORCE)

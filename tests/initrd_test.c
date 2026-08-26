@@ -1,4 +1,5 @@
 #include <facetos/initrd.h>
+#include <facetos/dominit0/file_view.h>
 #include <facetos/interfaces/IFile.h>
 #include <facetos/interfaces/IFileStore.h>
 #include <facetos/interfaces/IDirectory.h>
@@ -94,13 +95,14 @@ typedef struct Archive {
     size_t size;
 } Archive;
 
-static void append_entry(Archive *archive, const char *name, unsigned mode,
-                         const void *data, size_t size)
+static void append_owned_entry(Archive *archive, const char *name,
+                               unsigned mode, unsigned uid, unsigned gid,
+                               const void *data, size_t size)
 {
     char header[111];
     int length = snprintf(header, sizeof(header),
         "070701%08x%08x%08x%08x%08x%08x%08x%08x%08x%08x%08x%08x%08x",
-        1, mode, 0, 0, 1, 0, (unsigned)size, 0, 0, 0, 0,
+        1, mode, uid, gid, 1, 0, (unsigned)size, 0, 0, 0, 0,
         (unsigned)(strlen(name) + 1), 0);
     assert(length == 110);
     memcpy(archive->bytes + archive->size, header, 110);
@@ -113,6 +115,12 @@ static void append_entry(Archive *archive, const char *name, unsigned mode,
     while ((archive->size & 3u) != 0) archive->bytes[archive->size++] = 0;
 }
 
+static void append_entry(Archive *archive, const char *name, unsigned mode,
+                         const void *data, size_t size)
+{
+    append_owned_entry(archive, name, mode, 0, 0, data, size);
+}
+
 static Archive valid_archive(void)
 {
     Archive archive = {0};
@@ -121,6 +129,13 @@ static Archive valid_archive(void)
     append_entry(&archive, "README", 0100644, contents, sizeof(contents) - 1);
     append_entry(&archive, "dir", 0040755, NULL, 0);
     append_entry(&archive, "dir/file", 0100644, "x", 1);
+    append_owned_entry(&archive, "owner-tool", 0100750, 1000, 1000, "x", 1);
+    append_entry(&archive, "not-executable", 0100644, "x", 1);
+    append_owned_entry(&archive, "private", 0040700, 1000, 1000, NULL, 0);
+    append_owned_entry(&archive, "private/tool", 0100755, 1000, 1000,
+                       "x", 1);
+    append_owned_entry(&archive, "private/secret", 0100600, 1000, 1000,
+                       "secret", 6);
     append_entry(&archive, "TRAILER!!!", 0, NULL, 0);
     return archive;
 }
@@ -280,6 +295,18 @@ static void test_lookup_and_read_only_rpc(void)
     assert(memcmp(data, "hello from initrd\n", size) == 0);
     assert(facet_initrd_find_file(initrd, "README", &data, &size) == FACET_NOT_FOUND);
     assert(facet_initrd_find_file(initrd, "/missing", &data, &size) == FACET_NOT_FOUND);
+    assert(facet_initrd_check_execute(initrd, "/owner-tool", 1000, 1000,
+                                      false) == FACET_OK);
+    assert(facet_initrd_check_execute(initrd, "/owner-tool", 2000, 2000,
+                                      false) == FACET_ACCESS_DENIED);
+    assert(facet_initrd_check_execute(initrd, "/owner-tool", 42, 42,
+                                      true) == FACET_OK);
+    assert(facet_initrd_check_execute(initrd, "/not-executable", 0, 0,
+                                      true) == FACET_ACCESS_DENIED);
+    assert(facet_initrd_check_execute(initrd, "/private/tool", 1000, 1000,
+                                      false) == FACET_OK);
+    assert(facet_initrd_check_execute(initrd, "/private/tool", 2000, 2000,
+                                      false) == FACET_ACCESS_DENIED);
 
     FacetHandle store_handle = {0};
     assert(facet_initrd_export(initrd, &store_handle) == FACET_OK);
@@ -287,6 +314,41 @@ static void test_lookup_and_read_only_rpc(void)
     assert(libfacet_handle_clone(store_handle, &store_client_handle) == FACET_OK);
     IFileStore *store = libfacet_new_proxy_client(&IFileStore_MetaData,
                                                   store_client_handle);
+
+    Dominit0CredentialFileStore *owner_view =
+        dominit0_credential_file_store_create(initrd, 1000, 1000, false);
+    Dominit0CredentialFileStore *other_view =
+        dominit0_credential_file_store_create(initrd, 2000, 2000, false);
+    assert(owner_view != NULL && other_view != NULL);
+    FacetHandle view_handle = {0};
+    assert(libfacet_handle_clone(
+               dominit0_credential_file_store_handle(owner_view),
+               &view_handle) == FACET_OK);
+    IFileStore *owner_store = libfacet_new_proxy_client(&IFileStore_MetaData,
+                                                        view_handle);
+    FacetString secret_path = facet_string("/private/secret");
+    FacetHandle secret_handle = {0};
+    assert(owner_store->open_file(owner_store->self, &secret_path,
+                                  &secret_handle) == FACET_OK);
+    IFile *secret = libfacet_new_proxy_client(&IFile_MetaData, secret_handle);
+    FacetArray_u8 secret_data = {0};
+    assert(secret->read_at(secret->self, 0, 16, &secret_data) == FACET_OK);
+    assert(secret_data.count == 6 &&
+           memcmp(secret_data.data, "secret", 6) == 0);
+    free(secret_data.data);
+    libfacet_free_proxy_client(secret);
+    libfacet_free_proxy_client(owner_store);
+
+    assert(libfacet_handle_clone(
+               dominit0_credential_file_store_handle(other_view),
+               &view_handle) == FACET_OK);
+    IFileStore *other_store = libfacet_new_proxy_client(&IFileStore_MetaData,
+                                                        view_handle);
+    secret_handle = (FacetHandle){0};
+    assert(other_store->open_file(other_store->self, &secret_path,
+                                  &secret_handle) == FACET_ACCESS_DENIED);
+    assert(secret_handle.platform == NULL);
+    libfacet_free_proxy_client(other_store);
     FacetString path = {.data = "/README", .length = 7};
     FacetHandle file_handle = {0};
     assert(store->open_file(store->self, &path, &file_handle) == FACET_OK);
@@ -316,7 +378,7 @@ static void test_lookup_and_read_only_rpc(void)
     assert(directory->list(directory->self, 0, 16, &entries, &next, &end) ==
            FACET_OK);
     assert(end);
-    assert(entries.count == 2);
+    assert(entries.count == 5);
     assert(entries.data[0].name.length == strlen("README"));
     assert(memcmp(entries.data[0].name.data, "README",
                   entries.data[0].name.length) == 0);
@@ -346,6 +408,8 @@ static void test_lookup_and_read_only_rpc(void)
     libfacet_free_proxy_client(directory);
     test_path_resolution_rpc(store);
     libfacet_free_proxy_client(store);
+    dominit0_credential_file_store_destroy(other_view);
+    dominit0_credential_file_store_destroy(owner_view);
     facet_initrd_destroy(initrd);
 }
 

@@ -97,7 +97,7 @@ static int list_one(IDirectory *cwd, IByteWriter *output, const char *path,
     while (!end) {
         FacetArray_Entry entries = {0};
         uint64_t next = cursor;
-        if (directory->list(directory->self, cursor, 32, &entries,
+        if (directory->list(directory->self, cursor, 8, &entries,
                             &next, &end) != FACET_OK)
             break;
         for (size_t i = 0; i < entries.count; i++) {
@@ -148,6 +148,7 @@ int main(int argc, char **argv)
         return 1;
     IDirectory *cwd = libfacet_proxy_from_handle(&IDirectory_MetaData,
                                                   cwd_handle);
+    if (cwd == NULL) return 1;
     bool long_format = false, show_all = false, options = true;
     int status = 0;
     int first_path = argc;

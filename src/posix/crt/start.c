@@ -12,6 +12,7 @@
 #undef main
 
 #include <stdint.h>
+#include <stdlib.h>
 
 static IPOSIXView *posix_view;
 static IPageAllocator page_allocator;
@@ -66,6 +67,7 @@ __attribute__((noreturn)) void facet_posix_start(const void *stack)
     const auxv_t *auxv = (const auxv_t *)&envp[envc + 1];
     __sel4runtime_load_env((int)argc_word, (const char *const *)argv,
                            (const char *const *)envp, auxv);
+    facet_libc_initialize(envp, (const FacetAuxvEntry *)auxv);
 
     uint64_t abi_version, endpoint, cnode, receive_slot, depth;
     if (lookup_auxv(auxv, AT_FACET_ABI_VERSION, &abi_version) != 0 ||
@@ -88,8 +90,12 @@ __attribute__((noreturn)) void facet_posix_start(const void *stack)
         .free = free_pages,
     };
     if (facet_app_allocator_use_pages(&page_allocator) != 0) goto stopped;
-    int status = main((int)argc_word, argv);
-    (void)posix_view->exit_process(posix_view->self, status);
+    exit(main((int)argc_word, argv));
 stopped:
     for (;;) seL4_Yield();
+}
+
+void facet_posix_yield(void)
+{
+    seL4_Yield();
 }

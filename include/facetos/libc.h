@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 /* ELF reserves this interval for operating-system auxiliary-vector keys. */
@@ -42,5 +43,12 @@ typedef struct FacetAuxvEntry {
     uintptr_t value;
 } FacetAuxvEntry;
 
-unsigned long getauxval(unsigned long type);
+/* Called by the FacetOS CRT before main(). Applications normally use getenv()
+ * and getauxval() rather than accessing this startup state directly. */
+void facet_libc_initialize(char *const environment[],
+                           const FacetAuxvEntry auxiliary_vector[]);
+char *const *facet_libc_environment(void);
+const FacetAuxvEntry *facet_libc_auxiliary_vector(void);
+int facet_auxv_validate(size_t count, const FacetAuxvEntry entries[]);
 
+unsigned long getauxval(unsigned long type);

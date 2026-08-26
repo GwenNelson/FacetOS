@@ -1,4 +1,4 @@
-// Immutable, process-specific namespace of delegated capabilities.
+// Process-specific namespace of delegated capabilities and process state.
 interface IProcessEnvironment {
     uuid auto;
     requires IGenericObject;
@@ -17,6 +17,7 @@ interface IProcessEnvironment {
     // Immutable SysV KEY=VALUE snapshot installed as envp at process startup.
     method FacetResult get_sysv_environment(out array<string> variables);
     method FacetResult get_cwd(out handle directory);
+    method FacetResult set_cwd(in handle directory);
     method FacetResult get_standard_streams(out handle input,
                                             out handle output,
                                             out handle error);

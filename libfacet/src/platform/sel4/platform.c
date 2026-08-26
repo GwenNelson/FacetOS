@@ -15,14 +15,15 @@ typedef struct FacetSel4Export FacetSel4Export;
 #define FACET_SEL4_FLAG_SHARED_PAYLOAD (1u << 31)
 #define FACET_SEL4_BUFFER_COUNT_SHIFT 24
 #define FACET_SEL4_BUFFER_COUNT_MASK 0x7fu
-/* Each exported server reserves receive slots in dominit0's bootstrap CSpace.
- * Current methods transfer either one object or one bulk frame, never both;
- * reserve exactly the capability count the implemented ABI requires. */
+/* seL4 exposes one receiver capability slot per IPC. Calls that need to pass
+ * object context therefore carry one root object and resolve subordinate
+ * state through it. */
 #define FACET_SEL4_MAX_ATTACHMENTS 1u
-/* Facet RPC dispatch is deliberately small and non-recursive.  A full
- * sel4utils 64 KiB server stack for every exported interface prematurely
- * exhausts dominit0 while it is setting up per-domain environments. */
-#define FACET_SEL4_SERVER_STACK_PAGES 4u
+/* Local server-to-server calls are dispatched without IPC, but constructing a
+ * process environment legitimately crosses several typed dispatch layers.
+ * Six pages leaves headroom for that bounded path without paying the full
+ * sel4utils 64 KiB default for every exported interface. */
+#define FACET_SEL4_SERVER_STACK_PAGES 6u
 
 typedef struct FacetSel4BulkState {
     vka_object_t frames[FACET_RPC_MAX_ATTACHMENTS];
@@ -572,7 +573,7 @@ FacetResult libfacet_platform_handle_release(FacetHandle handle)
     return FACET_OK;
 }
 
-FacetResult libfacet_platform_call(
+static FacetResult remote_call(
     FacetHandle target,
     const FacetRpcMessage *request,
     FacetRpcMessage *reply)
@@ -686,6 +687,64 @@ FacetResult libfacet_platform_call(
     }
     free_receive_paths(receive_paths, FACET_SEL4_MAX_ATTACHMENTS);
     return FACET_OK;
+}
+
+static FacetResult local_call(FacetSel4Handle *native,
+                              const FacetRpcMessage *request,
+                              FacetRpcMessage *reply)
+{
+    FacetRpcMessage *actual = malloc(sizeof(*actual));
+    FacetRpcMessage *generated = calloc(1, sizeof(*generated));
+    if (actual == NULL || generated == NULL) {
+        free(actual);
+        free(generated);
+        return FACET_OUT_OF_MEMORY;
+    }
+    *actual = *request;
+    if (native->method_id != 0) actual->method_id = native->method_id;
+    generated->protocol_version = FACET_RPC_PROTOCOL_VERSION;
+    FacetResult result = native->export_state->dispatch(
+        native->export_state->context, actual, generated);
+    if (generated->word_count == 0)
+        generated->words[generated->word_count++] = (uint64_t)(int64_t)result;
+    for (size_t i = 0; i < generated->attachment_count; i++) {
+        if (generated->attachments[i].kind != FACET_RPC_ATTACHMENT_HANDLE ||
+            generated->attachments[i].handle.platform == NULL)
+            continue;
+        FacetHandle clone = {0};
+        if (libfacet_platform_handle_clone(
+                generated->attachments[i].handle, &clone) != FACET_OK) {
+            for (size_t j = 0; j < i; j++)
+                if (generated->attachments[j].kind ==
+                        FACET_RPC_ATTACHMENT_HANDLE &&
+                    generated->attachments[j].handle.platform != NULL)
+                    (void)libfacet_platform_handle_release(
+                        generated->attachments[j].handle);
+            free(generated->payload);
+            free(actual);
+            free(generated);
+            return FACET_OUT_OF_MEMORY;
+        }
+        generated->attachments[i].handle = clone;
+    }
+    *reply = *generated;
+    free(actual);
+    free(generated);
+    return FACET_OK;
+}
+
+FacetResult libfacet_platform_call(FacetHandle target,
+                                   const FacetRpcMessage *request,
+                                   FacetRpcMessage *reply)
+{
+    FacetSel4Handle *native = as_handle(target);
+    if (!platform_ready || native == NULL || request == NULL || reply == NULL)
+        return FACET_INVALID_ARGUMENT;
+    /* Calling an endpoint owned by this process from one of its service
+     * threads would deadlock. Keep this wrapper's stack tiny because service
+     * stacks are intentionally bounded. */
+    return native->export_state == NULL ? remote_call(target, request, reply) :
+        local_call(native, request, reply);
 }
 
 FacetResult libfacet_platform_export(

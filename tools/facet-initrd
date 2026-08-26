@@ -1,0 +1,327 @@
+#!/usr/bin/env python3
+"""Deterministic, path-safe newc archive editor for FacetOS initrds."""
+
+import argparse
+import dataclasses
+import os
+import pathlib
+import shutil
+import stat
+import sys
+import tempfile
+
+
+@dataclasses.dataclass
+class Entry:
+    name: str
+    mode: int
+    uid: int
+    gid: int
+    data: bytes = b""
+
+    @property
+    def is_dir(self):
+        return stat.S_ISDIR(self.mode)
+
+
+def clean_name(value):
+    if not value or "\0" in value:
+        raise ValueError("archive path is empty or contains NUL")
+    value = value.replace("\\", "/")
+    if value.startswith("/"):
+        raise ValueError(f"archive path must be relative: {value}")
+    parts = []
+    for part in value.split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            raise ValueError(f"archive path escapes root: {value}")
+        parts.append(part)
+    if not parts:
+        return "."
+    return "/".join(parts)
+
+
+def align4(value):
+    return (value + 3) & ~3
+
+
+def parse_hex(raw, offset):
+    try:
+        return int(raw[offset:offset + 8], 16)
+    except ValueError as error:
+        raise ValueError("invalid hexadecimal newc field") from error
+
+
+def read_archive(path):
+    raw = pathlib.Path(path).read_bytes()
+    entries = {}
+    offset = 0
+    while offset + 110 <= len(raw):
+        header = raw[offset:offset + 110]
+        if header[:6] not in (b"070701", b"070702"):
+            raise ValueError(f"invalid newc magic at byte {offset}")
+        mode = parse_hex(header, 14)
+        uid = parse_hex(header, 22)
+        gid = parse_hex(header, 30)
+        size = parse_hex(header, 54)
+        namesize = parse_hex(header, 94)
+        if namesize < 1:
+            raise ValueError("newc entry has an empty name")
+        name_at = offset + 110
+        name_end = name_at + namesize
+        if name_end > len(raw) or raw[name_end - 1] != 0:
+            raise ValueError("truncated or unterminated newc name")
+        try:
+            name = raw[name_at:name_end - 1].decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ValueError("newc entry name is not UTF-8") from error
+        data_at = align4(name_end)
+        data_end = data_at + size
+        if data_end > len(raw):
+            raise ValueError("truncated newc payload")
+        if name == "TRAILER!!!":
+            return entries
+        name = clean_name(name)
+        if name in entries:
+            raise ValueError(f"duplicate archive path: {name}")
+        kind = stat.S_IFMT(mode)
+        if kind not in (stat.S_IFREG, stat.S_IFDIR):
+            raise ValueError(f"unsupported archive node type: {name}")
+        entries[name] = Entry(name, mode, uid, gid, raw[data_at:data_end])
+        offset = align4(data_end)
+    raise ValueError("archive has no TRAILER!!! entry")
+
+
+def newc_header(ino, entry):
+    fields = (
+        ino, entry.mode, entry.uid, entry.gid, 1, 0, len(entry.data),
+        0, 0, 0, 0, len(entry.name.encode("utf-8")) + 1, 0,
+    )
+    return b"070701" + b"".join(f"{value:08x}".encode() for value in fields)
+
+
+def archive_bytes(entries):
+    output = bytearray()
+    ordered = sorted(entries.values(), key=lambda entry: entry.name)
+    trailer = Entry("TRAILER!!!", 0, 0, 0)
+    for ino, entry in enumerate(ordered + [trailer], 1):
+        name = entry.name.encode("utf-8") + b"\0"
+        output.extend(newc_header(ino, entry))
+        output.extend(name)
+        output.extend(b"\0" * (align4(len(output)) - len(output)))
+        output.extend(entry.data)
+        output.extend(b"\0" * (align4(len(output)) - len(output)))
+    return bytes(output)
+
+
+def atomic_write(path, payload):
+    destination = pathlib.Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{destination.name}.", dir=destination.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def entry_from_path(root, path, name):
+    metadata = path.lstat()
+    if path.is_symlink():
+        raise ValueError(f"symbolic links are not supported: {path}")
+    if path.is_dir():
+        mode = stat.S_IFDIR | stat.S_IMODE(metadata.st_mode)
+        data = b""
+    elif path.is_file():
+        mode = stat.S_IFREG | stat.S_IMODE(metadata.st_mode)
+        data = path.read_bytes()
+    else:
+        raise ValueError(f"unsupported filesystem node: {path}")
+    return Entry(clean_name(name), mode, metadata.st_uid, metadata.st_gid, data)
+
+
+def merge_tree(entries, root, replace=True):
+    root = pathlib.Path(root).resolve()
+    if not root.is_dir():
+        raise ValueError(f"not a directory: {root}")
+    entries["."] = entry_from_path(root, root, ".")
+    for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
+        entry = entry_from_path(root, path, path.relative_to(root).as_posix())
+        if not replace and entry.name in entries:
+            raise ValueError(f"archive path already exists: {entry.name}")
+        entries[entry.name] = entry
+
+
+def cmd_pack(args):
+    entries = {}
+    merge_tree(entries, args.root)
+    for overlay in args.overlay:
+        merge_tree(entries, overlay)
+    atomic_write(args.archive, archive_bytes(entries))
+
+
+def safe_output(root, name):
+    root = root.resolve()
+    if name == ".":
+        return root
+    output = root.joinpath(*clean_name(name).split("/"))
+    if root not in output.parents:
+        raise ValueError(f"archive path escapes output root: {name}")
+    return output
+
+
+def cmd_unpack(args):
+    entries = read_archive(args.archive)
+    root = pathlib.Path(args.directory)
+    root.mkdir(parents=True, exist_ok=True)
+    for entry in sorted(entries.values(), key=lambda value: value.name.count("/")):
+        output = safe_output(root, entry.name)
+        if entry.is_dir:
+            output.mkdir(parents=True, exist_ok=True)
+        else:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            if output.exists() and output.is_dir():
+                raise ValueError(f"cannot replace directory with file: {entry.name}")
+            output.write_bytes(entry.data)
+        os.chmod(output, stat.S_IMODE(entry.mode))
+        try:
+            os.chown(output, entry.uid, entry.gid)
+        except PermissionError:
+            pass
+
+
+def cmd_list(args):
+    for entry in sorted(read_archive(args.archive).values(),
+                        key=lambda value: value.name):
+        print(f"{entry.mode:07o} {entry.uid}:{entry.gid} "
+              f"{len(entry.data):8d} {entry.name}")
+
+
+def load_for_edit(path):
+    return read_archive(path) if pathlib.Path(path).exists() else {}
+
+
+def cmd_add(args):
+    entries = load_for_edit(args.archive)
+    name = clean_name(args.destination)
+    if name in entries and not args.replace:
+        raise ValueError(f"archive path already exists: {name}")
+    source = pathlib.Path(args.source)
+    entry = entry_from_path(source.parent, source, name)
+    if args.mode is not None:
+        entry.mode = stat.S_IFMT(entry.mode) | int(args.mode, 8)
+    if args.uid is not None:
+        entry.uid = args.uid
+    if args.gid is not None:
+        entry.gid = args.gid
+    entries[name] = entry
+    atomic_write(args.archive, archive_bytes(entries))
+
+
+def selected(entries, names):
+    result = []
+    for raw in names:
+        name = clean_name(raw)
+        if name not in entries:
+            raise ValueError(f"archive path not found: {name}")
+        result.append(entries[name])
+    return result
+
+
+def cmd_remove(args):
+    entries = read_archive(args.archive)
+    for raw in args.path:
+        name = clean_name(raw)
+        matches = [key for key in entries
+                   if key == name or key.startswith(name + "/")]
+        if not matches:
+            raise ValueError(f"archive path not found: {name}")
+        for key in matches:
+            del entries[key]
+    atomic_write(args.archive, archive_bytes(entries))
+
+
+def cmd_chmod(args):
+    entries = read_archive(args.archive)
+    mode = int(args.mode, 8)
+    if mode < 0 or mode > 0o7777:
+        raise ValueError("mode must be an octal permission value")
+    for entry in selected(entries, args.path):
+        entry.mode = stat.S_IFMT(entry.mode) | mode
+    atomic_write(args.archive, archive_bytes(entries))
+
+
+def cmd_chown(args):
+    entries = read_archive(args.archive)
+    pieces = args.owner.split(":", 1)
+    uid = int(pieces[0])
+    gid = int(pieces[1]) if len(pieces) == 2 and pieces[1] else None
+    for entry in selected(entries, args.path):
+        entry.uid = uid
+        if gid is not None:
+            entry.gid = gid
+    atomic_write(args.archive, archive_bytes(entries))
+
+
+def parser():
+    root = argparse.ArgumentParser(prog="facet-initrd")
+    commands = root.add_subparsers(dest="command", required=True)
+    command = commands.add_parser("pack")
+    command.add_argument("archive")
+    command.add_argument("root")
+    command.add_argument("--overlay", action="append", default=[])
+    command.set_defaults(func=cmd_pack)
+    command = commands.add_parser("unpack")
+    command.add_argument("archive")
+    command.add_argument("directory")
+    command.set_defaults(func=cmd_unpack)
+    command = commands.add_parser("list")
+    command.add_argument("archive")
+    command.set_defaults(func=cmd_list)
+    command = commands.add_parser("add")
+    command.add_argument("archive")
+    command.add_argument("source")
+    command.add_argument("destination")
+    command.add_argument("--replace", action="store_true")
+    command.add_argument("--mode")
+    command.add_argument("--uid", type=int)
+    command.add_argument("--gid", type=int)
+    command.set_defaults(func=cmd_add)
+    command = commands.add_parser("remove")
+    command.add_argument("archive")
+    command.add_argument("path", nargs="+")
+    command.set_defaults(func=cmd_remove)
+    command = commands.add_parser("chmod")
+    command.add_argument("archive")
+    command.add_argument("mode")
+    command.add_argument("path", nargs="+")
+    command.set_defaults(func=cmd_chmod)
+    command = commands.add_parser("chown")
+    command.add_argument("archive")
+    command.add_argument("owner")
+    command.add_argument("path", nargs="+")
+    command.set_defaults(func=cmd_chown)
+    return root
+
+
+def main():
+    try:
+        args = parser().parse_args()
+        args.func(args)
+        return 0
+    except (OSError, ValueError) as error:
+        print(f"facet-initrd: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

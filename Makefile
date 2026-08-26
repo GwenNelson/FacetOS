@@ -33,14 +33,18 @@ FACET_LOGIN    := $(SDK_BUILD)/FacetLogin
 FACET_DUMMY    := $(SDK_BUILD)/FacetDummy
 FACET_LS       := $(SDK_BUILD)/ls
 FACET_CAT      := $(SDK_BUILD)/cat
+FACET_TEST_PERMS := $(SDK_BUILD)/TestPerms
 FACET_DUMMYSH  := $(SDK_BUILD)/dummysh
 FACET_POSIX_LOGIN := $(SDK_BUILD)/facet-posix/PosixLogin
+FACET_POSIX_TEST_PERMS := $(SDK_BUILD)/facet-posix/PosixTestPerms
 FACET_SEAT_SERIAL := $(SDK_BUILD)/seat-server-serial
 FACET_SEAT_PC := $(SDK_BUILD)/seat-server-pc-console
 FACET_CONFIG_FILE := $(ROOT)/config/facet.toml
 INITRD_SYSTEM := $(ROOT)/build/initrd/system.initrd
 INITRD_CHILD := $(ROOT)/build/initrd/child.initrd
 INITRD_DOMINIT0 := $(ROOT)/build/initrd/dominit0.initrd
+FACET_INITRD_TOOL := $(ROOT)/tools/facet-initrd
+FACET_OVERLAY_ROOT := $(ROOT)/.facet-overlays
 
 #
 # FacetOS klibc.
@@ -177,9 +181,17 @@ endif
 	test-config \
 	test-sha256 \
 	test-initrd \
+	test-initrd-tool \
+	test-libc-runtime \
+	test-shell-parser \
 	test-klog \
 	test-logging-setup \
 	test-seat-pc-console
+
+# Several image prerequisites are thin wrappers around one Ninja build tree.
+# Serialise these aggregate targets so `make -j` cannot run two archive/link
+# updates against that tree at once.
+.NOTPARALLEL: build image run run-iso
 
 
 all: facetos
@@ -346,6 +358,8 @@ FACET_INITRD_TEST := $(FACET_CONFIG_BUILD)/initrd-test
 FACET_AUTH_RPC_TEST := $(FACET_CONFIG_BUILD)/auth-rpc-test
 FACET_TERMINAL_RPC_TEST := $(FACET_CONFIG_BUILD)/terminal-rpc-test
 FACET_SEAT_PC_CONSOLE_TEST := $(FACET_CONFIG_BUILD)/seat-pc-console-test
+FACET_LIBC_RUNTIME_TEST := $(FACET_CONFIG_BUILD)/libc-runtime-test
+FACET_SHELL_PARSER_TEST := $(FACET_CONFIG_BUILD)/shell-parser-test
 
 $(FACET_GENERATED_IGENERIC): $(FACET_IDLC) $(ROOT)/idl/IGenericObject.facet
 	@mkdir -p $(FACET_GENERATED_INTERFACE_DIR)
@@ -405,15 +419,40 @@ $(FACET_SHA256_TEST): $(ROOT)/tests/sha256_test.c \
 test-sha256: $(FACET_SHA256_TEST)
 	$(FACET_SHA256_TEST)
 
+$(FACET_LIBC_RUNTIME_TEST): $(ROOT)/tests/libc_runtime_test.c \
+		$(ROOT)/src/libc/common/runtime.c $(ROOT)/src/libc/common/auxv.c \
+		$(ROOT)/libfacet/src/common/auxv.c $(ROOT)/include/facetos/libc.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=gnu11 -O2 -Wall -Wextra -Werror -I$(ROOT)/include \
+		$(ROOT)/src/libc/common/runtime.c $(ROOT)/src/libc/common/auxv.c \
+		$(ROOT)/libfacet/src/common/auxv.c \
+		$(ROOT)/tests/libc_runtime_test.c -o $@
+
+test-libc-runtime: $(FACET_LIBC_RUNTIME_TEST)
+	$(FACET_LIBC_RUNTIME_TEST)
+
+$(FACET_SHELL_PARSER_TEST): $(ROOT)/tests/shell_parser_test.c \
+		$(ROOT)/src/apps/native/shell_parser.c \
+		$(ROOT)/src/apps/native/shell_parser.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=gnu11 -O2 -Wall -Wextra -Werror \
+		-I$(ROOT)/src/apps/native $(ROOT)/src/apps/native/shell_parser.c \
+		$(ROOT)/tests/shell_parser_test.c -o $@
+
+test-shell-parser: $(FACET_SHELL_PARSER_TEST)
+	$(FACET_SHELL_PARSER_TEST)
+
 $(FACET_INITRD_TEST): $(ROOT)/tests/initrd_test.c \
-		$(ROOT)/src/dominit0/initrd.c $(ROOT)/include/facetos/initrd.h \
+		$(ROOT)/src/dominit0/initrd.c $(ROOT)/src/dominit0/file_view.c \
+		$(ROOT)/include/facetos/initrd.h \
 		$(FACET_IDLC)
 	@mkdir -p $(dir $@)
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) facet-idl-shell-contracts-generated
 	$(CC) -std=gnu11 -O2 -ffunction-sections -fdata-sections \
 		-Wall -Wextra -Werror -I$(FACET_GENERATED_INCLUDE) -I$(ROOT)/include \
 		$(ROOT)/libfacet/src/common/runtime.c \
-		$(ROOT)/src/dominit0/initrd.c $(ROOT)/tests/initrd_test.c \
+		$(ROOT)/src/dominit0/initrd.c \
+		$(ROOT)/src/dominit0/file_view.c $(ROOT)/tests/initrd_test.c \
 		-Wl,--gc-sections -o $@
 
 test-initrd: $(FACET_INITRD_TEST)
@@ -442,6 +481,7 @@ $(FACET_TERMINAL_RPC_TEST): $(ROOT)/tests/terminal_rpc_test.c \
 		$(ROOT)/src/config.c $(ROOT)/src/dominit0/config.c \
 		$(ROOT)/src/dominit0/environment.c \
 		$(ROOT)/src/dominit0/process_environment.c \
+		$(ROOT)/src/dominit0/file_view.c \
 		$(ROOT)/src/dominit0/posix.c \
 		$(ROOT)/src/dominit0/terminal.c $(ROOT)/src/dominit0/initrd.c \
 		$(ROOT)/libfacet/src/common/runtime.c \
@@ -454,6 +494,7 @@ $(FACET_TERMINAL_RPC_TEST): $(ROOT)/tests/terminal_rpc_test.c \
 		$(ROOT)/libfacet/src/common/runtime.c $(ROOT)/src/config.c \
 		$(ROOT)/src/dominit0/config.c $(ROOT)/src/dominit0/environment.c \
 		$(ROOT)/src/dominit0/process_environment.c \
+		$(ROOT)/src/dominit0/file_view.c \
 		$(ROOT)/src/dominit0/posix.c \
 		$(ROOT)/src/dominit0/terminal.c $(ROOT)/src/dominit0/initrd.c \
 		$(ROOT)/tests/terminal_rpc_test.c \
@@ -505,7 +546,10 @@ test-logging-setup: $(FACET_LOGGING_SETUP_TEST)
 	$(FACET_LOGGING_SETUP_TEST) optional
 	$(FACET_LOGGING_SETUP_TEST) required
 
-test: test-config test-sha256 test-initrd test-auth-rpc test-terminal-rpc \
+test-initrd-tool: $(ROOT)/tests/initrd_tool_test.py $(FACET_INITRD_TOOL)
+	python3 $(ROOT)/tests/initrd_tool_test.py $(FACET_INITRD_TOOL)
+
+test: test-config test-sha256 test-libc-runtime test-shell-parser test-initrd test-initrd-tool test-auth-rpc test-terminal-rpc \
 	test-klog test-logging-setup test-seat-pc-console
 
 
@@ -582,8 +626,8 @@ $(FACET_LOGIN): facet-idlc libfacet-common configure
 $(FACET_DUMMY) $(FACET_DUMMYSH): facet-idlc libfacet-common configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) FacetDummy dummysh
 
-$(FACET_LS) $(FACET_CAT): facet-idlc libfacet-common configure
-	$(SEL4_ENV) ninja -C $(SDK_BUILD) ls cat
+$(FACET_LS) $(FACET_CAT) $(FACET_TEST_PERMS): facet-idlc libfacet-common configure
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) ls cat TestPerms
 
 
 dominit0: klibc facet-idlc libfacet-common facet-config configure
@@ -602,39 +646,60 @@ libfacet: facet-idlc libfacet-common libfacet-platform-sel4
 
 # Build everything needed to boot FacetOS.
 build: klibc facet-config configure libfacet $(INITRD_DOMINIT0) $(INITRD_SYSTEM) $(INITRD_CHILD)
-	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf dominit0 dominit FacetLogin FacetShell FacetDummy dummysh ls cat seat-server-serial seat-server-pc-console
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) kernel.elf dominit0 dominit FacetLogin FacetShell FacetDummy dummysh ls cat TestPerms PosixTestPerms seat-server-serial seat-server-pc-console
 
 $(FACET_SEAT_SERIAL) $(FACET_SEAT_PC): facet-idlc libfacet-common configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) seat-server-serial seat-server-pc-console
 
-$(INITRD_DOMINIT0): $(FACET_SEAT_SERIAL) $(FACET_SEAT_PC)
+$(INITRD_DOMINIT0): $(FACET_INITRD_TOOL) $(FACET_SEAT_SERIAL) $(FACET_SEAT_PC)
 	mkdir -p $(dir $@)
+	rm -rf $(ROOT)/build/initrd/dominit0-root
 	mkdir -p $(ROOT)/build/initrd/dominit0-root/FacetOS
 	cp $(FACET_SEAT_SERIAL) $(ROOT)/build/initrd/dominit0-root/FacetOS/seat-server-serial
 	cp $(FACET_SEAT_PC) $(ROOT)/build/initrd/dominit0-root/FacetOS/seat-server-pc-console
-	cd $(ROOT)/build/initrd/dominit0-root && find . -print | sort | cpio --quiet -o -H newc > $@
+	mkdir -p $(FACET_OVERLAY_ROOT)/dominit0
+	$(FACET_INITRD_TOOL) pack $@ $(ROOT)/build/initrd/dominit0-root \
+		--overlay $(FACET_OVERLAY_ROOT)/dominit0
 
-$(INITRD_SYSTEM): $(ROOT)/initrd/system/README $(FACET_LOGIN) $(FACET_SHELL) $(FACET_DUMMY) $(FACET_LS) $(FACET_CAT)
+$(INITRD_SYSTEM): $(FACET_INITRD_TOOL) $(shell find $(ROOT)/initrd/system -type f) $(FACET_LOGIN) $(FACET_SHELL) $(FACET_DUMMY) $(FACET_LS) $(FACET_CAT) $(FACET_TEST_PERMS)
 	mkdir -p $(dir $@)
+	rm -rf $(ROOT)/build/initrd/system-root
 	mkdir -p $(ROOT)/build/initrd/system-root/FacetOS
-	cp $(ROOT)/initrd/system/README $(ROOT)/build/initrd/system-root/README
+	cp -R $(ROOT)/initrd/system/. $(ROOT)/build/initrd/system-root/
 	cp $(FACET_LOGIN) $(ROOT)/build/initrd/system-root/FacetOS/FacetLogin
 	cp $(FACET_SHELL) $(ROOT)/build/initrd/system-root/FacetOS/FacetShell
 	cp $(FACET_DUMMY) $(ROOT)/build/initrd/system-root/FacetOS/FacetDummy
 	cp $(FACET_LS) $(ROOT)/build/initrd/system-root/FacetOS/ls
 	cp $(FACET_CAT) $(ROOT)/build/initrd/system-root/FacetOS/cat
-	cd $(ROOT)/build/initrd/system-root && find . -print | sort | cpio --quiet -o -H newc > $@
+	cp $(FACET_TEST_PERMS) $(ROOT)/build/initrd/system-root/FacetOS/TestPerms
+	mkdir -p $(ROOT)/build/initrd/system-root/home/user $(FACET_OVERLAY_ROOT)/system
+	$(FACET_INITRD_TOOL) pack $@ $(ROOT)/build/initrd/system-root \
+		--overlay $(FACET_OVERLAY_ROOT)/system
+	$(FACET_INITRD_TOOL) chmod $@ 0700 Data/TestData/root-private
+	$(FACET_INITRD_TOOL) chmod $@ 0600 Data/TestData/user-only.txt Data/TestData/root-only.txt
+	$(FACET_INITRD_TOOL) chown $@ 1000:1000 home/user Data/TestData/user-only.txt
+	$(FACET_INITRD_TOOL) chown $@ 0:0 Data/TestData/root-only.txt Data/TestData/root-private Data/TestData/root-private/inside.txt
 
 $(FACET_POSIX_LOGIN): facet-idlc libfacet-common configure
 	$(SEL4_ENV) ninja -C $(SDK_BUILD) PosixLogin
 
-$(INITRD_CHILD): $(ROOT)/initrd/child/README $(FACET_DUMMYSH) $(FACET_POSIX_LOGIN)
+$(FACET_POSIX_TEST_PERMS): facet-idlc libfacet-common configure
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) PosixTestPerms
+
+$(INITRD_CHILD): $(FACET_INITRD_TOOL) $(shell find $(ROOT)/initrd/child -type f) $(FACET_DUMMYSH) $(FACET_POSIX_LOGIN) $(FACET_POSIX_TEST_PERMS)
 	mkdir -p $(dir $@)
+	rm -rf $(ROOT)/build/initrd/child-root
 	mkdir -p $(ROOT)/build/initrd/child-root/bin
-	cp $(ROOT)/initrd/child/README $(ROOT)/build/initrd/child-root/README
+	cp -R $(ROOT)/initrd/child/. $(ROOT)/build/initrd/child-root/
 	cp $(FACET_DUMMYSH) $(ROOT)/build/initrd/child-root/bin/dummysh
 	cp $(FACET_POSIX_LOGIN) $(ROOT)/build/initrd/child-root/bin/login
-	cd $(ROOT)/build/initrd/child-root && find . -print | sort | cpio --quiet -o -H newc > $@
+	cp $(FACET_POSIX_TEST_PERMS) $(ROOT)/build/initrd/child-root/bin/test_perms
+	mkdir -p $(ROOT)/build/initrd/child-root/home/user $(FACET_OVERLAY_ROOT)/child
+	$(FACET_INITRD_TOOL) pack $@ $(ROOT)/build/initrd/child-root \
+		--overlay $(FACET_OVERLAY_ROOT)/child
+	$(FACET_INITRD_TOOL) chmod $@ 0600 usr/share/test_data/user-only.txt usr/share/test_data/root-only.txt
+	$(FACET_INITRD_TOOL) chown $@ 1000:1000 home/user usr/share/test_data/user-only.txt
+	$(FACET_INITRD_TOOL) chown $@ 0:0 usr/share/test_data/root-only.txt
 
 
 # Keep `make sdk` as a familiar name, but it no longer implies cleaning.
@@ -697,9 +762,10 @@ image: build
 QEMU := qemu-system-x86_64
 BOCHS_DEBUG_LOG := $(ROOT)/build/bochs-debug.log
 
+QEMU_ACCEL ?= -enable-kvm -cpu host
+
 QEMU_FLAGS := \
-	-enable-kvm \
-	-cpu host \
+	$(QEMU_ACCEL) \
 	-m 512M \
 	-serial stdio \
 	-debugcon file:$(BOCHS_DEBUG_LOG) \

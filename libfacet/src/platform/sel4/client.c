@@ -28,6 +28,13 @@ static ClientHandle *as_client_handle(FacetHandle handle)
     return handle.platform;
 }
 
+static void discard_received_cap(seL4_CPtr endpoint)
+{
+    if (endpoint != seL4_CapNull)
+        (void)seL4_CNode_Delete(client_receive_cnode, endpoint,
+                                client_receive_depth);
+}
+
 FacetResult facet_sel4_client_init(
     uint64_t receive_cnode,
     uint64_t receive_slot,
@@ -112,6 +119,7 @@ FacetResult libfacet_platform_call(
     const FacetRpcMessage *request,
     FacetRpcMessage *reply)
 {
+    uint8_t inline_reply[FACET_RPC_MAX_INLINE_PAYLOAD];
     ClientHandle *native = as_client_handle(target);
     if (!client_ready || native == NULL || request == NULL || reply == NULL) {
         return FACET_INVALID_ARGUMENT;
@@ -164,8 +172,25 @@ FacetResult libfacet_platform_call(
         0, 0, (seL4_Word)request->attachment_count, length);
     seL4_MessageInfo_t received = seL4_Call(native->endpoint, info);
 
+    /* Claim a transferred capability before doing anything that may allocate.
+     * The application allocator is itself an RPC client, so malloc/calloc can
+     * perform a nested call using the current receive slot. */
+    size_t extra_caps = seL4_MessageInfo_get_extraCaps(received);
+    seL4_CPtr returned_endpoint = seL4_CapNull;
+    if (extra_caps != 0) {
+        returned_endpoint = client_receive_slot;
+        client_receive_slot++;
+    }
+    if (extra_caps > 1) {
+        discard_received_cap(returned_endpoint);
+        return FACET_PROTOCOL_ERROR;
+    }
+
     size_t received_length = seL4_MessageInfo_get_length(received);
-    if (received_length < 4) return FACET_PROTOCOL_ERROR;
+    if (received_length < 4) {
+        discard_received_cap(returned_endpoint);
+        return FACET_PROTOCOL_ERROR;
+    }
 
     reply->protocol_version = seL4_GetMR(1);
     reply->flags = seL4_GetMR(2);
@@ -174,16 +199,21 @@ FacetResult libfacet_platform_call(
     reply->payload_capacity = 0;
     reply->attachment_count = 0;
     if ((reply->flags & (1u << 31)) != 0 ||
-        reply->payload_size > FACET_RPC_MAX_INLINE_PAYLOAD)
+        reply->payload_size > FACET_RPC_MAX_INLINE_PAYLOAD) {
+        discard_received_cap(returned_endpoint);
         return FACET_NOT_SUPPORTED;
+    }
     size_t reply_payload_words = wire_word_count(reply->payload_size);
     size_t available = received_length - 4;
-    if (reply_payload_words == SIZE_MAX || reply_payload_words > available)
+    if (reply_payload_words == SIZE_MAX || reply_payload_words > available) {
+        discard_received_cap(returned_endpoint);
         return FACET_PROTOCOL_ERROR;
+    }
 
     /* MR0 is the FacetResult; ordinary reply words begin at MR4. */
     reply->word_count = 1 + available - reply_payload_words;
     if (reply->word_count > FACET_RPC_MAX_WORDS) {
+        discard_received_cap(returned_endpoint);
         return FACET_PROTOCOL_ERROR;
     }
     reply->words[0] = seL4_GetMR(0);
@@ -191,41 +221,46 @@ FacetResult libfacet_platform_call(
         reply->words[i] = seL4_GetMR((int)(4 + i - 1));
     }
 
-    if (reply->protocol_version != FACET_RPC_PROTOCOL_VERSION ||
-        seL4_MessageInfo_get_extraCaps(received) > 1) {
+    if (reply->protocol_version != FACET_RPC_PROTOCOL_VERSION) {
+        discard_received_cap(returned_endpoint);
         return FACET_PROTOCOL_ERROR;
     }
 
     if (reply->payload_size != 0) {
-        reply->payload = malloc(reply->payload_size);
-        if (reply->payload == NULL) return FACET_OUT_OF_MEMORY;
-        reply->payload_capacity = reply->payload_size;
         for (size_t i = 0; i < reply_payload_words; i++) {
-            seL4_Word word = seL4_GetMR((int)(4 + reply->word_count - 1 + i));
+            seL4_Word word = seL4_GetMR(
+                (int)(4 + reply->word_count - 1 + i));
             size_t offset = i * sizeof(word);
             size_t copy = reply->payload_size - offset;
             if (copy > sizeof(word)) copy = sizeof(word);
-            memcpy(reply->payload + offset, &word, copy);
+            memcpy(inline_reply + offset, &word, copy);
         }
+        reply->payload = malloc(reply->payload_size);
+        if (reply->payload == NULL) {
+            discard_received_cap(returned_endpoint);
+            return FACET_OUT_OF_MEMORY;
+        }
+        reply->payload_capacity = reply->payload_size;
+        memcpy(reply->payload, inline_reply, reply->payload_size);
     }
 
-    if (seL4_MessageInfo_get_extraCaps(received) == 1) {
+    if (returned_endpoint != seL4_CapNull) {
         ClientHandle *returned = calloc(1, sizeof(*returned));
         if (returned == NULL) {
             free(reply->payload);
             reply->payload = NULL;
             reply->payload_size = 0;
             reply->payload_capacity = 0;
+            discard_received_cap(returned_endpoint);
             return FACET_OUT_OF_MEMORY;
         }
         /* seL4 installs a transferred capability in the receive path; the
          * caps-or-badges IPC-buffer field is not its destination CPtr. */
-        returned->endpoint = client_receive_slot;
+        returned->endpoint = returned_endpoint;
         returned->owns_cap = 1;
         reply->attachments[0].kind = FACET_RPC_ATTACHMENT_HANDLE;
         reply->attachments[0].handle.platform = returned;
         reply->attachment_count = 1;
-        client_receive_slot++;
     }
 
     return FACET_OK;

@@ -15,7 +15,7 @@ extern "C" {
 #define FACET_RPC_MAX_WORDS 64u
 #define FACET_RPC_MAX_HANDLES 8u
 #define FACET_RPC_MAX_ATTACHMENTS 8u
-#define FACET_RPC_MAX_INLINE_PAYLOAD 256u
+#define FACET_RPC_MAX_INLINE_PAYLOAD 512u
 
 /* The seL4 transport may impose a smaller attachment limit. */
 

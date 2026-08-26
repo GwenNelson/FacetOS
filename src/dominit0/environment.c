@@ -31,6 +31,7 @@ struct Dominit0DomainEnvironment {
     FacetHandle domain_config_handle;
     FacetHandle page_allocator_handle;
     FacetHandle file_store_handle;
+    FacetInitrd *initrd;
     ProcessBindingEntry extra_bindings[DOMINIT0_EXTRA_BINDINGS_MAX];
     size_t extra_binding_count;
 };
@@ -369,13 +370,21 @@ int dominit0_environment_bind_page_allocator(Dominit0DomainEnvironment *environm
 }
 
 int dominit0_environment_bind_file_store(Dominit0DomainEnvironment *environment,
+                                         FacetInitrd *initrd,
                                          FacetHandle file_store)
 {
-    if (environment == NULL || file_store.platform == NULL ||
+    if (environment == NULL || initrd == NULL || file_store.platform == NULL ||
         environment->file_store_handle.platform != NULL)
         return -1;
+    environment->initrd = initrd;
     environment->file_store_handle = file_store;
     return 0;
+}
+
+FacetInitrd *dominit0_environment_initrd(
+    Dominit0DomainEnvironment *environment)
+{
+    return environment == NULL ? NULL : environment->initrd;
 }
 
 int dominit0_environment_bind_named(Dominit0DomainEnvironment *environment,

@@ -6,15 +6,20 @@
 #include <facetos/interfaces/IProcessLifecycle.h>
 #include <facetos/interfaces/IPOSIXView.h>
 #include <facetos/interfaces/ISession.h>
+#include <facetos/interfaces/IPrincipal.h>
+#include <facetos/interfaces/IHumanUser.h>
 #include <facetos/interfaces/IByteReader.h>
 #include <facetos/interfaces/IByteWriter.h>
 #include <facetos/interfaces/IDirectory.h>
 #include <facetos/interfaces/IFileStore.h>
 #include <facetos/interfaces/ITerminalControl.h>
 #include <facetos/dominit0/posix.h>
+#include <facetos/dominit0/file_view.h>
+#include <facetos/dominit0/klog.h>
 #include <facetos/utf8.h>
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 #define PROCESS_BINDING_MAX 16
@@ -40,6 +45,10 @@ struct Dominit0ProcessEnvironment {
     size_t sysv_environment_count;
     size_t sysv_environment_capacity;
     FacetHandle owned_cwd;
+    Dominit0CredentialFileStore *credential_files;
+    uint32_t uid;
+    uint32_t gid;
+    bool admin;
     uint64_t terminal_index;
 };
 
@@ -190,6 +199,27 @@ static FacetResult get_cwd(void *self, FacetHandle *out)
         libfacet_handle_clone(environment->owned_cwd, out);
 }
 
+static FacetResult set_cwd(void *self, FacetHandle directory)
+{
+    Dominit0ProcessEnvironment *environment = self;
+    if (environment == NULL || directory.platform == NULL)
+        return FACET_INVALID_ARGUMENT;
+    FacetHandle replacement = {0};
+    if (libfacet_handle_clone(directory, &replacement) != FACET_OK)
+        return FACET_INVALID_HANDLE;
+    FacetString cwd_name = {.data = "cwd", .length = 3};
+    ProcessBinding *binding = find_binding(environment, &cwd_name);
+    if (binding == NULL) {
+        (void)libfacet_handle_release(replacement);
+        return FACET_INVALID_HANDLE;
+    }
+    FacetHandle previous = environment->owned_cwd;
+    environment->owned_cwd = replacement;
+    binding->handle = replacement;
+    if (previous.platform != NULL) (void)libfacet_handle_release(previous);
+    return FACET_OK;
+}
+
 static FacetResult get_standard_streams(void *self, FacetHandle *input,
                                         FacetHandle *output,
                                         FacetHandle *error)
@@ -263,15 +293,123 @@ static int add_sysv_environment(Dominit0ProcessEnvironment *environment,
     return 0;
 }
 
+static int copy_facet_string(const FacetString *input, char **out)
+{
+    if (input == NULL || out == NULL || input->data == NULL ||
+        input->length == 0 || input->length > 4096)
+        return -1;
+    char *copy = malloc(input->length + 1);
+    if (copy == NULL) return -1;
+    memcpy(copy, input->data, input->length);
+    copy[input->length] = '\0';
+    *out = copy;
+    return 0;
+}
+
+static int session_identity(FacetHandle session_handle, uint32_t *uid,
+                            uint32_t *gid, bool *admin, char **name,
+                            char **home, char **shell)
+{
+    *uid = 0;
+    *gid = 0;
+    *admin = true;
+    *name = strdup("root");
+    *home = strdup("/root");
+    *shell = strdup("/FacetOS/FacetShell");
+    if (*name == NULL || *home == NULL || *shell == NULL) goto fail;
+    if (session_handle.platform == NULL) return 0;
+
+    FacetHandle session_copy = {0};
+    if (libfacet_handle_clone(session_handle, &session_copy) != FACET_OK)
+        goto fail;
+    ISession *session = libfacet_proxy_from_handle(&ISession_MetaData,
+                                                   session_copy);
+    FacetHandle principal_handle = {0};
+    FacetResult result = session == NULL ? FACET_INVALID_HANDLE :
+        session->get_credentials(session->self, uid, gid, admin);
+    if (result != FACET_OK)
+        klog(LOG_ERROR, "process environment: session credentials failed (%d)\n",
+             (int)result);
+    if (result == FACET_OK)
+        result = session->get_principal(session->self, &principal_handle);
+    if (result != FACET_OK)
+        klog(LOG_ERROR, "process environment: session principal failed (%d)\n",
+             (int)result);
+    libfacet_free_proxy_client(session);
+    if (result != FACET_OK) goto fail;
+
+    IPrincipal *principal = libfacet_proxy_from_handle(&IPrincipal_MetaData,
+                                                       principal_handle);
+    IHumanUser *human = principal == NULL ? NULL :
+        libfacet_proxy_client_get_interface(principal, IID_IHumanUser);
+    FacetString remote_name = {0}, remote_home = {0}, remote_shell = {0};
+    result = principal == NULL ? FACET_INVALID_HANDLE :
+        principal->getname(principal->self, &remote_name);
+    if (result != FACET_OK)
+        klog(LOG_ERROR, "process environment: principal name failed (%d)\n",
+             (int)result);
+    if (result == FACET_OK)
+        result = human == NULL ? FACET_NO_INTERFACE :
+            human->gethome_path(human->self, &remote_home);
+    if (result != FACET_OK)
+        klog(LOG_ERROR, "process environment: user home failed (%d, human=%s)\n",
+             (int)result, human == NULL ? "null" : "present");
+    if (result == FACET_OK)
+        result = human->getdefault_shell(human->self, &remote_shell);
+    if (result != FACET_OK)
+        klog(LOG_ERROR, "process environment: user shell failed (%d)\n",
+             (int)result);
+    char *new_name = NULL, *new_home = NULL, *new_shell = NULL;
+    if (result == FACET_OK &&
+        (copy_facet_string(&remote_name, &new_name) != 0 ||
+         copy_facet_string(&remote_home, &new_home) != 0 ||
+         copy_facet_string(&remote_shell, &new_shell) != 0))
+        result = FACET_OUT_OF_MEMORY;
+    free((void *)(uintptr_t)remote_name.data);
+    free((void *)(uintptr_t)remote_home.data);
+    free((void *)(uintptr_t)remote_shell.data);
+    libfacet_free_proxy_client(human);
+    libfacet_free_proxy_client(principal);
+    if (result != FACET_OK) {
+        free(new_name);
+        free(new_home);
+        free(new_shell);
+        goto fail;
+    }
+    free(*name);
+    free(*home);
+    free(*shell);
+    *name = new_name;
+    *home = new_home;
+    *shell = new_shell;
+    return 0;
+fail:
+    free(*name);
+    free(*home);
+    free(*shell);
+    *name = NULL;
+    *home = NULL;
+    *shell = NULL;
+    return -1;
+}
+
 Dominit0ProcessEnvironment *dominit0_process_environment_create(
     Dominit0DomainEnvironment *parent, FacetHandle session,
     bool bootstrap_authority, Dominit0ProcessProfile profile,
     const FacetArray_string *sysv_environment, FacetHandle cwd)
 {
     if (parent == NULL) return NULL;
+    const char *failure_stage = "allocate environment";
     Dominit0ProcessEnvironment *environment = calloc(1, sizeof(*environment));
     if (environment == NULL) return NULL;
     environment->profile = profile;
+    char *user_name = NULL, *home_path = NULL, *shell_path = NULL;
+    failure_stage = "read session identity";
+    if (session_identity(session, &environment->uid, &environment->gid,
+                         &environment->admin, &user_name, &home_path,
+                         &shell_path) != 0)
+        goto fail;
+    failure_stage = "copy process environment";
     if (sysv_environment != NULL) {
         if (sysv_environment->count > 128 ||
             (sysv_environment->count != 0 &&
@@ -291,15 +429,31 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
             free(temporary);
             if (added != 0) goto fail;
         }
-    } else if (add_sysv_environment(environment, "PATH=/FacetOS") != 0 ||
-               add_sysv_environment(environment, "PWD=/") != 0 ||
-               add_sysv_environment(environment, "USER=root") != 0 ||
-               add_sysv_environment(environment, "HOME=/root") != 0 ||
-               add_sysv_environment(environment,
-                                    "SHELL=/FacetOS/FacetShell") != 0) {
-        goto fail;
+    } else {
+        char user_value[256], home_value[4352], shell_value[4352];
+        int user_length = snprintf(user_value, sizeof(user_value), "USER=%s",
+                                   user_name);
+        int home_length = snprintf(home_value, sizeof(home_value), "HOME=%s",
+                                   home_path);
+        int shell_length = snprintf(shell_value, sizeof(shell_value),
+                                    "SHELL=%s", shell_path);
+        if (user_length < 0 || (size_t)user_length >= sizeof(user_value) ||
+            home_length < 0 || (size_t)home_length >= sizeof(home_value) ||
+            shell_length < 0 || (size_t)shell_length >= sizeof(shell_value) ||
+            add_sysv_environment(environment, "PATH=/FacetOS") != 0 ||
+            add_sysv_environment(environment, "PWD=/") != 0 ||
+            add_sysv_environment(environment, user_value) != 0 ||
+            add_sysv_environment(environment, home_value) != 0 ||
+            add_sysv_environment(environment, shell_value) != 0)
+            goto fail;
     }
-    static const char *delegated[] = {"logger", "files", "processes"};
+    free(user_name);
+    free(home_path);
+    free(shell_path);
+    user_name = home_path = shell_path = NULL;
+
+    static const char *delegated[] = {"logger", "processes"};
+    failure_stage = "delegate domain services";
     for (size_t i = 0; profile == DOMINIT0_PROCESS_NATIVE &&
          i < sizeof(delegated) / sizeof(delegated[0]); i++) {
         uuid_t iid;
@@ -313,6 +467,7 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
         "auth", "security",
     };
     if (bootstrap_authority && profile == DOMINIT0_PROCESS_NATIVE) {
+        failure_stage = "delegate bootstrap authority";
         for (size_t i = 0;
              i < sizeof(bootstrap_delegated) / sizeof(bootstrap_delegated[0]);
              i++) {
@@ -325,21 +480,38 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
                 goto fail;
         }
     }
+    FacetInitrd *initrd = dominit0_environment_initrd(parent);
+    failure_stage = "create credential file view";
+    if (initrd != NULL) {
+        environment->credential_files = dominit0_credential_file_store_create(
+            initrd, environment->uid, environment->gid,
+            environment->admin);
+        if (environment->credential_files == NULL ||
+            bind(environment, "files", IID_IFileStore,
+                 dominit0_credential_file_store_handle(
+                     environment->credential_files)) != 0)
+            goto fail;
+    }
     if (session.platform != NULL && profile == DOMINIT0_PROCESS_NATIVE) {
+        failure_stage = "delegate session";
         if (libfacet_handle_clone(session, &environment->owned_session) != FACET_OK ||
             bind(environment, "session", IID_ISession,
                  environment->owned_session) != 0)
             goto fail;
     }
     if (cwd.platform != NULL) {
+        failure_stage = "inherit current directory";
         if (libfacet_handle_clone(cwd, &environment->owned_cwd) != FACET_OK)
             goto fail;
     } else {
+        failure_stage = "open root current directory";
         FacetString files_name = {.data = "files", .length = 5};
         ProcessBinding *files_binding = find_binding(environment, &files_name);
-        IFileStore *files = files_binding == NULL ? NULL :
-            libfacet_proxy_from_handle(&IFileStore_MetaData,
-                                       files_binding->handle);
+        FacetHandle files_handle = {0};
+        IFileStore *files = files_binding == NULL ||
+            libfacet_handle_clone(files_binding->handle, &files_handle) !=
+                FACET_OK ? NULL :
+            libfacet_proxy_from_handle(&IFileStore_MetaData, files_handle);
         FacetString root = {.data = "/", .length = 1};
         if (files != NULL &&
             files->open_directory(files->self, &root,
@@ -353,6 +525,7 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
         bind(environment, "cwd", IID_IDirectory,
              environment->owned_cwd) != 0)
         goto fail;
+    failure_stage = "export process environment";
     environment->interface.self = environment;
     environment->interface.priv = environment;
     environment->interface.getInterface = get_interface;
@@ -363,6 +536,7 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
     environment->interface.list_bindings = list_bindings;
     environment->interface.get_sysv_environment = get_sysv_environment;
     environment->interface.get_cwd = get_cwd;
+    environment->interface.set_cwd = set_cwd;
     environment->interface.get_standard_streams = get_standard_streams;
     environment->interface.get_terminal_index = get_terminal_index;
     if (libfacet_export_interface(&environment->interface,
@@ -371,6 +545,10 @@ Dominit0ProcessEnvironment *dominit0_process_environment_create(
         goto fail;
     return environment;
 fail:
+    klog(LOG_ERROR, "process environment: failed to %s\n", failure_stage);
+    free(user_name);
+    free(home_path);
+    free(shell_path);
     dominit0_process_environment_destroy(environment);
     return NULL;
 }
@@ -465,6 +643,7 @@ void dominit0_process_environment_destroy(Dominit0ProcessEnvironment *environmen
     if (environment->owned_cwd.platform != NULL)
         (void)libfacet_handle_release(environment->owned_cwd);
     dominit0_posix_view_destroy(environment->posix_view);
+    dominit0_credential_file_store_destroy(environment->credential_files);
     for (size_t i = 0; i < environment->binding_count; i++)
         free(environment->bindings[i].name);
     for (size_t i = 0; i < environment->sysv_environment_count; i++)

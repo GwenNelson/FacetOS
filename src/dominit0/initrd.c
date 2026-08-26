@@ -18,6 +18,7 @@
 typedef struct InitrdEntry InitrdEntry;
 
 struct InitrdEntry {
+    FacetInitrd *owner;
     char *path;
     const uint8_t *data;
     size_t size;
@@ -405,7 +406,7 @@ static FacetResult directory_open_file(void *self, const FacetString *path,
     if (self == NULL || out == NULL) return FACET_INVALID_ARGUMENT;
     *out = (FacetHandle){0};
     InitrdEntry *directory = self;
-    FacetInitrd *initrd = directory->directory_interface.priv;
+    FacetInitrd *initrd = directory->owner;
     char *resolved = NULL;
     bool requires_directory = false;
     FacetResult result = resolve_path(directory->path, path, &resolved,
@@ -425,7 +426,8 @@ static FacetResult directory_open_directory(void *self,
     if (self == NULL || out == NULL) return FACET_INVALID_ARGUMENT;
     *out = (FacetHandle){0};
     InitrdEntry *directory = self;
-    FacetInitrd *initrd = directory->directory_interface.priv;
+    FacetInitrd *initrd = directory->owner;
+    if (initrd == NULL) return FACET_INVALID_HANDLE;
     char *resolved = NULL;
     bool requires_directory = false;
     FacetResult result = resolve_path(directory->path, path, &resolved,
@@ -460,9 +462,11 @@ static FacetResult directory_list(void *self, uint64_t cursor, uint32_t maximum,
                                   FacetArray_Entry *entries, uint64_t *next,
                                   bool *end)
 {
+    if (self == NULL || entries == NULL || next == NULL || end == NULL)
+        return FACET_INVALID_ARGUMENT;
     InitrdEntry *directory = self;
-    FacetInitrd *initrd = directory->directory_interface.priv;
-    if (entries == NULL || next == NULL || end == NULL) return FACET_INVALID_ARGUMENT;
+    FacetInitrd *initrd = directory->owner;
+    if (initrd == NULL) return FACET_INVALID_HANDLE;
     entries->data = NULL; entries->count = 0; *next = cursor; *end = true;
     if (cursor > initrd->entry_count) return FACET_INVALID_ARGUMENT;
     size_t count = 0;
@@ -494,6 +498,7 @@ FacetInitrd *facet_initrd_create(const void *data, size_t size)
     initrd->entries[0].path = malloc(2);
     if (initrd->entries[0].path == NULL) goto fail;
     strcpy(initrd->entries[0].path, "/");
+    initrd->entries[0].owner = initrd;
     initrd->entries[0].directory = true;
     initrd->entries[0].mode = 0040755u;
     initrd->entry_count = 1;
@@ -531,6 +536,7 @@ FacetInitrd *facet_initrd_create(const void *data, size_t size)
         initrd->entries = grown;
         InitrdEntry *entry = &initrd->entries[initrd->entry_count++];
         memset(entry, 0, sizeof(*entry));
+        entry->owner = initrd;
         entry->path = path; entry->data = initrd->data + data_offset;
         entry->size = file_size; entry->directory = kind == 0040000u;
         entry->mode = (uint32_t)mode;
@@ -575,6 +581,137 @@ FacetResult facet_initrd_find_file(FacetInitrd *initrd, const char *path,
     *data = entry->data;
     *size = entry->size;
     return FACET_OK;
+}
+
+static bool entry_allows(const InitrdEntry *entry, uint32_t uid, uint32_t gid,
+                         bool admin, unsigned requested)
+{
+    if (admin || uid == 0) {
+        if ((requested & 1u) != 0 && (entry->mode & 0111u) == 0)
+            return false;
+        return true;
+    }
+    unsigned granted = uid == entry->uid ? (entry->mode >> 6) & 7u :
+        gid == entry->gid ? (entry->mode >> 3) & 7u : entry->mode & 7u;
+    return (granted & requested) == requested;
+}
+
+FacetResult facet_initrd_check_execute(FacetInitrd *initrd, const char *path,
+                                      uint32_t uid, uint32_t gid, bool admin)
+{
+    if (initrd == NULL || path == NULL || path[0] != '/')
+        return FACET_INVALID_ARGUMENT;
+    size_t length = strlen(path);
+    if (length == 0 || length > FACET_PATH_MAX)
+        return FACET_INVALID_ARGUMENT;
+    InitrdEntry *root = find_entry(initrd, "/", true);
+    if (root == NULL || !entry_allows(root, uid, gid, admin, 1u))
+        return FACET_ACCESS_DENIED;
+    char *prefix = malloc(length + 1);
+    if (prefix == NULL) return FACET_OUT_OF_MEMORY;
+    FacetResult result = FACET_OK;
+    for (size_t i = 1; i < length;) {
+        while (i < length && path[i] == '/') i++;
+        size_t end = i;
+        while (end < length && path[end] != '/') end++;
+        if (end == length) break;
+        memcpy(prefix, path, end);
+        prefix[end] = '\0';
+        InitrdEntry *directory = find_entry(initrd, prefix, true);
+        if (directory == NULL) {
+            result = FACET_NOT_FOUND;
+            break;
+        }
+        if (!entry_allows(directory, uid, gid, admin, 1u)) {
+            result = FACET_ACCESS_DENIED;
+            break;
+        }
+        i = end;
+    }
+    if (result == FACET_OK) {
+        InitrdEntry *file = find_entry(initrd, path, false);
+        if (file == NULL) result = FACET_NOT_FOUND;
+        else if (!entry_allows(file, uid, gid, admin, 1u))
+            result = FACET_ACCESS_DENIED;
+    }
+    free(prefix);
+    return result;
+}
+
+FacetResult facet_initrd_open_node(FacetInitrd *initrd, const char *base,
+                                  const FacetString *path, bool directory,
+                                  FacetInitrdNode **node)
+{
+    if (initrd == NULL || base == NULL || node == NULL)
+        return FACET_INVALID_ARGUMENT;
+    *node = NULL;
+    char *resolved = NULL;
+    bool requires_directory = false;
+    FacetResult result = resolve_path(base, path, &resolved,
+                                      &requires_directory);
+    if (result != FACET_OK) return result;
+    InitrdEntry *found = requires_directory && !directory ? NULL :
+        find_entry(initrd, resolved, directory);
+    free(resolved);
+    if (found == NULL) return FACET_NOT_FOUND;
+    *node = found;
+    return FACET_OK;
+}
+
+const char *facet_initrd_node_path(const FacetInitrdNode *node)
+{
+    return node == NULL ? NULL : node->path;
+}
+
+FacetResult facet_initrd_node_metadata(const FacetInitrdNode *node,
+                                      uint32_t *mode, uint32_t *uid,
+                                      uint32_t *gid)
+{
+    if (node == NULL || mode == NULL || uid == NULL || gid == NULL)
+        return FACET_INVALID_ARGUMENT;
+    *mode = node->mode;
+    *uid = node->uid;
+    *gid = node->gid;
+    return FACET_OK;
+}
+
+FacetResult facet_initrd_node_metadata_handle(FacetInitrdNode *node,
+                                             FacetHandle *handle)
+{
+    if (node == NULL || handle == NULL) return FACET_INVALID_ARGUMENT;
+    *handle = (FacetHandle){0};
+    FacetResult result = ensure_metadata_exported(node);
+    return result == FACET_OK ? return_handle(node->unix_metadata_handle,
+                                               handle) : result;
+}
+
+FacetResult facet_initrd_node_size(const FacetInitrdNode *node,
+                                  uint64_t *size)
+{
+    if (node == NULL || size == NULL || node->directory)
+        return FACET_INVALID_ARGUMENT;
+    *size = node->size;
+    return FACET_OK;
+}
+
+FacetResult facet_initrd_node_read(const FacetInitrdNode *node,
+                                  uint64_t offset, uint32_t maximum,
+                                  FacetArray_u8 *data)
+{
+    if (node == NULL || node->directory)
+        return FACET_INVALID_ARGUMENT;
+    return file_read_at((void *)(uintptr_t)node, offset, maximum, data);
+}
+
+FacetResult facet_initrd_node_list(const FacetInitrdNode *node,
+                                  uint64_t cursor, uint32_t maximum,
+                                  FacetArray_Entry *entries,
+                                  uint64_t *next_cursor, bool *end)
+{
+    if (node == NULL || !node->directory)
+        return FACET_INVALID_ARGUMENT;
+    return directory_list((void *)(uintptr_t)node, cursor, maximum, entries,
+                          next_cursor, end);
 }
 
 void facet_initrd_destroy(FacetInitrd *initrd)

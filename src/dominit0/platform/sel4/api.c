@@ -633,40 +633,6 @@ stack_push(const void *value, size_t size, uintptr_t *stack_pointer,
 }
 
 static int
-auxv_type_is_standard(uintptr_t type)
-{
-    switch (type) {
-    case AT_NULL:
-    case AT_PAGESZ:
-    case AT_PHDR:
-    case AT_PHNUM:
-    case AT_PHENT:
-    case AT_SYSINFO:
-    case AT_SEL4_IPC_BUFFER_PTR:
-    case AT_SEL4_TCB:
-        return 1;
-    default:
-        return 0;
-    }
-}
-
-static int
-validate_facet_auxv(size_t count, const FacetAuxvEntry entries[])
-{
-    if (count != 0 && entries == NULL)
-        return -1;
-    for (size_t i = 0; i < count; i++) {
-        if (entries[i].type < AT_LOOS || entries[i].type > AT_HIOS ||
-            auxv_type_is_standard(entries[i].type))
-            return -1;
-        for (size_t j = 0; j < i; j++)
-            if (entries[j].type == entries[i].type)
-                return -1;
-    }
-    return 0;
-}
-
-static int
 spawn_process_with_auxv(sel4utils_process_t *process, int argc, char *argv[],
                         size_t envc, const char *const envp[],
                         size_t facet_auxc,
@@ -674,7 +640,7 @@ spawn_process_with_auxv(sel4utils_process_t *process, int argc, char *argv[],
 {
     if (process == NULL || argc < 1 || argv == NULL ||
         (envc != 0 && envp == NULL) ||
-        validate_facet_auxv(facet_auxc, facet_auxv) != 0)
+        facet_auxv_validate(facet_auxc, facet_auxv) != 0)
         return -1;
 
     uintptr_t *child_argv = calloc((size_t)argc, sizeof(*child_argv));
