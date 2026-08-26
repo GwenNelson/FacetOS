@@ -233,47 +233,6 @@ static FacetResult environment_get_domain_config(void *self, FacetHandle *value)
                          value);
 }
 
-static FacetResult environment_publish_service(void *self,
-                                               const FacetString *name,
-                                               uuid_t iid, FacetHandle service)
-{
-    Dominit0DomainEnvironment *environment = self;
-    if (service.platform == NULL || name == NULL || name->data == NULL ||
-        name->length == 0 || name->length > 127 ||
-        !facet_utf8_is_valid(name->data, name->length))
-        return FACET_INVALID_ARGUMENT;
-    char copied_name[128];
-    memcpy(copied_name, name->data, name->length);
-    copied_name[name->length] = '\0';
-    return dominit0_environment_bind_named(environment, copied_name, iid,
-                                           service) == 0 ? FACET_OK :
-        FACET_ACCESS_DENIED;
-}
-
-static FacetResult environment_resolve_service(void *self,
-                                               const FacetString *name,
-                                               uuid_t iid, FacetHandle *service)
-{
-    if (service == NULL) return FACET_INVALID_ARGUMENT;
-    *service = (FacetHandle){0};
-    Dominit0DomainEnvironment *environment = self;
-    if (name == NULL || name->data == NULL || name->length == 0 ||
-        name->length > 127 || !facet_utf8_is_valid(name->data, name->length))
-        return FACET_INVALID_ARGUMENT;
-    char copied_name[128];
-    memcpy(copied_name, name->data, name->length);
-    copied_name[name->length] = '\0';
-    uuid_t actual = {0};
-    FacetResult result = dominit0_environment_resolve_named(
-        environment, copied_name, &actual, service);
-    if (result != FACET_OK) return result;
-    if (!iid_equal(actual, iid)) {
-        *service = (FacetHandle){0};
-        return FACET_NO_INTERFACE;
-    }
-    return FACET_OK;
-}
-
 static FacetResult logger_get_interface(void *self, uuid_t iid,
                                         FacetHandle *result)
 {
@@ -337,8 +296,6 @@ int dominit0_environment_initialize(Dominit0SystemConfig *system)
         environment->interface.getdomain_name = environment_get_domain_name;
         environment->interface.getpersonality = environment_get_personality;
         environment->interface.getdomain_config = environment_get_domain_config;
-        environment->interface.publish_service = environment_publish_service;
-        environment->interface.resolve_service = environment_resolve_service;
         environment->process_environment.self = environment;
         environment->process_environment.priv = environment;
         environment->process_environment.getInterface = process_get_interface;

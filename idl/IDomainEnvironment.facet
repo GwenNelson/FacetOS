@@ -1,5 +1,4 @@
-// Bootstrap authority for one domain.  Its descriptive properties are
-// read-only; its service registry is writable only by the domain's dominit.
+// Read-only bootstrap authority for one domain.
 interface IDomainEnvironment {
     uuid auto;
     requires IGenericObject;
@@ -8,12 +7,4 @@ interface IDomainEnvironment {
     property string domain_name read;
     property u32 personality read;
     property handle domain_config read;
-
-    // A domain-local supervisor publishes a service once, before it starts
-    // untrusted applications.  dominit0 may retrieve it only as a delegated
-    // mechanism; ordinary IProcessEnvironment instances never expose it.
-    method FacetResult publish_service(in string name, in uuid iid,
-                                       in handle service);
-    method FacetResult resolve_service(in string name, in uuid iid,
-                                       out handle service);
 }
