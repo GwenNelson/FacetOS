@@ -1,0 +1,10 @@
+// Domain-local POSIX namespace policy, published by that domain's dominit.
+// This is bootstrap-only: user processes receive IPOSIXView, never this
+// policy object.
+interface IDomainPosixPolicy {
+    uuid auto;
+    requires IGenericObject;
+
+    property string backing_root read;
+    property bool synthetic_etc read;
+}
