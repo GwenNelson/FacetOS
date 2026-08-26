@@ -573,8 +573,10 @@ static FacetResult manager_launch_initial(void *self, const FacetString *path,
             if (result != FACET_OK) return result;
         }
     }
-    if (session.platform == NULL && manager->domain->parsed != NULL &&
-        manager->domain->parsed->personality == FACET_CONFIG_PERSONALITY_POSIX)
+    /* PID 1 may need a bootstrap session before any user has logged in.  This
+     * is a property of the requested POSIX process profile, not of a domain
+     * number or a domain personality. */
+    if (session.platform == NULL && posix_profile)
         (void)dominit0_auth_session_for_user(manager->domain->parsed->id, "root", &session);
     FacetResult result = launch_process(self, path, arguments, session, true,
                                         terminal_index, NULL,
