@@ -13,6 +13,7 @@
 #include <facetos/interfaces/IDirectory.h>
 #include <facetos/interfaces/IFile.h>
 #include <facetos/interfaces/ISession.h>
+#include <facetos/interfaces/IDomainPosixPolicy.h>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -160,6 +161,33 @@ static FacetResult session_credentials(FacetHandle session_handle,
     return result;
 }
 
+/* POSIX namespace policy is published by the domain's dominit before it asks
+ * this root-task mechanism to launch any configured process. */
+static char *domain_posix_backing_root(ProcessManager *manager)
+{
+    uuid_t iid = {0};
+    FacetHandle handle = {0};
+    if (manager == NULL || manager->domain == NULL ||
+        dominit0_environment_resolve_named(manager->domain->environment,
+            "posix.policy", &iid, &handle) != FACET_OK ||
+        !iid_equal(iid, IID_IDomainPosixPolicy))
+        return NULL;
+    IDomainPosixPolicy *policy = libfacet_proxy_from_handle(
+        &IDomainPosixPolicy_MetaData, handle);
+    FacetString root = {0};
+    FacetResult result = policy == NULL ? FACET_INVALID_HANDLE :
+        policy->getbacking_root(policy->self, &root);
+    libfacet_free_proxy_client(policy);
+    if (result != FACET_OK || root.data == NULL || root.length == 0 ||
+        root.data[0] != '/') {
+        free((void *)(uintptr_t)root.data);
+        return NULL;
+    }
+    char *copy = copy_string(&root);
+    free((void *)(uintptr_t)root.data);
+    return copy;
+}
+
 static FacetResult launch_process(ProcessManager *manager,
                                   const FacetString *path,
                                   const FacetArray_string *arguments,
@@ -236,16 +264,23 @@ static FacetResult launch_process(ProcessManager *manager,
           manager->domain->parsed->terminals[terminal_index].view ==
               FACET_CONFIG_TERMINAL_VIEW_POSIX))))
         profile = DOMINIT0_PROCESS_PURE_POSIX;
+    char *posix_backing_root = NULL;
+    if (profile == DOMINIT0_PROCESS_PURE_POSIX) {
+        posix_backing_root = domain_posix_backing_root(manager);
+        if (posix_backing_root == NULL) {
+            free(path_copy);
+            return FACET_NO_INTERFACE;
+        }
+    }
     /* A native+POSIX domain stores its POSIX tree below /posix.  The caller
      * still names the executable in its own POSIX namespace. */
     if (profile == DOMINIT0_PROCESS_PURE_POSIX &&
-        manager->domain->parsed != NULL &&
-        manager->domain->parsed->personality == FACET_CONFIG_PERSONALITY_NATIVE &&
+        strcmp(posix_backing_root, "/") != 0 &&
         (strncmp(path_copy, "/bin/", 5) == 0 || strncmp(path_copy, "/sbin/", 6) == 0)) {
-        size_t length = strlen("/posix") + strlen(path_copy) + 1;
+        size_t length = strlen(posix_backing_root) + strlen(path_copy) + 1;
         char *backing = malloc(length);
-        if (backing == NULL) { free(path_copy); return FACET_OUT_OF_MEMORY; }
-        snprintf(backing, length, "/posix%s", path_copy);
+        if (backing == NULL) { free(posix_backing_root); free(path_copy); return FACET_OUT_OF_MEMORY; }
+        snprintf(backing, length, "%s%s", posix_backing_root, path_copy);
         free(path_copy);
         path_copy = backing;
     }
@@ -294,11 +329,10 @@ static FacetResult launch_process(ProcessManager *manager,
         goto done;
     }
     if (profile == DOMINIT0_PROCESS_PURE_POSIX &&
-        manager->domain->parsed != NULL &&
-        manager->domain->parsed->personality == FACET_CONFIG_PERSONALITY_NATIVE &&
+        strcmp(posix_backing_root, "/") != 0 &&
         cwd_handle.platform == NULL &&
         dominit0_process_environment_set_posix_root(process->environment,
-                                                     "/posix") != 0) {
+                                                     posix_backing_root) != 0) {
         dominit0_process_environment_destroy(process->environment);
         free(process);
         result = FACET_NOT_FOUND;
@@ -371,6 +405,7 @@ static FacetResult launch_process(ProcessManager *manager,
     result = FACET_OK;
 
 done:
+    free(posix_backing_root);
     for (size_t i = 0; i < argc; i++) free(argv[i]);
     free(argv);
     free(path_copy);
