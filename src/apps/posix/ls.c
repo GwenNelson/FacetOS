@@ -1,23 +1,17 @@
-#include <facet_posix_runtime.h>
-#include <facetos/interfaces/IPOSIXView.h>
+#include <dirent.h>
+#include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
 
 static int list(const char *path)
 {
-    FacetString p = {.data = path, .length = strlen(path)};
-    FacetArray_string entries = {0}; int32_t error = 0;
-    IPOSIXView *view = facet_posix_view();
-    if (!view || view->list_directory(view->self, &p, &entries, &error) != FACET_OK || error) {
-        /* IPOSIXView deliberately has no broad native-stat capability.  A
-         * successful read-only open is enough to distinguish a regular file
-         * operand from a missing path for this small ls implementation. */
-        int32_t fd = -1;
-        int32_t open_error = 0;
-        if (view != NULL &&
-            view->open_fd(view->self, &p, 0, 0, &fd, &open_error) == FACET_OK &&
-            open_error == 0) {
-            (void)view->close_fd(view->self, fd, &(int32_t){0}, &open_error);
+    DIR *directory = opendir(path);
+    if (directory == NULL) {
+        /* A successful read-only open is enough to distinguish a regular
+         * file operand from a missing path for this small ls implementation. */
+        int fd = open(path, O_RDONLY);
+        if (fd >= 0) {
+            (void)close(fd);
             (void)write(1, path, strlen(path));
             (void)write(1, "\n", 1);
             return 0;
@@ -27,11 +21,12 @@ static int list(const char *path)
         (void)write(2, "\n", 1);
         return 1;
     }
-    for (size_t i = 0; i < entries.count; i++) {
-        (void)write(1, entries.data[i].data, entries.data[i].length);
+    struct dirent *entry;
+    while ((entry = readdir(directory)) != NULL) {
+        (void)write(1, entry->d_name, strlen(entry->d_name));
         (void)write(1, "\n", 1);
     }
-    facet_rpc_release_value(FACET_TYPE_ARRAY, &FacetArray_string_TypeMeta, &entries);
+    (void)closedir(directory);
     return 0;
 }
 

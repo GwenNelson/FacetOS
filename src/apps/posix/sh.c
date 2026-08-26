@@ -1,8 +1,8 @@
-#include <facet_posix_runtime.h>
-#include <facetos/interfaces/IPOSIXView.h>
 #include <facetos/posix.h>
 #include <stdlib.h>
 #include <string.h>
+#include <spawn.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static int line(char *buffer, unsigned capacity)
@@ -46,7 +46,7 @@ static int parse(char *line, char *words[], size_t capacity, size_t *count)
 }
 int main(void)
 {
-    IPOSIXView *view = facet_posix_view(); char command[256], cwd[256];
+    char command[256], cwd[256];
     for (;;) {
         const char *user = getenv("USER");
         if (getcwd(cwd, sizeof(cwd)) != NULL) { write(1,cwd,strlen(cwd)); write(1," ",1); }
@@ -69,13 +69,18 @@ int main(void)
         if (!strcmp(words[0], "cd")) { if(count!=2 || chdir(words[1])!=0) write(1,"sh: cd failed\n",14); continue; }
         if (!strcmp(words[0], "echo")) { for(size_t i=1;i<count;i++){if(i>1)write(1," ",1);write(1,words[i],strlen(words[i]));}write(1,"\n",1);continue; }
         const char *name = !strcmp(words[0],"ls") ? "/bin/ls" : !strcmp(words[0],"cat") ? "/bin/cat" : words[0];
-        FacetString values[16]; for(size_t i=0;i<count;i++){ const char *value=i==0?name:words[i]; values[i]=(FacetString){.data=value,.length=strlen(value)}; }
-        FacetString p=values[0]; FacetArray_string av={.data=values,.count=count}; int32_t pid=-1,e=0,status=0;
-        if (view->spawn_inherited(view->self,&p,&av,&pid,&e)!=FACET_OK || e) {
+        char *argv[17];
+        argv[0] = (char *)name;
+        for(size_t i=1;i<count;i++) argv[i]=words[i];
+        argv[count] = NULL;
+        pid_t pid;
+        int status;
+        if (posix_spawn(&pid,name,NULL,NULL,argv,NULL) != 0) {
             static const char message[] = "sh: command failed\n";
             (void)write(1, message, sizeof(message) - 1);
             continue;
         }
-        while (view->wait_process(view->self,pid,&status,&e)==FACET_OK && e) facet_posix_yield();
+        if (waitpid(pid,&status,0) != pid)
+            (void)write(1, "sh: command wait failed\n", 24);
     }
 }
