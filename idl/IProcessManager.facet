@@ -10,9 +10,12 @@ interface IProcessManager {
     // Bootstrap-only entry point. Possession of a domain's process manager is
     // the authority to start its configured initial program; unlike launch(),
     // this does not pretend that an IDomainEnvironment is an authenticated
-    // process environment.
+    // process environment.  posix_root is a policy snapshot supplied by the
+    // domain supervisor; dominit0 must not call back into that supervisor
+    // while this RPC is in flight.
     method FacetResult launch_initial(in string path, in array<string> argv,
                                       in u64 terminal_index,
+                                      in string posix_root,
                                       out handle process);
 
     method FacetResult launch_on_terminal(in string path,

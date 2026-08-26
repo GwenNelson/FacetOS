@@ -169,6 +169,7 @@ static FacetResult launch_process(ProcessManager *manager,
                                   const FacetArray_string *sysv_environment,
                                   FacetHandle cwd_handle,
                                   bool force_posix,
+                                  const FacetString *posix_root,
                                   FacetHandle *out)
 {
     if (out == NULL || arguments == NULL || arguments->count > 64 ||
@@ -236,16 +237,15 @@ static FacetResult launch_process(ProcessManager *manager,
           manager->domain->parsed->terminals[terminal_index].view ==
               FACET_CONFIG_TERMINAL_VIEW_POSIX))))
         profile = DOMINIT0_PROCESS_PURE_POSIX;
-    /* A native+POSIX domain stores its POSIX tree below /posix.  The caller
-     * still names the executable in its own POSIX namespace. */
-    if (profile == DOMINIT0_PROCESS_PURE_POSIX &&
-        manager->domain->parsed != NULL &&
-        manager->domain->parsed->personality == FACET_CONFIG_PERSONALITY_NATIVE &&
-        (strncmp(path_copy, "/bin/", 5) == 0 || strncmp(path_copy, "/sbin/", 6) == 0)) {
-        size_t length = strlen("/posix") + strlen(path_copy) + 1;
+    /* The bootstrap supervisor supplies its namespace snapshot with the
+     * launch.  This avoids a callback into a supervisor blocked on this RPC. */
+    if (profile == DOMINIT0_PROCESS_PURE_POSIX && posix_root != NULL &&
+        posix_root->data != NULL && posix_root->length > 1 && path_copy[0] == '/') {
+        size_t length = posix_root->length + strlen(path_copy) + 1;
         char *backing = malloc(length);
         if (backing == NULL) { free(path_copy); return FACET_OUT_OF_MEMORY; }
-        snprintf(backing, length, "/posix%s", path_copy);
+        memcpy(backing, posix_root->data, posix_root->length);
+        strcpy(backing + posix_root->length, path_copy);
         free(path_copy);
         path_copy = backing;
     }
@@ -293,12 +293,10 @@ static FacetResult launch_process(ProcessManager *manager,
         result = FACET_OUT_OF_MEMORY;
         goto done;
     }
-    if (profile == DOMINIT0_PROCESS_PURE_POSIX &&
-        manager->domain->parsed != NULL &&
-        manager->domain->parsed->personality == FACET_CONFIG_PERSONALITY_NATIVE &&
-        cwd_handle.platform == NULL &&
+    if (profile == DOMINIT0_PROCESS_PURE_POSIX && cwd_handle.platform == NULL &&
+        posix_root != NULL && posix_root->data != NULL &&
         dominit0_process_environment_set_posix_root(process->environment,
-                                                     "/posix") != 0) {
+                                                     posix_root->data) != 0) {
         dominit0_process_environment_destroy(process->environment);
         free(process);
         result = FACET_NOT_FOUND;
@@ -394,7 +392,7 @@ static FacetResult posix_spawn_process(void *context, const FacetString *path,
         return FACET_OK;
     }
     FacetResult result = launch_process(parent->manager, path, arguments,
-        session, false, parent->terminal_index, NULL, cwd, true,
+        session, false, parent->terminal_index, NULL, cwd, true, NULL,
         &process_handle);
     if (cwd.platform != NULL) (void)libfacet_handle_release(cwd);
     if (result == FACET_OK) {
@@ -515,7 +513,7 @@ static FacetResult manager_launch(void *self, const FacetString *path,
         return FACET_ACCESS_DENIED;
     }
     result = launch_process(self, path, arguments, session_handle, false,
-                            terminal_index, &sysv_environment, cwd_handle, false, out);
+                            terminal_index, &sysv_environment, cwd_handle, false, NULL, out);
     if (result != FACET_OK)
         klog(LOG_ERROR, "process manager: child launch failed (%d)\n",
              (int)result);
@@ -530,6 +528,7 @@ static FacetResult manager_launch(void *self, const FacetString *path,
 static FacetResult manager_launch_initial(void *self, const FacetString *path,
                                           const FacetArray_string *arguments,
                                           uint64_t terminal_index,
+                                          const FacetString *posix_root,
                                           FacetHandle *out)
 {
     ProcessManager *manager = self;
@@ -549,7 +548,7 @@ static FacetResult manager_launch_initial(void *self, const FacetString *path,
         (void)dominit0_auth_session_for_user(manager->domain->parsed->id, "root", &session);
     FacetResult result = launch_process(self, path, arguments, session, true,
                                         terminal_index, NULL,
-                                        (FacetHandle){0}, false, out);
+                                        (FacetHandle){0}, false, posix_root, out);
     if (session.platform != NULL) (void)libfacet_handle_release(session);
     return result;
 }
@@ -574,7 +573,7 @@ static FacetResult manager_launch_on_terminal(
     if (result != FACET_OK || session_domain_id != manager_domain_id)
         return FACET_ACCESS_DENIED;
     return launch_process(manager, path, arguments, session_handle, false,
-                          terminal_index, NULL, (FacetHandle){0}, false, out);
+                          terminal_index, NULL, (FacetHandle){0}, false, NULL, out);
 }
 
 int dominit0_process_manager_initialize(CurrentDomain *domain)

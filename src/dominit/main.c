@@ -206,6 +206,10 @@ int main(int argc, char **argv)
         libfacet_free_proxy_client(config);
         if (publish_posix_policy(domain, personality) != FACET_OK)
             child_log(logger, "could not publish POSIX policy");
+        FacetString posix_root = {
+            .data = personality == Personality_Native ? "/posix" : "/",
+            .length = personality == Personality_Native ? 6 : 1,
+        };
         if (personality == Personality_Posix) {
             FacetString pid1 = {0};
             FacetHandle process = {0};
@@ -213,6 +217,7 @@ int main(int argc, char **argv)
                 FacetString args[] = {pid1};
                 FacetArray_string argv = {.data = args, .count = 1};
                 if (processes->launch_initial(processes->self, &pid1, &argv, 0,
+                                              &posix_root,
                                               &process) == FACET_OK)
                     child_log(logger, "launched POSIX pid1");
                 if (process.platform != NULL) (void)libfacet_handle_release(process);
@@ -250,6 +255,7 @@ int main(int argc, char **argv)
             };
             if (processes->launch_initial(processes->self, &initial, &arguments,
                                           index,
+                                          &posix_root,
                                           &process) == FACET_OK)
                 child_log(logger, "launched configured initial process");
             else
