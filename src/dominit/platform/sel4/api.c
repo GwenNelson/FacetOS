@@ -1,10 +1,15 @@
 #include <facetos/dominit/platform/api.h>
 #include <facetos/libc.h>
+#include <facetos/libc/native.h>
+#include <facetos/interfaces/IProcessEnvironment.h>
 #include <facetos/libfacet/platform/sel4/client.h>
 
 #include <sel4runtime.h>
 
 #include <stdint.h>
+
+static IGenericObject *native_root;
+static IProcessEnvironment *native_environment;
 
 static int
 lookup_auxv(uintptr_t type, uintptr_t *value)
@@ -57,7 +62,21 @@ platform_init(int *argc, char ***argv, IGenericObject **out_root)
         return FACET_ERROR;
 
     *out_root = root;
+    native_root = root;
     return FACET_OK;
+}
+
+IGenericObject *facet_native_root(void)
+{
+    return native_root;
+}
+
+IProcessEnvironment *facet_native_environment(void)
+{
+    if (native_environment == NULL && native_root != NULL)
+        native_environment = libfacet_proxy_client_get_interface(
+            native_root, IID_IProcessEnvironment);
+    return native_environment;
 }
 
 FacetResult

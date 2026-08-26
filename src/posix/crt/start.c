@@ -3,18 +3,45 @@
 #include <facetos/libc.h>
 #include <facetos/interfaces/IGenericObject.h>
 #include <facetos/interfaces/IPOSIXView.h>
+#include <facetos/interfaces/IPageAllocator.h>
 #include <facetos/libfacet/platform/sel4/client.h>
 
 #include <sel4/sel4.h>
+#define main sel4runtime_declared_main
 #include <sel4runtime/start.h>
+#undef main
 
 #include <stdint.h>
 
 static IPOSIXView *posix_view;
+static IPageAllocator page_allocator;
 
 IPOSIXView *facet_posix_view(void)
 {
     return posix_view;
+}
+
+extern int facet_app_allocator_use_pages(IPageAllocator *allocator);
+extern int main(int argc, char **argv);
+
+static FacetResult page_size(void *self, uint64_t *size)
+{
+    (void)self;
+    if (size == NULL) return FACET_INVALID_ARGUMENT;
+    *size = 4096;
+    return FACET_OK;
+}
+
+static FacetResult allocate_pages(void *self, uint64_t count, void **pages)
+{
+    (void)self;
+    return posix_view->allocate_pages(posix_view->self, count, pages);
+}
+
+static FacetResult free_pages(void *self, uint64_t count, uint64_t base)
+{
+    (void)self;
+    return posix_view->free_pages(posix_view->self, count, base);
 }
 
 static int lookup_auxv(const auxv_t *auxv, uintptr_t type, uint64_t *out)
@@ -55,8 +82,14 @@ __attribute__((noreturn)) void facet_posix_start(const void *stack)
     if (root == NULL) goto stopped;
     posix_view = libfacet_proxy_client_get_interface(root, IID_IPOSIXView);
     if (posix_view == NULL) goto stopped;
-    (void)main((int)argc_word, (const char *const *)argv,
-               (const char *const *)envp);
+    page_allocator = (IPageAllocator){
+        .self = &page_allocator, .priv = &page_allocator,
+        .get_page_size = page_size, .alloc = allocate_pages,
+        .free = free_pages,
+    };
+    if (facet_app_allocator_use_pages(&page_allocator) != 0) goto stopped;
+    int status = main((int)argc_word, argv);
+    (void)posix_view->exit_process(posix_view->self, status);
 stopped:
     for (;;) seL4_Yield();
 }

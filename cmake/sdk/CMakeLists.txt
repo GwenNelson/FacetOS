@@ -299,7 +299,7 @@ list(REMOVE_ITEM FACET_PLATFORM_SEL4_SRCS
     "${FACETOS_ROOT}/libfacet/src/platform/sel4/service.c"
 )
 
-add_library(facet-platform-sel4 STATIC
+add_library(facet-dominit0-platform-sel4 STATIC
     ${FACET_PLATFORM_SEL4_SRCS}
 )
 
@@ -313,19 +313,24 @@ add_library(facet-platform-sel4-service STATIC
 
 facetos_configure_target(facet-platform-sel4-service)
 target_link_libraries(facet-platform-sel4-service PRIVATE
-    facet_common sel4runtime sel4 muslc)
+    facet_common sel4runtime sel4)
+target_include_directories(facet-platform-sel4-service SYSTEM PRIVATE
+    "${CMAKE_BINARY_DIR}/musllibc/build-temp/stage/include"
+)
 
 facetos_configure_target(facet-platform-sel4-client)
 
 target_link_libraries(facet-platform-sel4-client PRIVATE
     sel4runtime
     sel4
-    muslc
+)
+target_include_directories(facet-platform-sel4-client SYSTEM PRIVATE
+    "${CMAKE_BINARY_DIR}/musllibc/build-temp/stage/include"
 )
 
-facetos_configure_target(facet-platform-sel4)
+facetos_configure_target(facet-dominit0-platform-sel4)
 
-target_link_libraries(facet-platform-sel4 PRIVATE
+target_link_libraries(facet-dominit0-platform-sel4 PRIVATE
     facet_common
     sel4runtime
     sel4
@@ -335,6 +340,69 @@ target_link_libraries(facet-platform-sel4 PRIVATE
     sel4vka
     sel4vspace
     sel4utils
+)
+
+add_library(facet-app-platform-sel4 STATIC
+    "${FACETOS_ROOT}/src/dominit/platform/sel4/api.c")
+set_target_properties(facet-app-platform-sel4 PROPERTIES
+    OUTPUT_NAME "facet-platform-sel4")
+facetos_configure_target(facet-app-platform-sel4)
+target_include_directories(facet-app-platform-sel4 BEFORE PRIVATE
+    "${FACET_GENERATED_INCLUDE}")
+target_include_directories(facet-app-platform-sel4 SYSTEM PRIVATE
+    "${CMAKE_BINARY_DIR}/musllibc/build-temp/stage/include")
+add_dependencies(facet-app-platform-sel4 facet-idl-environment-generated)
+target_link_libraries(facet-app-platform-sel4
+    PUBLIC facet_common sel4runtime sel4
+    PRIVATE facet-platform-sel4-client)
+add_custom_target(facet-platform-sel4
+    DEPENDS facet-dominit0-platform-sel4 facet-app-platform-sel4)
+
+# FacetOS-owned application libc slices. The public archive names deliberately
+# follow libc-native.a/libc-posix.a rather than CMake's liblibc-* default.
+add_library(libc-native STATIC
+    "${FACETOS_ROOT}/src/apps/platform/allocator.c"
+    "${FACETOS_ROOT}/src/apps/platform/liballoc.c"
+    "${FACETOS_ROOT}/src/libc/common/auxv.c"
+    "${FACETOS_ROOT}/src/libc/common/memory.c"
+    "${FACETOS_ROOT}/src/libc/common/string.c"
+    "${FACETOS_ROOT}/src/libc/common/runtime.c"
+    "${FACETOS_ROOT}/src/libc/common/format.c"
+)
+set_target_properties(libc-native PROPERTIES OUTPUT_NAME "c-native")
+facetos_configure_target(libc-native)
+target_include_directories(libc-native BEFORE PRIVATE
+    "${FACET_GENERATED_INCLUDE}"
+)
+add_dependencies(libc-native facet-idl-page-allocator-generated)
+target_link_libraries(libc-native PRIVATE sel4runtime sel4)
+target_include_directories(libc-native SYSTEM PUBLIC
+    "${CMAKE_BINARY_DIR}/musllibc/build-temp/stage/include"
+)
+
+add_library(libc-posix STATIC
+    "${FACETOS_ROOT}/src/apps/platform/allocator.c"
+    "${FACETOS_ROOT}/src/apps/platform/liballoc.c"
+    "${FACETOS_ROOT}/src/libc/common/auxv.c"
+    "${FACETOS_ROOT}/src/libc/common/memory.c"
+    "${FACETOS_ROOT}/src/libc/common/string.c"
+    "${FACETOS_ROOT}/src/libc/common/runtime.c"
+    "${FACETOS_ROOT}/src/posix/libc/write.c"
+    "${FACETOS_ROOT}/src/posix/libc/read.c"
+    "${FACETOS_ROOT}/src/posix/libc/files.c"
+    "${FACETOS_ROOT}/src/posix/libc/stdio.c"
+)
+set_target_properties(libc-posix PROPERTIES OUTPUT_NAME "c-posix")
+facetos_configure_target(libc-posix)
+target_include_directories(libc-posix BEFORE PRIVATE
+    "${FACET_GENERATED_INCLUDE}"
+    "${FACETOS_ROOT}/src/posix/include"
+)
+add_dependencies(libc-posix facet-idl-page-allocator-generated)
+add_dependencies(libc-posix facet-idl-shell-contracts-generated)
+target_link_libraries(libc-posix PRIVATE sel4runtime sel4)
+target_include_directories(libc-posix SYSTEM PRIVATE
+    "${CMAKE_BINARY_DIR}/musllibc/build-temp/stage/include"
 )
 
 
@@ -372,112 +440,7 @@ target_link_libraries(dominit PRIVATE
     muslc
 )
 
-add_executable(FacetShell
-    "${FACETOS_ROOT}/src/apps/facet_shell.c"
-    "${FACETOS_ROOT}/src/apps/platform/allocator.c"
-    "${FACETOS_ROOT}/src/apps/platform/liballoc.c"
-    "${FACETOS_ROOT}/src/dominit/platform/sel4/api.c"
-)
-facetos_configure_target(FacetShell)
-target_include_directories(FacetShell BEFORE PRIVATE
-    "${FACET_GENERATED_INCLUDE}"
-)
-add_dependencies(FacetShell facet-idl-page-allocator-generated)
-add_dependencies(FacetShell facet-idl-environment-generated)
-add_dependencies(FacetShell facet-idl-shell-contracts-generated)
-target_link_libraries(FacetShell PRIVATE
-    facet_common
-    facet-platform-sel4-client
-    sel4runtime
-    sel4
-    muslc
-)
-
-function(add_facet_native_utility target source)
-    add_executable(${target}
-        "${FACETOS_ROOT}/src/apps/${source}"
-        "${FACETOS_ROOT}/src/apps/platform/allocator.c"
-        "${FACETOS_ROOT}/src/apps/platform/liballoc.c"
-        "${FACETOS_ROOT}/src/dominit/platform/sel4/api.c"
-    )
-    facetos_configure_target(${target})
-    target_include_directories(${target} BEFORE PRIVATE
-        "${FACET_GENERATED_INCLUDE}"
-    )
-    add_dependencies(${target} facet-idl-page-allocator-generated)
-    add_dependencies(${target} facet-idl-environment-generated)
-    add_dependencies(${target} facet-idl-shell-contracts-generated)
-    target_link_libraries(${target} PRIVATE
-        facet_common facet-platform-sel4-client sel4runtime sel4 muslc)
-endfunction()
-
-add_facet_native_utility(ls facet_ls.c)
-add_facet_native_utility(cat facet_cat.c)
-
-add_executable(FacetLogin
-    "${FACETOS_ROOT}/src/apps/facet_login.c"
-    "${FACETOS_ROOT}/src/apps/platform/allocator.c"
-    "${FACETOS_ROOT}/src/apps/platform/liballoc.c"
-    "${FACETOS_ROOT}/src/dominit/platform/sel4/api.c"
-)
-facetos_configure_target(FacetLogin)
-target_include_directories(FacetLogin BEFORE PRIVATE
-    "${FACET_GENERATED_INCLUDE}"
-)
-add_dependencies(FacetLogin facet-idl-page-allocator-generated)
-add_dependencies(FacetLogin facet-idl-environment-generated)
-add_dependencies(FacetLogin facet-idl-shell-contracts-generated)
-target_link_libraries(FacetLogin PRIVATE
-    facet_common facet-platform-sel4-client sel4runtime sel4 muslc)
-
-function(add_facet_seat_server target definition)
-    add_executable(${target}
-        "${FACETOS_ROOT}/src/seat/main.c"
-        "${FACETOS_ROOT}/src/seat/pc_console.c"
-        "${FACETOS_ROOT}/src/seat/pc_cursor.c"
-        "${FACETOS_ROOT}/src/seat/platform/sel4.c"
-        "${FACETOS_ROOT}/src/apps/platform/allocator.c"
-        "${FACETOS_ROOT}/src/apps/platform/liballoc.c"
-    )
-    facetos_configure_target(${target})
-    target_include_directories(${target} BEFORE PRIVATE
-        "${FACET_GENERATED_INCLUDE}"
-        "${FACETOS_ROOT}/src/seat"
-        "${FACETOS_ROOT}/src/apps"
-    )
-    target_compile_definitions(${target} PRIVATE ${definition}=1)
-    add_dependencies(${target} facet-idl-page-allocator-generated)
-    add_dependencies(${target} facet-idl-shell-contracts-generated)
-    target_link_libraries(${target} PRIVATE
-        facet_common facet-platform-sel4-service sel4runtime sel4 muslc)
-endfunction()
-
-add_facet_seat_server(seat-server-serial FACET_SEAT_SERIAL)
-add_facet_seat_server(seat-server-pc-console FACET_SEAT_PC)
-
-function(add_facet_dummy target message)
-    add_executable(${target}
-        "${FACETOS_ROOT}/src/apps/facet_dummy.c"
-        "${FACETOS_ROOT}/src/apps/platform/allocator.c"
-        "${FACETOS_ROOT}/src/apps/platform/liballoc.c"
-        "${FACETOS_ROOT}/src/dominit/platform/sel4/api.c"
-    )
-    facetos_configure_target(${target})
-    target_include_directories(${target} BEFORE PRIVATE
-        "${FACET_GENERATED_INCLUDE}"
-    )
-    add_dependencies(${target} facet-idl-environment-generated)
-    add_dependencies(${target} facet-idl-page-allocator-generated)
-    add_dependencies(${target} facet-idl-shell-contracts-generated)
-    target_compile_definitions(${target} PRIVATE
-        FACET_DUMMY_MESSAGE="${message}")
-    target_link_libraries(${target} PRIVATE
-        facet_common facet-platform-sel4-client sel4runtime sel4 muslc)
-endfunction()
-
-add_facet_dummy(FacetDummy "FacetDummy native override selected\\r\\n")
-add_facet_dummy(dummysh "dummysh POSIX override selected\\r\\n")
-
+add_subdirectory("${FACETOS_ROOT}/cmake/sdk/native" facet-native)
 add_subdirectory("${FACETOS_ROOT}/src/posix" facet-posix)
 
 
@@ -522,7 +485,7 @@ target_compile_definitions(dominit0 PRIVATE
 
 target_link_libraries(dominit0 PRIVATE
     facet_klibc
-    facet-platform-sel4
+    facet-dominit0-platform-sel4
     facet_common
     facet_config
 
