@@ -1,6 +1,6 @@
-FacetOS / libfacet / PolyFS Master TODO
+# FacetOS / libfacet / PolyFS Master TODO
 
-Phase 0 — Write "INTENDED_ARCHITECTURE.md"
+## Phase 0 — Write `INTENDED_ARCHITECTURE.md`
 
 Before asking Codex to change anything, write a complete description of FacetOS as Gwen actually intends it to work.
 
@@ -9,8 +9,8 @@ This is the architectural source of truth.
 It should describe:
 
 - seL4/kernel responsibilities;
-- "dominit0";
-- "dominit";
+- `dominit0`;
+- `dominit`;
 - domains and subdomains;
 - process creation;
 - authority delegation;
@@ -26,16 +26,19 @@ It should describe:
 - startup ABI;
 - intended build/library boundaries.
 
-Process startup ABI
+### Process startup ABI
 
 Document the intended startup model:
 
+```text
 AT_FACET_ROOT = uint64_t
+```
 
 There should ideally be one Facet-specific auxv value.
 
 On seL4:
 
+```text
 AT_FACET_ROOT
       ↓
 libc generic platform startup
@@ -49,15 +52,17 @@ FacetHandle
 root proxy
       ↓
 IProcessEnvironment
+```
 
-The interpretation of the bare "uint64_t" as seL4 capability/endpoint information belongs exclusively to the seL4 platform implementation.
+The interpretation of the bare `uint64_t` as seL4 capability/endpoint information belongs exclusively to the seL4 platform implementation.
 
 Generic libc and userland must not understand seL4 capability representations.
 
-Intended layering
+### Intended layering
 
 Document:
 
+```text
 application / portable library
              ↓
 generated Facet interfaces
@@ -67,21 +72,22 @@ generated Facet interfaces
     Facet platform contract
              ↓
       platform backend
+```
 
 Initial platform backends:
 
-- "libfacet-platform-sel4"
-- "libfacet-platform-linux"
+- `libfacet-platform-sel4`
+- `libfacet-platform-linux`
 
 State the invariant:
 
-«Source code chooses interfaces and personality. The build system chooses platform implementations.»
+> Source code chooses interfaces and personality. The build system chooses platform implementations.
 
 ---
 
-Phase 1 — Freeze the current implementation
+## Phase 1 — Freeze the current implementation
 
-Once "INTENDED_ARCHITECTURE.md" exists:
+Once `INTENDED_ARCHITECTURE.md` exists:
 
 - [ ] Stop adding new architectural features.
 - [ ] Do not begin the build-system refactor.
@@ -92,28 +98,28 @@ Once "INTENDED_ARCHITECTURE.md" exists:
 
 The immediate goal is to establish:
 
-«What does the code actually do right now?»
+> What does the code actually do right now?
 
 ---
 
-Phase 2 — Fresh-context forensic Codex audit
+## Phase 2 — Fresh-context forensic Codex audit
 
 Start Codex in a fresh context.
 
 Give it:
 
-- "INTENDED_ARCHITECTURE.md";
-- "CURRENT_PLAN.md";
+- `INTENDED_ARCHITECTURE.md`;
+- `CURRENT_PLAN.md`;
 - the current source tree;
 - the current tests.
 
 Tell it explicitly:
 
-«Do not change anything yet.»
+> Do not change anything yet.
 
 Have Codex perform a complete audit of the existing implementation.
 
-2.1 Current implementation inventory
+### 2.1 Current implementation inventory
 
 Codex should describe:
 
@@ -132,9 +138,9 @@ Codex should describe:
 - [ ] current libc structure;
 - [ ] current domain/process structure.
 
-This should describe what exists, not what Codex thinks ought to exist.
+This should describe **what exists**, not what Codex thinks ought to exist.
 
-2.2 Explicit known-bug inventory
+### 2.2 Explicit known-bug inventory
 
 Codex must produce a finite list of every currently identifiable bug.
 
@@ -150,7 +156,7 @@ For each bug record:
 
 Do not fix anything yet.
 
-2.3 Explicit test-coverage inventory
+### 2.3 Explicit test-coverage inventory
 
 Codex must identify:
 
@@ -164,9 +170,9 @@ Codex must identify:
 - [ ] tests that can pass despite broken functionality;
 - [ ] tests that merely reproduce current implementation rather than establish intended behaviour.
 
-2.4 Explicit design-divergence inventory
+### 2.4 Explicit design-divergence inventory
 
-Compare the current code against "INTENDED_ARCHITECTURE.md".
+Compare the current code against `INTENDED_ARCHITECTURE.md`.
 
 Codex must explicitly list every place it believes the implementation diverges from Gwen's stated design intent.
 
@@ -178,6 +184,7 @@ Classify each as:
 
 For every divergence describe:
 
+```text
 INTENDED:
 ...
 
@@ -186,8 +193,9 @@ CURRENT:
 
 DIFFERENCE:
 ...
+```
 
-Do not fix these divergences during the bug-fix phase unless they are independently genuine bugs.
+**Do not fix these divergences during the bug-fix phase unless they are independently genuine bugs.**
 
 A working implementation that differs from the intended future architecture is not automatically a bug.
 
@@ -195,15 +203,15 @@ That distinction is crucial.
 
 ---
 
-Phase 3 — Fully document the current codebase before changing it
+## Phase 3 — Fully document the current codebase before changing it
 
-Now have Codex heavily document the implementation exactly as it currently works.
+Now have Codex heavily document the implementation **exactly as it currently works**.
 
 The purpose is to make the existing system understandable enough for Gwen to refactor deliberately.
 
 Do not let Codex silently document the intended architecture as though it were already implemented.
 
-3.1 Detailed source comments
+### 3.1 Detailed source comments
 
 Add detailed comments explaining:
 
@@ -227,10 +235,11 @@ Add detailed comments explaining:
 - temporary implementation decisions;
 - assumptions and invariants.
 
-Comments should explain why and how, not narrate C syntax.
+Comments should explain **why and how**, not narrate C syntax.
 
 Good:
 
+```c
 /*
  * The returned handle refers to the platform-specific exported representation
  * of this object. Generic libfacet code must treat the contents as opaque.
@@ -238,23 +247,28 @@ Good:
  * In the current seL4 implementation, exporting also creates the servicing
  * thread responsible for dispatching incoming RPC requests.
  */
+```
 
 Bad:
 
+```c
 /* Set handle to NULL. */
 handle = NULL;
+```
 
-3.2 Current-state documentation
+### 3.2 Current-state documentation
 
 Have Codex produce detailed documentation of:
 
-«How FacetOS works today.»
+> How FacetOS works today.
 
-This documentation should explicitly distinguish itself from "INTENDED_ARCHITECTURE.md".
+This documentation should explicitly distinguish itself from `INTENDED_ARCHITECTURE.md`.
 
 For example:
 
+```text
 docs/CURRENT_IMPLEMENTATION.md
+```
 
 It should describe:
 
@@ -267,12 +281,13 @@ It should describe:
 - current tests;
 - known limitations.
 
-3.3 Preserve divergence markers
+### 3.3 Preserve divergence markers
 
 Where current implementation differs from intended architecture, documentation should say so explicitly rather than pretending the discrepancy doesn't exist.
 
 For example:
 
+```text
 CURRENT IMPLEMENTATION:
 ...
 
@@ -281,24 +296,26 @@ INTENDED ARCHITECTURE:
 
 STATUS:
 Requires later architectural refactor.
+```
 
 At the end of this phase Gwen should be able to read the source and documentation and understand precisely what Codex has actually built.
 
 ---
 
-Phase 4 — Establish regression tests for known bugs
+## Phase 4 — Establish regression tests for known bugs
 
 Before fixing each confirmed bug:
 
-- [ ] write or extend a test demonstrating it;
-- [ ] run the test;
-- [ ] confirm it fails;
-- [ ] confirm it fails for the expected reason.
+- [ ] Write or extend a test demonstrating it.
+- [ ] Run the test.
+- [ ] Confirm it fails.
+- [ ] Confirm it fails for the expected reason.
 
 Do not redesign anything.
 
 The purpose is simply:
 
+```text
 bug exists
     ↓
 test demonstrates bug
@@ -306,16 +323,17 @@ test demonstrates bug
 minimal repair
     ↓
 same test passes
+```
 
 For a bug where a useful automated regression test is genuinely impractical, document why.
 
 ---
 
-Phase 5 — Surgical known-bug repair
+## Phase 5 — Surgical known-bug repair
 
 Now allow Codex to fix the confirmed bugs.
 
-This is not yet the architectural refactor.
+This is **not yet the architectural refactor**.
 
 For each bug separately:
 
@@ -330,28 +348,28 @@ For each bug separately:
 9. Confirm fail → pass.
 10. Run the complete relevant test suite.
 11. Update affected comments.
-12. Update "CURRENT_IMPLEMENTATION.md".
+12. Update `CURRENT_IMPLEMENTATION.md`.
 13. Commit separately.
 
 The rule is:
 
-«One bug, one surgical change, tests, documentation, commit.»
+> One bug, one surgical change, tests, documentation, commit.
 
 Codex should be able to make these small, well-defined repairs without changing surrounding architecture.
 
 ---
 
-Phase 6 — Fill important missing test coverage
+## Phase 6 — Fill important missing test coverage
 
 Once known bugs are fixed:
 
-- [ ] add tests for important currently-working features lacking coverage;
-- [ ] add ownership/lifetime tests;
-- [ ] add error-path tests;
-- [ ] add Facet handle tests;
-- [ ] add export/proxy tests;
-- [ ] add RPC tests;
-- [ ] add generated-code tests where appropriate.
+- [ ] Add tests for important currently-working features lacking coverage.
+- [ ] Add ownership/lifetime tests.
+- [ ] Add error-path tests.
+- [ ] Add Facet handle tests.
+- [ ] Add export/proxy tests.
+- [ ] Add RPC tests.
+- [ ] Add generated-code tests where appropriate.
 
 These tests should describe the current intended behaviour without prematurely encoding planned architectural refactors.
 
@@ -359,37 +377,39 @@ Run the complete suite.
 
 ---
 
-Phase 7 — Produce the clean documented pre-refactor baseline
+## Phase 7 — Produce the clean documented pre-refactor baseline
 
 Before architectural cleanup begins, require:
 
-- [ ] all known bugs fixed;
-- [ ] all regression tests passing;
-- [ ] important existing functionality covered;
-- [ ] current code heavily commented;
-- [ ] "CURRENT_IMPLEMENTATION.md" accurate;
-- [ ] "INTENDED_ARCHITECTURE.md" accurate;
-- [ ] known differences between the two explicitly listed;
-- [ ] no known undocumented implementation behaviour;
-- [ ] clean commit.
+- [ ] All known bugs fixed.
+- [ ] All regression tests passing.
+- [ ] Important existing functionality covered.
+- [ ] Current code heavily commented.
+- [ ] `CURRENT_IMPLEMENTATION.md` accurate.
+- [ ] `INTENDED_ARCHITECTURE.md` accurate.
+- [ ] Known differences between the two explicitly listed.
+- [ ] No known undocumented implementation behaviour.
+- [ ] Clean commit.
 
 Create a baseline tag/commit.
 
 This becomes:
 
-«The known-working, understood, pre-refactor FacetOS implementation.»
+> The known-working, understood, pre-refactor FacetOS implementation.
 
 ---
 
-Phase 8 — Manually review the divergence list
+## Phase 8 — Manually review the divergence list
 
 Now Gwen reviews every difference between:
 
+```text
 INTENDED_ARCHITECTURE.md
            ↕
 CURRENT_IMPLEMENTATION.md
            ↕
 current source
+```
 
 For every divergence decide:
 
@@ -402,7 +422,7 @@ Do not let Codex make these architectural decisions autonomously.
 
 ---
 
-Phase 9 — Begin architectural conformance refactoring
+## Phase 9 — Begin architectural conformance refactoring
 
 Only now start deliberately making the code match the intended architecture.
 
@@ -417,7 +437,534 @@ For each architectural change:
 5. Run tests.
 6. Inspect diff.
 7. Update comments.
-8. Update "CURRENT_IMPLEMENTATION.md".
+8. Update `CURRENT_IMPLEMENTATION.md`.
+9. Verify it now agrees with `INTENDED_ARCHITECTURE.md`.
+10. Commit.
+
+Avoid giant "refactor architecture" prompts.
+
+---
+
+## Phase 10 — Build-system isolation refactor
+
+Now isolate seL4-specific implementation details.
+
+### 10.1 Facet component libraries
+
+Maintain:
+
+```text
+libfacet-common.a
+libfacet-common.so
+
+libfacet-platform-sel4.a
+
+libfacet-platform-linux.a
+libfacet-platform-linux.so
+```
+
+`libfacet-common` must remain platform neutral.
+
+### 10.2 Aggregate seL4 Facet library
+
+Merge:
+
+```text
+libfacet-common.a
+libfacet-platform-sel4.a
+required seL4 libraries
+required seL4 runtime
+        ↓
+libfacet-sel4.a
+```
+
+Programs targeting FacetOS should not need to know which seL4 implementation libraries Facet requires.
+
+### 10.3 Component versus deployment libraries
+
+Keep modular component libraries available internally.
+
+Use aggregate deployment libraries at application/sysroot boundaries.
+
+Do not destroy modularity merely to simplify final application linkage.
+
+---
+
+## Phase 11 — libc component structure
+
+Maintain personality libraries:
+
+```text
+libc-facet-native.a
+libc-facet-native.so
+
+libc-facet-posix.a
+libc-facet-posix.so
+```
+
+Maintain platform glue:
+
+```text
+libc-facet-platform-sel4.a
+libc-facet-platform-sel4.so
+
+libc-facet-platform-linux.a
+libc-facet-platform-linux.so
+```
+
+### 11.1 seL4 deployment archives
+
+Produce:
+
+```text
+libc-facet-native-sel4.a
+libc-facet-posix-sel4.a
+```
+
+Each should merge all required static dependencies.
+
+For native:
+
+```text
+libc-facet-native.a
+libc-facet-platform-sel4.a
+libfacet-sel4.a
+required runtime support
+        ↓
+libc-facet-native-sel4.a
+```
+
+For POSIX:
+
+```text
+libc-facet-posix.a
+libc-facet-platform-sel4.a
+libfacet-sel4.a
+required runtime support
+        ↓
+libc-facet-posix-sel4.a
+```
+
+Applications should be able to treat the appropriate archive as simply `libc.a`.
+
+### 11.2 Shared composition libraries
+
+Produce:
+
+```text
+libc-facet-native-sel4.so
+libc-facet-posix-sel4.so
+
+libc-facet-native-linux.so
+libc-facet-posix-linux.so
+```
+
+These should preferably be thin dependency/composition libraries rather than duplicated implementations.
+
+For example:
+
+```text
+libc-facet-native-linux.so
+    → libc-facet-native.so
+    → libc-facet-platform-linux.so
+    → libfacet-platform-linux.so
+    → libfacet-common.so
+```
+
+and:
+
+```text
+libc-facet-posix-linux.so
+    → libc-facet-posix.so
+    → libc-facet-platform-linux.so
+    → libfacet-platform-linux.so
+    → libfacet-common.so
+```
+
+The top-level shared library may contain almost no implementation code of its own.
+
+---
+
+## Phase 12 — Four sysroots
+
+Construct:
+
+```text
+sysroots/
+├── native-sel4/
+├── posix-sel4/
+├── native-linux/
+└── posix-linux/
+```
+
+Each should look conventional to the compiler:
+
+```text
+sysroot/
+└── usr/
+    ├── include/
+    └── lib/
+        ├── libc.a
+        └── libc.so
+```
+
+### 12.1 Headers
+
+Maintain a canonical header staging area.
+
+Prefer symlinks rather than four copies of identical headers.
+
+For example:
+
+```text
+build/sysroot-common/usr/include/
+```
+
+Platform-specific public headers should be minimized.
+
+Ordinary application source should not include seL4 headers simply because its target platform happens to be seL4.
+
+### 12.2 libc selection
+
+#### `native-sel4`
+
+```text
+libc.a → libc-facet-native-sel4.a
+libc.so → libc-facet-native-sel4.so
+```
+
+#### `posix-sel4`
+
+```text
+libc.a → libc-facet-posix-sel4.a
+libc.so → libc-facet-posix-sel4.so
+```
+
+#### `native-linux`
+
+```text
+libc.a / libc.so → native Linux Facet deployment library
+```
+
+#### `posix-linux`
+
+```text
+libc.a / libc.so → IPOSIXView-backed Linux deployment library
+```
+
+The desired application build becomes conceptually:
+
+```sh
+$CC --sysroot=<selected-sysroot> program.c
+```
+
+rather than application build files knowing the underlying implementation libraries.
+
+---
+
+## Phase 13 — Make platform choice principally a link/build choice
+
+Architectural target:
+
+> As much of FacetOS userland as possible should build for another supported execution platform simply by selecting another sysroot/library set.
+
+Audit for:
+
+- [ ] unnecessary `#ifdef` platform selection;
+- [ ] direct seL4 includes in portable code;
+- [ ] Linux includes above Linux platform components;
+- [ ] application knowledge of platform handles;
+- [ ] applications explicitly linking implementation libraries.
+
+Treat unnecessary occurrences as architectural smells.
+
+---
+
+## Phase 14 — Implement `libfacet-platform-linux`
+
+Implement the existing Facet platform contract on Linux.
+
+Support:
+
+- [ ] object export;
+- [ ] synchronous RPC;
+- [ ] transferable exported-object representations;
+- [ ] importing those representations into `FacetHandle`;
+- [ ] normal `libfacet_proxy_from()`;
+- [ ] handle attachments;
+- [ ] returned interfaces;
+- [ ] cloning/release;
+- [ ] multiple processes.
+
+The transport remains private to the backend.
+
+Investigate:
+
+- SysV message queues;
+- Unix-domain sockets;
+- other suitable Linux IPC if justified.
+
+Select whichever best implements the intended Facet semantics.
+
+Do not alter generic Facet abstractions merely to suit Linux.
+
+---
+
+## Phase 15 — Linux startup
+
+FacetOS/seL4:
+
+```text
+AT_FACET_ROOT = uint64_t
+       ↓
+libc platform setup
+       ↓
+libfacet-platform-sel4
+       ↓
+FacetHandle
+       ↓
+IProcessEnvironment
+```
+
+Linux:
+
+```text
+FACET_ROOT=<opaque platform locator>
+       ↓
+libc-facet-platform-linux
+       ↓
+libfacet-platform-linux
+       ↓
+FacetHandle
+       ↓
+IProcessEnvironment
+```
+
+The Linux root locator comes from the environment, not an inherited fd.
+
+`FACET_ROOT` must be opaque outside `libfacet-platform-linux`.
+
+It may internally identify:
+
+- Unix-domain-socket information;
+- SysV message queue information;
+- runtime identity;
+- exported-object identity;
+- some other future Linux representation.
+
+Generic libc must not care.
+
+---
+
+## Phase 16 — Linux privileged-operation test library
+
+Create one reusable:
+
+```text
+tests/linux/libfacet-test-preload.so
+```
+
+Use it through:
+
+```text
+LD_PRELOAD=.../libfacet-test-preload.so
+```
+
+Do not create separate preload libraries for individual programs unless genuinely unavoidable.
+
+### 16.1 Initially intercepted operations
+
+Support as needed:
+
+- `setuid`
+- `seteuid`
+- `setreuid`
+- `setresuid`
+- `setgid`
+- `setegid`
+- `setregid`
+- `setresgid`
+- `setgroups`
+- `initgroups`
+- `chroot`
+
+Add other privileged calls only when real userland requires them.
+
+### 16.2 Configurable return values
+
+Each intercepted call should obey environment variables defining its result.
+
+Examples:
+
+```text
+SETUID_RETVAL=0
+SETGID_RETVAL=0
+INITGROUPS_RETVAL=0
+CHROOT_RETVAL=0
+```
+
+Failure testing:
+
+```text
+SETUID_RETVAL=-1
+SETUID_ERRNO=EPERM
+```
+
+Use one consistent naming scheme.
+
+Tests should be able to independently configure each operation.
+
+### 16.3 Privileged-call logging
+
+The library should optionally send records of intercepted calls to a destination specified through environment variables.
+
+For example:
+
+```text
+FACET_TEST_PRIVCALL_LOG=<destination>
+```
+
+The eventual destination mechanism can be:
+
+- Unix socket;
+- FIFO;
+- file;
+- another suitable deterministic test transport.
+
+Each record should contain at least:
+
+```text
+sequence
+PID
+function
+arguments
+configured return value
+configured errno
+```
+
+Tests should therefore be able to assert sequences such as:
+
+```text
+setgid(1000)
+initgroups("gwen", 1000)
+setuid(1000)
+```
+
+rather than merely checking that the application exited successfully.
+
+### 16.4 Fake `chroot`
+
+The same preload library should support fake chroot when explicitly requested.
+
+Conceptually:
+
+```text
+FACET_TEST_FAKE_CHROOT=/tmp/facet-test/root
+CHROOT_RETVAL=0
+```
+
+It should:
+
+- record the requested `chroot()` call;
+- obey configured return/errno behaviour;
+- maintain the configured fake-root state;
+- redirect relevant subsequent pathname operations through the fake root where required;
+- remain deterministic.
+
+This is application testing, **not security isolation**.
+
+### 16.5 Keep test interposition out of runtime libraries
+
+Do not put privileged-call faking into:
+
+```text
+libfacet-platform-linux
+libc-facet-platform-linux
+```
+
+Those implement actual Linux execution support.
+
+`libfacet-test-preload.so` is test instrumentation only.
+
+---
+
+## Phase 17 — Three Linux program-testing modes
+
+These are deliberately separate because they test different things.
+
+### 17.1 Native Facet program on Linux
+
+Compile using:
+
+```text
+native-linux sysroot
+```
+
+Execution path:
+
+```text
+native Facet program
+        ↓
+libc-facet-native-linux
+        ↓
+Facet APIs
+        ↓
+libfacet-platform-linux
+```
+
+This tests:
+
+- native Facet application semantics;
+- Facet startup;
+- `IProcessEnvironment`;
+- Facet RPC;
+- authority/interface use;
+- Linux backend behaviour.
+
+The program must not silently become an ordinary glibc program.
+
+### 17.2 POSIX program through IPOSIXView on Linux
+
+Compile using:
+
+```text
+posix-linux sysroot
+```
+
+Execution path:
+
+```text
+POSIX application
+       ↓
+minimal libc-facet-posix
+       ↓
+IPOSIXView
+       ↓
+Facet
+       ↓
+libfacet-platform-linux
+```
+
+This specifically tests **FacetOS's POSIX implementation**.
+
+#### Critical libc constraint
+
+The Linux-backed IPOSIXView libc must **not pull in full glibc**.
+
+Otherwise tests can accidentally exercise glibc rather than `IPOSIXView`.
+
+The minimal libc should route POSIX functionality through the known Facet POSIX interfaces.
+
+Where its Linux runtime implementation unavoidably needs host kernel functionality merely to execute as a Linux process, it should invoke only a deliberately small and explicit set of known Linux syscalls.
+
+Maintain an audited list of those syscalls.
+
+For every host Linux syscall used, document:
+
+- why it is required;
+- which runtime component uses it;
+- why it cannot reasonably go through `IPOSIXView`;
+- whether application-visible POSIX semantics can accidentally bypass FacTATION.md".
 9. Verify it now agrees with "INTENDED_ARCHITECTURE.md".
 10. Commit.
 
