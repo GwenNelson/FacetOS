@@ -393,6 +393,7 @@ add_library(libc-posix STATIC
     "${FACETOS_ROOT}/src/posix/libc/write.c"
     "${FACETOS_ROOT}/src/posix/libc/read.c"
     "${FACETOS_ROOT}/src/posix/libc/files.c"
+    "${FACETOS_ROOT}/src/posix/libc/metadata.c"
     "${FACETOS_ROOT}/src/posix/libc/dir.c"
     "${FACETOS_ROOT}/src/posix/libc/stdio.c"
     "${FACETOS_ROOT}/src/posix/libc/passwd.c"

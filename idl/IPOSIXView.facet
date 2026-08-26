@@ -40,4 +40,8 @@ interface IPOSIXView {
     method FacetResult spawn_inherited(in string path, in array<string> argv,
                                       out i32 pid, out i32 error);
     method FacetResult wait_process(in i32 pid, out i32 status, out i32 error);
+    // Metadata used by libc stat(2).  The mode includes the standard file
+    // type bits so applications do not need a FacetOS directory-entry ABI.
+    method FacetResult stat_path(in string path, out u32 mode, out u32 uid,
+                                 out u32 gid, out i32 error);
 }

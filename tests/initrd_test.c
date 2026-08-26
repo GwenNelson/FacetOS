@@ -586,6 +586,13 @@ static void test_posix_descriptor_lifetimes(void)
         &IPOSIXView_MetaData, restricted_posix_copy);
     FacetString private_secret = facet_string("/private/secret");
     int32_t restricted_fd = -1, restricted_error = 0;
+    uint32_t restricted_mode = 0, restricted_uid = 0, restricted_gid = 0;
+    assert(restricted_posix != NULL &&
+           restricted_posix->stat_path(
+               restricted_posix->self, &private_secret, &restricted_mode,
+               &restricted_uid, &restricted_gid, &restricted_error) ==
+               FACET_OK);
+    assert(restricted_error == EACCES);
     assert(restricted_posix != NULL &&
            restricted_posix->open_fd(restricted_posix->self, &private_secret,
                                      O_RDONLY, 0, &restricted_fd,
@@ -606,6 +613,14 @@ static void test_posix_descriptor_lifetimes(void)
     IPOSIXView *posix = libfacet_new_proxy_client(&IPOSIXView_MetaData,
                                                   posix_copy);
     assert(posix != NULL);
+
+    uint32_t stat_mode = 0, stat_uid = UINT32_MAX, stat_gid = UINT32_MAX;
+    int32_t stat_error = -1;
+    FacetString stat_readme = facet_string("/README");
+    assert(posix->stat_path(posix->self, &stat_readme, &stat_mode, &stat_uid,
+                            &stat_gid, &stat_error) == FACET_OK);
+    assert(stat_error == 0 && stat_mode == 0100644 && stat_uid == 0 &&
+           stat_gid == 0);
 
     FacetArray_u8 message = {.data = (uint8_t *)"ok", .count = 2};
     int64_t io_result = -1;
@@ -823,6 +838,12 @@ static void test_chrooted_posix_synthetic_etc(void)
     int32_t close_result = -1;
     assert(posix->close_fd(posix->self, fd, &close_result, &error) == FACET_OK);
     FacetString shadow = facet_string("/etc/shadow");
+    uint32_t shadow_mode = 0, shadow_uid = UINT32_MAX,
+             shadow_gid = UINT32_MAX;
+    assert(posix->stat_path(posix->self, &shadow, &shadow_mode, &shadow_uid,
+                            &shadow_gid, &error) == FACET_OK);
+    assert(error == 0 && shadow_mode == 0100600 && shadow_uid == 0 &&
+           shadow_gid == 0);
     assert(posix->open_fd(posix->self, &shadow, O_RDONLY, 0, &fd, &error) ==
            FACET_OK);
     assert(fd == -1 && error == EACCES);

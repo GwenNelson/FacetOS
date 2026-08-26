@@ -9,6 +9,7 @@
 #include <facetos/interfaces/IPOSIXView.h>
 #include <facetos/interfaces/IProcessLifecycle.h>
 #include <facetos/interfaces/ISession.h>
+#include <facetos/interfaces/IUnixMetadata.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -302,6 +303,70 @@ static FacetResult posix_wait(void *self, int32_t pid, int32_t *status, int32_t 
     *status = -1; *error = 0;
     return view->wait == NULL ? (*error = ENOSYS, FACET_OK) :
         view->wait(view->process_context, pid, status, error);
+}
+
+static FacetResult posix_stat_path(void *self, const FacetString *path,
+    uint32_t *mode, uint32_t *uid, uint32_t *gid, int32_t *error)
+{
+    Dominit0PosixView *view = self;
+    if (path == NULL || path->data == NULL || path->length == 0 ||
+        mode == NULL || uid == NULL || gid == NULL || error == NULL)
+        return FACET_INVALID_ARGUMENT;
+    *mode = 0;
+    *uid = 0;
+    *gid = 0;
+    *error = 0;
+
+    if (view->chrooted &&
+        (string_equals(path, "/etc") ||
+         (view->cwd_synthetic_etc && string_equals(path, ".")))) {
+        *mode = 0040755;
+        return FACET_OK;
+    }
+    const char *memory = synthetic_file(view, path);
+    if (memory != NULL) {
+        *mode = memory == view->virtual_shadow ? 0100600 : 0100644;
+        return FACET_OK;
+    }
+    if (view->cwd_synthetic_etc) {
+        *error = ENOENT;
+        return FACET_OK;
+    }
+
+    FacetString relative = {0};
+    IDirectory *base = directory_for_path(view, path, &relative);
+    FacetHandle object = {0};
+    bool directory = true;
+    FacetResult opened = base == NULL ? FACET_INVALID_HANDLE :
+        base->open_directory(base->self, &relative, &object);
+    if (opened == FACET_NOT_FOUND) {
+        directory = false;
+        opened = base->open_file(base->self, &relative, &object);
+    }
+    libfacet_free_proxy_client(base);
+    if (opened == FACET_NOT_FOUND) {
+        *error = ENOENT;
+        return FACET_OK;
+    }
+    if (opened == FACET_ACCESS_DENIED) {
+        *error = EACCES;
+        return FACET_OK;
+    }
+    if (opened != FACET_OK) return opened;
+
+    IGenericObject *generic = libfacet_proxy_from_handle(
+        &IGenericObject_MetaData, object);
+    IUnixMetadata *metadata = generic == NULL ? NULL :
+        libfacet_proxy_client_get_interface(generic, IID_IUnixMetadata);
+    *mode = directory ? 0040755 : 0100644;
+    if (metadata != NULL) {
+        (void)metadata->getmode(metadata->self, mode);
+        (void)metadata->getuid(metadata->self, uid);
+        (void)metadata->getgid(metadata->self, gid);
+    }
+    libfacet_free_proxy_client(metadata);
+    libfacet_free_proxy_client(generic);
+    return FACET_OK;
 }
 
 static FacetResult posix_list_directory(void *self, const FacetString *path,
@@ -736,6 +801,7 @@ Dominit0PosixView *dominit0_posix_view_create(
         .authenticate = posix_authenticate, .spawn_process = posix_spawn,
         .spawn_inherited = posix_spawn_inherited,
         .wait_process = posix_wait,
+        .stat_path = posix_stat_path,
     };
     if (libfacet_export_interface(&view->interface, &IPOSIXView_MetaData,
                                   &view->handle) != FACET_OK) {

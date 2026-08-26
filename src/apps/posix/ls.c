@@ -1,39 +1,129 @@
 #include <dirent.h>
 #include <fcntl.h>
+#include <stdbool.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
-static int list(const char *path)
+static void text(int fd, const char *value)
+{
+    (void)write(fd, value, strlen(value));
+}
+
+static void number(unsigned long long value, unsigned base, unsigned width)
+{
+    char digits[32];
+    unsigned count = 0;
+    do {
+        digits[count++] = (char)('0' + value % base);
+        value /= base;
+    } while (value != 0);
+    while (count < width) digits[count++] = '0';
+    while (count != 0) (void)write(1, &digits[--count], 1);
+}
+
+static void metadata(const struct stat *value)
+{
+    number((unsigned)value->st_mode, 8, 6);
+    text(1, " ");
+    number((unsigned)value->st_uid, 10, 1);
+    text(1, " ");
+    number((unsigned)value->st_gid, 10, 1);
+    text(1, " ");
+}
+
+static int joined_path(char *result, size_t capacity, const char *directory,
+                       const char *name)
+{
+    size_t directory_length = strlen(directory);
+    size_t name_length = strlen(name);
+    bool slash = directory_length != 0 &&
+        directory[directory_length - 1] != '/';
+    if (directory_length + (slash ? 1 : 0) + name_length + 1 > capacity)
+        return -1;
+    memcpy(result, directory, directory_length);
+    if (slash) result[directory_length++] = '/';
+    memcpy(result + directory_length, name, name_length + 1);
+    return 0;
+}
+
+static int list_one(const char *path, bool long_format, bool show_all,
+                    bool heading)
 {
     DIR *directory = opendir(path);
     if (directory == NULL) {
-        /* A successful read-only open is enough to distinguish a regular
-         * file operand from a missing path for this small ls implementation. */
-        int fd = open(path, O_RDONLY);
-        if (fd >= 0) {
-            (void)close(fd);
-            (void)write(1, path, strlen(path));
-            (void)write(1, "\n", 1);
+        struct stat value;
+        if (stat(path, &value) == 0 && !S_ISDIR(value.st_mode)) {
+            if (long_format) metadata(&value);
+            text(1, path);
+            text(1, "\n");
             return 0;
         }
-        (void)write(2, "ls: cannot access ", 18);
-        (void)write(2, path, strlen(path));
-        (void)write(2, "\n", 1);
+        text(2, "ls: cannot access ");
+        text(2, path);
+        text(2, "\n");
         return 1;
     }
+    if (heading) {
+        text(1, path);
+        text(1, ":\n");
+    }
+    int status = 0;
     struct dirent *entry;
     while ((entry = readdir(directory)) != NULL) {
-        (void)write(1, entry->d_name, strlen(entry->d_name));
-        (void)write(1, "\n", 1);
+        if (!show_all && entry->d_name[0] == '.') continue;
+        char child[512];
+        struct stat value;
+        bool have_metadata = joined_path(child, sizeof(child), path,
+                                         entry->d_name) == 0 &&
+            stat(child, &value) == 0;
+        if (long_format) {
+            if (have_metadata) metadata(&value);
+            else {
+                struct stat fallback = {.st_mode = 0100644};
+                metadata(&fallback);
+                status = 1;
+            }
+        }
+        text(1, entry->d_name);
+        if (have_metadata && S_ISDIR(value.st_mode)) text(1, "/");
+        text(1, "\n");
     }
-    (void)closedir(directory);
-    return 0;
+    if (closedir(directory) != 0) status = 1;
+    return status;
 }
 
 int main(int argc, char **argv)
 {
-    if (argc == 1) return list(".");
+    bool long_format = false, show_all = false, options = true;
+    int first_path = argc;
+    for (int i = 1; i < argc; i++) {
+        if (options && strcmp(argv[i], "--") == 0) {
+            options = false;
+            continue;
+        }
+        if (options && argv[i][0] == '-' && argv[i][1] != '\0') {
+            for (const char *flag = argv[i] + 1; *flag != '\0'; flag++) {
+                if (*flag == 'l') long_format = true;
+                else if (*flag == 'a') show_all = true;
+                else {
+                    text(2, "ls: invalid option\n");
+                    return 1;
+                }
+            }
+            continue;
+        }
+        first_path = i;
+        break;
+    }
+    if (first_path == argc)
+        return list_one(".", long_format, show_all, false);
     int status = 0;
-    for (int i = 1; i < argc; i++) if (list(argv[i]) != 0) status = 1;
+    for (int i = first_path; i < argc; i++) {
+        if (i != first_path) text(1, "\n");
+        if (list_one(argv[i], long_format, show_all,
+                     argc - first_path > 1) != 0)
+            status = 1;
+    }
     return status;
 }

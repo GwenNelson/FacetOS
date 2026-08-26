@@ -12,6 +12,7 @@
 #include <facetos/initrd.h>
 #include <facetos/interfaces/IGenericObject.h>
 #include <facetos/interfaces/IHumanUser.h>
+#include <facetos/interfaces/IUnixMetadata.h>
 
 #ifdef DEBUG
 void test_kmalloc(void) {
@@ -138,7 +139,8 @@ void main(int argc, char **argv, char **envp) {
      #endif
      platform_init();
      if (libfacet_register_generic_metadata(&IGenericObject_MetaData) != FACET_OK ||
-         libfacet_register_interface_metadata(&IHumanUser_MetaData) != FACET_OK)
+         libfacet_register_interface_metadata(&IHumanUser_MetaData) != FACET_OK ||
+         libfacet_register_interface_metadata(&IUnixMetadata_MetaData) != FACET_OK)
           kpanic("Unable to register dominit0 interface metadata!");
 
      PlatformConfigSource source;
