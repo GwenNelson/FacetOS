@@ -468,6 +468,9 @@ test-initrd: $(FACET_INITRD_TEST)
 test-current-layout: $(ROOT)/tests/current_layout_test.py $(FACET_INITRD_TOOL) $(INITRD_SYSTEM) $(INITRD_CHILD)
 	python3 $(ROOT)/tests/current_layout_test.py $(FACET_INITRD_TOOL) $(INITRD_SYSTEM) $(INITRD_CHILD)
 
+test-posix-api-boundary: $(ROOT)/tests/posix_api_boundary_test.py
+	python3 $(ROOT)/tests/posix_api_boundary_test.py $(ROOT)/src/apps/posix
+
 $(FACET_AUTH_RPC_TEST): $(ROOT)/tests/auth_rpc_test.c \
 		$(ROOT)/src/config.c $(ROOT)/src/dominit0/config.c \
 		$(ROOT)/src/dominit0/environment.c $(ROOT)/src/dominit0/auth.c \
@@ -559,7 +562,7 @@ test-logging-setup: $(FACET_LOGGING_SETUP_TEST)
 test-initrd-tool: $(ROOT)/tests/initrd_tool_test.py $(FACET_INITRD_TOOL)
 	python3 $(ROOT)/tests/initrd_tool_test.py $(FACET_INITRD_TOOL)
 
-test: test-config test-sha256 test-libc-runtime test-shell-parser test-initrd test-current-layout test-initrd-tool test-auth-rpc test-terminal-rpc \
+test: test-config test-sha256 test-libc-runtime test-shell-parser test-initrd test-current-layout test-posix-api-boundary test-initrd-tool test-auth-rpc test-terminal-rpc \
 	test-klog test-logging-setup test-seat-pc-console
 
 
