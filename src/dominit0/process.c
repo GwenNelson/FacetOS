@@ -132,16 +132,6 @@ static char *copy_string(const FacetString *input)
     return copy;
 }
 
-/* The native and POSIX application ABIs have distinct startup contracts.  The
- * initrd namespace makes that choice explicit: native FacetOS programs live
- * under /FacetOS, while POSIX programs live under /bin and /sbin. */
-static bool is_posix_program(const char *path)
-{
-    return path != NULL &&
-        (strncmp(path, "/bin/", sizeof("/bin/") - 1) == 0 ||
-         strncmp(path, "/sbin/", sizeof("/sbin/") - 1) == 0);
-}
-
 static FacetResult session_credentials(FacetHandle session_handle,
                                        uint32_t *uid, uint32_t *gid,
                                        bool *admin)
@@ -228,15 +218,8 @@ static FacetResult launch_process(ProcessManager *manager,
         free(path_copy);
         path_copy = resolved;
     }
-    Dominit0ProcessProfile profile = DOMINIT0_PROCESS_NATIVE;
-    if (force_posix || is_posix_program(path_copy) ||
-        (manager->domain->parsed != NULL &&
-        (manager->domain->parsed->personality ==
-             FACET_CONFIG_PERSONALITY_POSIX ||
-         (initial && terminal_index < manager->domain->parsed->terminal_count &&
-          manager->domain->parsed->terminals[terminal_index].view ==
-              FACET_CONFIG_TERMINAL_VIEW_POSIX))))
-        profile = DOMINIT0_PROCESS_PURE_POSIX;
+    Dominit0ProcessProfile profile = force_posix ?
+        DOMINIT0_PROCESS_PURE_POSIX : DOMINIT0_PROCESS_NATIVE;
     /* The bootstrap supervisor supplies its namespace snapshot with the
      * launch.  This avoids a callback into a supervisor blocked on this RPC. */
     if (profile == DOMINIT0_PROCESS_PURE_POSIX && posix_root != NULL &&
@@ -542,6 +525,7 @@ static FacetResult manager_launch_initial(void *self, const FacetString *path,
                                           const FacetArray_string *arguments,
                                           uint64_t terminal_index,
                                           const FacetString *posix_root,
+                                          bool posix_profile,
                                           FacetHandle *out)
 {
     ProcessManager *manager = self;
@@ -561,7 +545,8 @@ static FacetResult manager_launch_initial(void *self, const FacetString *path,
         (void)dominit0_auth_session_for_user(manager->domain->parsed->id, "root", &session);
     FacetResult result = launch_process(self, path, arguments, session, true,
                                         terminal_index, NULL,
-                                        (FacetHandle){0}, false, posix_root, out);
+                                        (FacetHandle){0}, posix_profile,
+                                        posix_profile ? posix_root : NULL, out);
     if (session.platform != NULL) (void)libfacet_handle_release(session);
     return result;
 }

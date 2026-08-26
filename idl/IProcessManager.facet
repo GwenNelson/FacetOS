@@ -16,6 +16,7 @@ interface IProcessManager {
     method FacetResult launch_initial(in string path, in array<string> argv,
                                       in u64 terminal_index,
                                       in string posix_root,
+                                      in bool posix_profile,
                                       out handle process);
 
     method FacetResult launch_on_terminal(in string path,

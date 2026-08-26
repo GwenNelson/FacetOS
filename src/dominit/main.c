@@ -35,8 +35,11 @@ static void *resolve(IProcessEnvironment *environment, const char *name,
 
 static FacetResult configured_initial_process(IDomainEnvironment *environment,
                                               uint64_t index,
-                                              FacetString *path)
+                                              FacetString *path,
+                                              bool *posix_profile)
 {
+    if (posix_profile == NULL) return FACET_INVALID_ARGUMENT;
+    *posix_profile = false;
     FacetHandle config_handle = {0};
     if (environment->getdomain_config(environment->self, &config_handle) != FACET_OK)
         return FACET_INVALID_HANDLE;
@@ -67,6 +70,9 @@ static FacetResult configured_initial_process(IDomainEnvironment *environment,
      * supervisor and performs this once, so retaining the three other small
      * decoded fields avoids allocator RPCs in the bootstrap path. */
     *path = assignment.initial_process;
+    *posix_profile = assignment.view.data != NULL &&
+        assignment.view.length == sizeof("posix") - 1 &&
+        memcmp(assignment.view.data, "posix", assignment.view.length) == 0;
     return FACET_OK;
 }
 
@@ -218,6 +224,7 @@ int main(int argc, char **argv)
                 FacetArray_string argv = {.data = args, .count = 1};
                 if (processes->launch_initial(processes->self, &pid1, &argv, 0,
                                               &posix_root,
+                                              true,
                                               &process) == FACET_OK)
                     child_log(logger, "launched POSIX pid1");
                 if (process.platform != NULL) (void)libfacet_handle_release(process);
@@ -227,7 +234,8 @@ int main(int argc, char **argv)
         for (uint64_t index = 0; index < assignment_count; index++) {
             FacetString initial = {0};
             FacetHandle process = {0};
-            if (configured_initial_process(domain, index, &initial) !=
+            bool posix_profile = false;
+            if (configured_initial_process(domain, index, &initial, &posix_profile) !=
                 FACET_OK)
                 continue;
             FacetString argument = initial;
@@ -256,6 +264,7 @@ int main(int argc, char **argv)
             if (processes->launch_initial(processes->self, &initial, &arguments,
                                           index,
                                           &posix_root,
+                                          posix_profile,
                                           &process) == FACET_OK)
                 child_log(logger, "launched configured initial process");
             else
