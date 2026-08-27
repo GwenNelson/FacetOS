@@ -364,30 +364,35 @@ static FacetResult posix_get_cwd(void *self, FacetString *path, int32_t *error)
         path->length = sizeof("/etc") - 1;
         return FACET_OK;
     }
-    IDirectory *cwd = proxy_from_borrowed(&IDirectory_MetaData, view->cwd_handle);
-    FacetResult result = cwd == NULL ? FACET_INVALID_HANDLE :
-        cwd->getpath(cwd->self, path);
-    libfacet_free_proxy_client(cwd);
+    FacetString physical = {0}, root = {0};
+    FacetResult result = directory_path(view->cwd_handle, &physical);
     if (result == FACET_ACCESS_DENIED) { *error = EACCES; return FACET_OK; }
-    if (result == FACET_OK && view->chrooted && path->length >= 6 &&
-        memcmp(path->data, "/posix", 6) == 0 &&
-        (path->length == 6 || path->data[6] == '/')) {
-        size_t offset = 6;
-        if (path->length == offset) {
-            char *logical = strdup("/");
-            free((void *)(uintptr_t)path->data);
-            if (logical == NULL) return FACET_OUT_OF_MEMORY;
-            path->data = logical;
-            path->length = 1;
-        } else {
-            char *logical = strdup(path->data + offset);
-            free((void *)(uintptr_t)path->data);
-            path->data = logical;
-            path->length = logical == NULL ? 0 : strlen(logical);
-            if (logical == NULL) return FACET_OUT_OF_MEMORY;
-        }
+    if (result != FACET_OK) return result;
+    FacetResult root_result = directory_path(view->root_handle, &root);
+    if (root_result != FACET_OK) {
+        free((void *)(uintptr_t)physical.data);
+        return root_result;
     }
-    return result;
+    size_t offset = 0;
+    bool representable = path_beneath(&physical, &root, &offset);
+    size_t suffix_length = representable ? physical.length - offset : 0;
+    const char *unknown = "(unknown)";
+    path->length = representable ? suffix_length + 1 : strlen(unknown);
+    path->data = malloc(path->length + 1);
+    if (path->data != NULL) {
+        if (representable) {
+            ((char *)(uintptr_t)path->data)[0] = '/';
+            if (suffix_length != 0)
+                memcpy((char *)(uintptr_t)path->data + 1,
+                       physical.data + offset, suffix_length);
+        } else {
+            memcpy((char *)(uintptr_t)path->data, unknown, path->length);
+        }
+        ((char *)(uintptr_t)path->data)[path->length] = '\0';
+    }
+    free((void *)(uintptr_t)physical.data);
+    free((void *)(uintptr_t)root.data);
+    return path->data == NULL ? FACET_OUT_OF_MEMORY : FACET_OK;
 }
 
 static FacetResult posix_change_directory(void *self, const FacetString *path,

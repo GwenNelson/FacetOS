@@ -45,8 +45,17 @@ char *getcwd(char *buffer, size_t size)
     FacetResult result = view == NULL ? FACET_INVALID_HANDLE :
         view->get_cwd(view->self, &path, &error);
     if (result != FACET_OK || error != 0 || path.data == NULL ||
-        (buffer != NULL && size <= path.length)) { errno = error == 0 ? EIO : error; return NULL; }
-    if (buffer != NULL) { memcpy(buffer, path.data, path.length); buffer[path.length] = 0; return buffer; }
+        (buffer != NULL && size <= path.length)) {
+        free((void *)(uintptr_t)path.data);
+        errno = error == 0 ? EIO : error;
+        return NULL;
+    }
+    if (buffer != NULL) {
+        memcpy(buffer, path.data, path.length);
+        buffer[path.length] = 0;
+        free((void *)(uintptr_t)path.data);
+        return buffer;
+    }
     return (char *)(uintptr_t)path.data;
 }
 
