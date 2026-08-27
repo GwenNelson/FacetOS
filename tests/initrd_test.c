@@ -676,6 +676,7 @@ static void test_chrooted_posix_synthetic_etc(void)
     append_entry(&archive, "posix/bin/sh", 0100755, "elf", 3);
     append_entry(&archive, "posix/home", 0040755, NULL, 0);
     append_entry(&archive, "posix/home/root", 0040755, NULL, 0);
+    append_entry(&archive, "README", 0100644, "native only\n", 12);
     append_entry(&archive, "TRAILER!!!", 0, NULL, 0);
     FacetInitrd *initrd = facet_initrd_create(archive.bytes, archive.size);
     assert(initrd != NULL);
@@ -824,6 +825,53 @@ static void test_chrooted_posix_synthetic_etc(void)
     facet_rpc_release_value(FACET_TYPE_ARRAY, &FacetArray_string_TypeMeta,
                             &entries);
 
+    /* Absolute parent traversal is normalized beneath the IPOSIXView root.
+     * The native README beside /posix must never become addressable. */
+    FacetString escaped_root = facet_string("/../..");
+    entries = (FacetArray_string){0};
+    assert(posix->list_directory(posix->self, &escaped_root, &entries,
+                                 &error) == FACET_OK && error == 0);
+    saw_bin = saw_etc = saw_home = false;
+    bool saw_native_readme = false;
+    for (size_t i = 0; i < entries.count; i++) {
+        saw_bin |= entries.data[i].length == 3 &&
+            memcmp(entries.data[i].data, "bin", 3) == 0;
+        saw_etc |= entries.data[i].length == 3 &&
+            memcmp(entries.data[i].data, "etc", 3) == 0;
+        saw_home |= entries.data[i].length == 4 &&
+            memcmp(entries.data[i].data, "home", 4) == 0;
+        saw_native_readme |= entries.data[i].length == 6 &&
+            memcmp(entries.data[i].data, "README", 6) == 0;
+    }
+    assert(entries.count == 3 && saw_bin && saw_etc && saw_home &&
+           !saw_native_readme);
+    facet_rpc_release_value(FACET_TYPE_ARRAY, &FacetArray_string_TypeMeta,
+                            &entries);
+    FacetString escaped_readme = facet_string("/../../README");
+    int32_t escaped_fd = -1;
+    assert(posix->open_fd(posix->self, &escaped_readme, O_RDONLY, 0,
+                          &escaped_fd, &error) == FACET_OK);
+    assert(escaped_fd == -1 && error == ENOENT);
+
+    /* Relative parent traversal clamps in the same way, both at root and
+     * when more parents are supplied than the current POSIX depth. */
+    FacetString parent_at_root = facet_string("..");
+    assert(posix->change_directory(posix->self, &parent_at_root, &error) ==
+               FACET_OK && error == 0);
+    FacetString cwd_path = {0};
+    assert(posix->get_cwd(posix->self, &cwd_path, &error) == FACET_OK &&
+           error == 0 && cwd_path.length == 1 && cwd_path.data[0] == '/');
+    free((void *)(uintptr_t)cwd_path.data);
+    FacetString root_home = facet_string("/home/root");
+    assert(posix->change_directory(posix->self, &root_home, &error) ==
+               FACET_OK && error == 0);
+    FacetString excess_parents = facet_string("../../..");
+    assert(posix->change_directory(posix->self, &excess_parents, &error) ==
+               FACET_OK && error == 0);
+    assert(posix->get_cwd(posix->self, &cwd_path, &error) == FACET_OK &&
+           error == 0 && cwd_path.length == 1 && cwd_path.data[0] == '/');
+    free((void *)(uintptr_t)cwd_path.data);
+
     FacetString passwd = facet_string("/etc/passwd");
     int32_t fd = -1;
     assert(posix->open_fd(posix->self, &passwd, O_RDONLY, 0, &fd, &error) ==
@@ -856,7 +904,7 @@ static void test_chrooted_posix_synthetic_etc(void)
     FacetString etc = facet_string("/etc");
     assert(posix->change_directory(posix->self, &etc, &error) == FACET_OK &&
            error == 0);
-    FacetString cwd_path = {0};
+    cwd_path = (FacetString){0};
     assert(posix->get_cwd(posix->self, &cwd_path, &error) == FACET_OK &&
            error == 0 && cwd_path.length == 4 &&
            memcmp(cwd_path.data, "/etc", 4) == 0);
@@ -977,7 +1025,7 @@ static void test_chrooted_posix_synthetic_etc(void)
     free(bytes.data);
     assert(root_posix->close_fd(root_posix->self, fd, &close_result,
                                  &error) == FACET_OK);
-    FacetString root_home = facet_string("/home/root");
+    root_home = facet_string("/home/root");
     assert(root_posix->change_directory(root_posix->self, &root_home, &error) ==
                FACET_OK &&
            error == 0);

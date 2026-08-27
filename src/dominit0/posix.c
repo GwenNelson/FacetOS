@@ -117,28 +117,185 @@ static FacetResult synthetic_etc_entries(FacetArray_string *entries)
 static void *proxy_from_borrowed(const FacetInterfaceMeta *metadata,
                                  FacetHandle handle);
 
-static IDirectory *directory_for_path(Dominit0PosixView *view,
-                                      const FacetString *path,
-                                      FacetString *relative)
+typedef struct PosixResolvedPath {
+    IDirectory *directory;
+    FacetString relative;
+    char *storage;
+    bool root_relative;
+} PosixResolvedPath;
+
+static FacetResult directory_path(FacetHandle handle, FacetString *path)
 {
-    if (path == NULL || relative == NULL) return NULL;
-    FacetHandle handle = view->cwd_handle;
-    *relative = *path;
-    /* Every absolute POSIX path starts at this process's namespace root.
-     * chrooted only controls the logical /posix-to-/ translation used by a
-     * native domain; a pure POSIX domain still has an independent root
-     * capability and must not resolve absolute paths through an inherited
-     * (possibly more privileged) CWD capability. */
-    if (path->length != 0 && path->data[0] == '/') {
-        handle = view->root_handle;
-        relative->data = path->data + 1;
-        relative->length = path->length - 1;
-        if (relative->length == 0) {
-            relative->data = ".";
-            relative->length = 1;
+    if (path == NULL) return FACET_INVALID_ARGUMENT;
+    *path = (FacetString){0};
+    IDirectory *directory = proxy_from_borrowed(&IDirectory_MetaData, handle);
+    FacetResult result = directory == NULL ? FACET_INVALID_HANDLE :
+        directory->getpath(directory->self, path);
+    libfacet_free_proxy_client(directory);
+    return result;
+}
+
+static bool path_beneath(const FacetString *path, const FacetString *root,
+                         size_t *relative_offset)
+{
+    if (path == NULL || root == NULL || path->data == NULL ||
+        root->data == NULL || path->length < root->length)
+        return false;
+    if (root->length == 1 && root->data[0] == '/' &&
+        path->length >= 1 && path->data[0] == '/') {
+        if (relative_offset != NULL) *relative_offset = 1;
+        return true;
+    }
+    if (memcmp(path->data, root->data, root->length) != 0)
+        return false;
+    if (path->length == root->length) {
+        if (relative_offset != NULL) *relative_offset = root->length;
+        return true;
+    }
+    if (path->data[root->length] != '/') return false;
+    if (relative_offset != NULL) *relative_offset = root->length + 1;
+    return true;
+}
+
+static void normalize_components(char *output, size_t *used,
+                                 const char *input, size_t length)
+{
+    size_t position = 0;
+    while (position < length) {
+        while (position < length && input[position] == '/') position++;
+        size_t start = position;
+        while (position < length && input[position] != '/') position++;
+        size_t component = position - start;
+        if (component == 0 ||
+            (component == 1 && input[start] == '.'))
+            continue;
+        if (component == 2 && input[start] == '.' &&
+            input[start + 1] == '.') {
+            while (*used != 0 && output[*used - 1] != '/') (*used)--;
+            if (*used != 0) (*used)--;
+            continue;
+        }
+        if (*used != 0) output[(*used)++] = '/';
+        memcpy(output + *used, input + start, component);
+        *used += component;
+    }
+}
+
+static char *normalize_beneath_root(const char *base, size_t base_length,
+                                    const FacetString *path,
+                                    size_t *normalized_length)
+{
+    size_t capacity = base_length + path->length + 2;
+    char *normalized = malloc(capacity);
+    if (normalized == NULL) return NULL;
+    size_t used = 0;
+    normalize_components(normalized, &used, base, base_length);
+    normalize_components(normalized, &used, path->data, path->length);
+    if (used == 0) normalized[used++] = '.';
+    normalized[used] = '\0';
+    *normalized_length = used;
+    return normalized;
+}
+
+static FacetResult resolve_path(Dominit0PosixView *view,
+                                const FacetString *path,
+                                PosixResolvedPath *resolved)
+{
+    if (view == NULL || path == NULL || path->data == NULL ||
+        path->length == 0 || resolved == NULL)
+        return FACET_INVALID_ARGUMENT;
+    *resolved = (PosixResolvedPath){0};
+    bool absolute = path->data[0] == '/';
+    const char *base = NULL;
+    size_t base_length = 0;
+    FacetString cwd_path = {0}, root_path = {0};
+    size_t cwd_offset = 0;
+
+    if (!absolute && view->cwd_synthetic_etc) {
+        resolved->root_relative = true;
+        base = "etc";
+        base_length = sizeof("etc") - 1;
+    } else if (absolute) {
+        resolved->root_relative = true;
+    } else if (directory_path(view->root_handle, &root_path) == FACET_OK &&
+               directory_path(view->cwd_handle, &cwd_path) == FACET_OK &&
+               path_beneath(&cwd_path, &root_path, &cwd_offset)) {
+        resolved->root_relative = true;
+        base = cwd_path.data + cwd_offset;
+        base_length = cwd_path.length - cwd_offset;
+    }
+
+    if (resolved->root_relative) {
+        resolved->storage = normalize_beneath_root(
+            base == NULL ? "" : base, base_length, path,
+            &resolved->relative.length);
+    } else {
+        resolved->storage = malloc(path->length + 1);
+        if (resolved->storage != NULL) {
+            memcpy(resolved->storage, path->data, path->length);
+            resolved->storage[path->length] = '\0';
+            resolved->relative.length = path->length;
         }
     }
-    return proxy_from_borrowed(&IDirectory_MetaData, handle);
+    free((void *)(uintptr_t)cwd_path.data);
+    free((void *)(uintptr_t)root_path.data);
+    if (resolved->storage == NULL) return FACET_OUT_OF_MEMORY;
+    resolved->relative.data = resolved->storage;
+    FacetHandle base_handle = resolved->root_relative ? view->root_handle :
+                                                        view->cwd_handle;
+    resolved->directory = proxy_from_borrowed(&IDirectory_MetaData,
+                                               base_handle);
+    if (resolved->directory == NULL) {
+        free(resolved->storage);
+        *resolved = (PosixResolvedPath){0};
+        return FACET_INVALID_HANDLE;
+    }
+    return FACET_OK;
+}
+
+static void release_resolved_path(PosixResolvedPath *resolved)
+{
+    if (resolved == NULL) return;
+    libfacet_free_proxy_client(resolved->directory);
+    free(resolved->storage);
+    *resolved = (PosixResolvedPath){0};
+}
+
+static FacetResult resolve_spawn_path(Dominit0PosixView *view,
+                                      const FacetString *path,
+                                      FacetString *spawn_path,
+                                      char **storage)
+{
+    if (spawn_path == NULL || storage == NULL) return FACET_INVALID_ARGUMENT;
+    *spawn_path = (FacetString){0};
+    *storage = NULL;
+    PosixResolvedPath resolved = {0};
+    FacetResult result = resolve_path(view, path, &resolved);
+    if (result != FACET_OK) return result;
+    if (resolved.root_relative) {
+        bool root = resolved.relative.length == 1 &&
+            resolved.relative.data[0] == '.';
+        size_t length = root ? 1 : resolved.relative.length + 1;
+        *storage = malloc(length + 1);
+        if (*storage != NULL) {
+            (*storage)[0] = '/';
+            if (!root)
+                memcpy(*storage + 1, resolved.relative.data,
+                       resolved.relative.length);
+            (*storage)[length] = '\0';
+            *spawn_path = (FacetString){.data = *storage, .length = length};
+        }
+    } else {
+        *storage = malloc(path->length + 1);
+        if (*storage != NULL) {
+            memcpy(*storage, path->data, path->length);
+            (*storage)[path->length] = '\0';
+            *spawn_path = (FacetString){.data = *storage,
+                                        .length = path->length};
+        }
+    }
+    release_resolved_path(&resolved);
+    return *storage == NULL ? FACET_OUT_OF_MEMORY : FACET_OK;
 }
 
 static bool directory_is_namespace_root(Dominit0PosixView *view,
@@ -262,16 +419,17 @@ static FacetResult posix_change_directory(void *self, const FacetString *path,
             return FACET_ERROR;
         return FACET_OK;
     }
-    if (view->cwd_synthetic_etc) { *error = ENOTDIR; return FACET_OK; }
-    FacetString relative = {0};
-    IDirectory *cwd = directory_for_path(view, path, &relative);
+    PosixResolvedPath resolved = {0};
+    FacetResult resolution = resolve_path(view, path, &resolved);
+    if (resolution != FACET_OK) return resolution;
     FacetHandle next = {0};
-    FacetResult result = cwd == NULL ? FACET_INVALID_HANDLE :
-        cwd->open_directory(cwd->self, &relative, &next);
-    libfacet_free_proxy_client(cwd);
+    FacetResult result = resolved.directory->open_directory(
+        resolved.directory->self, &resolved.relative, &next);
+    release_resolved_path(&resolved);
     if (result == FACET_NOT_FOUND) { *error = ENOENT; return FACET_OK; }
     if (result == FACET_ACCESS_DENIED) { *error = EACCES; return FACET_OK; }
     if (result != FACET_OK) return result;
+    view->cwd_synthetic_etc = false;
     if (view->cwd_handle.platform != NULL) (void)libfacet_handle_release(view->cwd_handle);
     view->cwd_handle = next;
     if (view->cwd_changed != NULL &&
@@ -299,7 +457,14 @@ static FacetResult posix_spawn(void *self, const FacetString *p,
     *pid = -1; *error = 0;
     if (view->spawn == NULL) { *error = ENOSYS; return FACET_OK; }
     if (s.platform == NULL) { *error = EACCES; return FACET_OK; }
-    return view->spawn(view->process_context, p, a, s, pid, error);
+    FacetString spawn_path = {0};
+    char *storage = NULL;
+    FacetResult result = resolve_spawn_path(view, p, &spawn_path, &storage);
+    if (result == FACET_OK)
+        result = view->spawn(view->process_context, &spawn_path, a, s, pid,
+                             error);
+    free(storage);
+    return result;
 }
 
 static FacetResult posix_spawn_inherited(void *self, const FacetString *p,
@@ -313,8 +478,14 @@ static FacetResult posix_spawn_inherited(void *self, const FacetString *p,
         *error = ENOSYS;
         return FACET_OK;
     }
-    return view->spawn(view->process_context, p, a, (FacetHandle){0},
-                       pid, error);
+    FacetString spawn_path = {0};
+    char *storage = NULL;
+    FacetResult result = resolve_spawn_path(view, p, &spawn_path, &storage);
+    if (result == FACET_OK)
+        result = view->spawn(view->process_context, &spawn_path, a,
+                             (FacetHandle){0}, pid, error);
+    free(storage);
+    return result;
 }
 static FacetResult posix_wait(void *self, int32_t pid, int32_t *status, int32_t *error)
 {
@@ -353,17 +524,19 @@ static FacetResult posix_stat_path(void *self, const FacetString *path,
         return FACET_OK;
     }
 
-    FacetString relative = {0};
-    IDirectory *base = directory_for_path(view, path, &relative);
+    PosixResolvedPath resolved = {0};
+    FacetResult resolution = resolve_path(view, path, &resolved);
+    if (resolution != FACET_OK) return resolution;
     FacetHandle object = {0};
     bool directory = true;
-    FacetResult opened = base == NULL ? FACET_INVALID_HANDLE :
-        base->open_directory(base->self, &relative, &object);
+    FacetResult opened = resolved.directory->open_directory(
+        resolved.directory->self, &resolved.relative, &object);
     if (opened == FACET_NOT_FOUND) {
         directory = false;
-        opened = base->open_file(base->self, &relative, &object);
+        opened = resolved.directory->open_file(
+            resolved.directory->self, &resolved.relative, &object);
     }
-    libfacet_free_proxy_client(base);
+    release_resolved_path(&resolved);
     if (opened == FACET_NOT_FOUND) {
         *error = ENOENT;
         return FACET_OK;
@@ -451,13 +624,13 @@ static FacetResult posix_list_directory(void *self, const FacetString *path,
         entries->data = copy; entries->count = count;
         return FACET_OK;
     }
-    if (view->cwd_synthetic_etc) { *error = ENOTDIR; return FACET_OK; }
-    FacetString relative = {0};
-    IDirectory *cwd = directory_for_path(view, path, &relative);
+    PosixResolvedPath resolved = {0};
+    FacetResult resolution = resolve_path(view, path, &resolved);
+    if (resolution != FACET_OK) return resolution;
     FacetHandle handle = {0};
-    FacetResult result = cwd == NULL ? FACET_INVALID_HANDLE :
-        cwd->open_directory(cwd->self, &relative, &handle);
-    libfacet_free_proxy_client(cwd);
+    FacetResult result = resolved.directory->open_directory(
+        resolved.directory->self, &resolved.relative, &handle);
+    release_resolved_path(&resolved);
     if (result == FACET_NOT_FOUND) { *error = ENOENT; return FACET_OK; }
     if (result == FACET_ACCESS_DENIED) { *error = EACCES; return FACET_OK; }
     if (result != FACET_OK) return result;
@@ -649,20 +822,13 @@ static FacetResult posix_open(void *self, const FacetString *path,
         *fd = slot;
         return FACET_OK;
     }
-    FacetHandle cwd_copy = {0};
-    if (libfacet_handle_clone(view->cwd_handle, &cwd_copy) != FACET_OK)
-        return FACET_INVALID_HANDLE;
-    IDirectory *cwd = libfacet_proxy_from_handle(&IDirectory_MetaData,
-                                                  cwd_copy);
-    FacetString relative = *path;
-    if (path->length != 0 && path->data[0] == '/') {
-        libfacet_free_proxy_client(cwd);
-        cwd = directory_for_path(view, path, &relative);
-    }
+    PosixResolvedPath resolved = {0};
+    FacetResult resolution = resolve_path(view, path, &resolved);
+    if (resolution != FACET_OK) return resolution;
     FacetHandle file_handle = {0};
-    FacetResult opened = cwd == NULL ? FACET_INVALID_HANDLE :
-        cwd->open_file(cwd->self, &relative, &file_handle);
-    libfacet_free_proxy_client(cwd);
+    FacetResult opened = resolved.directory->open_file(
+        resolved.directory->self, &resolved.relative, &file_handle);
+    release_resolved_path(&resolved);
     if (opened == FACET_NOT_FOUND) { *error = ENOENT; return FACET_OK; }
     if (opened == FACET_ACCESS_DENIED) { *error = EACCES; return FACET_OK; }
     if (opened != FACET_OK) return opened;
