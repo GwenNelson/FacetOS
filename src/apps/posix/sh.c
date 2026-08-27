@@ -4,6 +4,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "diagnostic.h"
+
 static int line(char *buffer, unsigned capacity)
 {
     unsigned length = 0;
@@ -65,7 +67,15 @@ int main(void)
             continue;
         }
         if (!strcmp(words[0], "pwd")) { write(1,cwd,strlen(cwd)); write(1,"\n",1); continue; }
-        if (!strcmp(words[0], "cd")) { if(count!=2 || chdir(words[1])!=0) write(1,"sh: cd failed\n",14); continue; }
+        if (!strcmp(words[0], "cd")) {
+            if (count != 2) {
+                (void)write(2, "sh: cd: invalid arguments\n", 26);
+            } else if (chdir(words[1]) != 0) {
+                int error = errno;
+                posix_path_error("sh: cd", words[1], error);
+            }
+            continue;
+        }
         if (!strcmp(words[0], "echo")) { for(size_t i=1;i<count;i++){if(i>1)write(1," ",1);write(1,words[i],strlen(words[i]));}write(1,"\n",1);continue; }
         const char *name = words[0];
         if (strchr(name, '/') == NULL) {

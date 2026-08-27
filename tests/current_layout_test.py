@@ -29,7 +29,8 @@ def main() -> None:
 
     for path in ("FacetOS", "Data", "home", "home/root", "home/user",
                  "posix", "posix/bin", "posix/home", "posix/home/root",
-                 "posix/home/user", "README"):
+                 "posix/home/user", "Data/TestData/root-private",
+                 "Data/TestData/root-private/inside.txt", "README"):
         require(system, path, system_image)
     for path in ("posix/bin/login", "posix/bin/sh", "posix/bin/ls", "posix/bin/cat"):
         require(system, path, system_image)
@@ -38,7 +39,8 @@ def main() -> None:
 
     for path in ("bin", "sbin", "sbin/init", "etc", "etc/passwd",
                  "etc/shadow", "etc/fstab", "home", "home/root",
-                 "home/user"):
+                 "home/user", "usr/share/test_data/root-private",
+                 "usr/share/test_data/root-private/inside.txt"):
         require(child, path, child_image)
     print("current initrd layout tests passed")
 

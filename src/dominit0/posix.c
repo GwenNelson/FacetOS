@@ -592,6 +592,14 @@ static FacetResult posix_list_directory(void *self, const FacetString *path,
         FacetResult result = parent == NULL ? FACET_INVALID_HANDLE :
             parent->list(parent->self, 0, 128, &raw, &next, &end);
         libfacet_free_proxy_client(parent);
+        if (result == FACET_ACCESS_DENIED) {
+            *error = EACCES;
+            return FACET_OK;
+        }
+        if (result == FACET_NOT_FOUND) {
+            *error = ENOENT;
+            return FACET_OK;
+        }
         if (result != FACET_OK) return result;
         size_t raw_count = raw.count;
         bool has_etc = false;
@@ -645,6 +653,14 @@ static FacetResult posix_list_directory(void *self, const FacetString *path,
     result = directory == NULL ? FACET_INVALID_HANDLE :
         directory->list(directory->self, 0, 128, &raw, &next, &end);
     libfacet_free_proxy_client(directory);
+    if (result == FACET_ACCESS_DENIED) {
+        *error = EACCES;
+        return FACET_OK;
+    }
+    if (result == FACET_NOT_FOUND) {
+        *error = ENOENT;
+        return FACET_OK;
+    }
     if (result != FACET_OK) return result;
     /* The virtual etc mount belongs only at the POSIX namespace root.  A
      * relative "." can name any inherited CWD, including /posix/etc itself,

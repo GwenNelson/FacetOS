@@ -188,6 +188,7 @@ endif
 	test-current-layout \
 	test-initrd-tool \
 	test-libc-runtime \
+	test-posix-errno \
 	test-shell-parser \
 	test-klog \
 	test-logging-setup \
@@ -437,6 +438,25 @@ $(FACET_LIBC_RUNTIME_TEST): $(ROOT)/tests/libc_runtime_test.c \
 test-libc-runtime: $(FACET_LIBC_RUNTIME_TEST)
 	$(FACET_LIBC_RUNTIME_TEST)
 
+FACET_POSIX_ERRNO_TEST := $(ROOT)/build/facetos/config/posix-errno-test
+
+$(FACET_POSIX_ERRNO_TEST): $(ROOT)/tests/posix_errno_test.c \
+		$(ROOT)/src/posix/libc/process.c $(ROOT)/src/posix/libc/dir.c \
+		$(ROOT)/src/posix/libc/files.c $(ROOT)/src/posix/libc/read.c \
+		$(FACET_IDLC)
+	@mkdir -p $(dir $@)
+	$(SEL4_ENV) ninja -C $(SDK_BUILD) facet-idl-shell-contracts-generated
+	$(CC) -std=gnu11 -O2 -Wall -Wextra -Werror \
+		-Wno-nonnull-compare \
+		-I$(FACET_GENERATED_INCLUDE) -I$(ROOT)/include \
+		-I$(ROOT)/src/posix/include \
+		$(ROOT)/src/posix/libc/process.c $(ROOT)/src/posix/libc/dir.c \
+		$(ROOT)/src/posix/libc/files.c $(ROOT)/src/posix/libc/read.c \
+		$(ROOT)/tests/posix_errno_test.c -o $@
+
+test-posix-errno: $(FACET_POSIX_ERRNO_TEST)
+	$(FACET_POSIX_ERRNO_TEST)
+
 $(FACET_SHELL_PARSER_TEST): $(ROOT)/tests/shell_parser_test.c \
 		$(ROOT)/src/apps/native/shell_parser.c \
 		$(ROOT)/src/apps/native/shell_parser.h
@@ -576,7 +596,7 @@ test-logging-setup: $(FACET_LOGGING_SETUP_TEST)
 test-initrd-tool: $(ROOT)/tests/initrd_tool_test.py $(FACET_INITRD_TOOL)
 	python3 $(ROOT)/tests/initrd_tool_test.py $(FACET_INITRD_TOOL)
 
-test: test-config test-sha256 test-libc-runtime test-shell-parser test-posix-crypt test-initrd test-current-layout test-posix-api-boundary test-initrd-tool test-auth-rpc test-terminal-rpc \
+test: test-config test-sha256 test-libc-runtime test-posix-errno test-shell-parser test-posix-crypt test-initrd test-current-layout test-posix-api-boundary test-initrd-tool test-auth-rpc test-terminal-rpc \
 	test-klog test-logging-setup test-seat-pc-console
 
 
@@ -735,8 +755,9 @@ $(INITRD_CHILD): $(FACET_INITRD_TOOL) $(shell find $(ROOT)/initrd/child -type f)
 	$(FACET_INITRD_TOOL) pack $@ $(ROOT)/build/initrd/child-root \
 		--overlay $(FACET_OVERLAY_ROOT)/child
 	$(FACET_INITRD_TOOL) chmod $@ 0600 usr/share/test_data/user-only.txt usr/share/test_data/root-only.txt
+	$(FACET_INITRD_TOOL) chmod $@ 0700 usr/share/test_data/root-private
 	$(FACET_INITRD_TOOL) chown $@ 1000:1000 home/user usr/share/test_data/user-only.txt
-	$(FACET_INITRD_TOOL) chown $@ 0:0 usr/share/test_data/root-only.txt
+	$(FACET_INITRD_TOOL) chown $@ 0:0 usr/share/test_data/root-only.txt usr/share/test_data/root-private usr/share/test_data/root-private/inside.txt
 	$(FACET_INITRD_TOOL) chmod $@ 0600 etc/shadow
 	$(FACET_INITRD_TOOL) chown $@ 0:0 etc/passwd etc/shadow etc/fstab
 

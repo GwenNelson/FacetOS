@@ -5,6 +5,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "diagnostic.h"
+
 static void text(int fd, const char *value)
 {
     (void)write(fd, value, strlen(value));
@@ -52,6 +54,7 @@ static int list_one(const char *path, bool long_format, bool show_all,
 {
     DIR *directory = opendir(path);
     if (directory == NULL) {
+        int open_error = errno;
         struct stat value;
         if (stat(path, &value) == 0 && !S_ISDIR(value.st_mode)) {
             if (long_format) metadata(&value);
@@ -59,9 +62,7 @@ static int list_one(const char *path, bool long_format, bool show_all,
             text(1, "\n");
             return 0;
         }
-        text(2, "ls: cannot access ");
-        text(2, path);
-        text(2, "\n");
+        posix_path_error("ls", path, open_error);
         return 1;
     }
     if (heading) {

@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "platform/allocator.h"
+#include "filesystem_error.h"
 
 static void *resolve(IProcessEnvironment *environment, const char *name,
                      const FacetInterfaceMeta *metadata)
@@ -56,24 +57,32 @@ static int cat_stream(IByteReader *input, IByteWriter *output, bool numbered,
     }
 }
 
-static int cat_file(IDirectory *cwd, IByteWriter *output, const char *path,
-                    bool numbered, uint64_t *line_number)
+static FacetResult cat_file(IDirectory *cwd, IByteWriter *output,
+                            const char *path, bool numbered,
+                            uint64_t *line_number)
 {
     FacetString name = {.data = path, .length = strlen(path)};
     FacetHandle handle = {0};
-    if (cwd->open_file(cwd->self, &name, &handle) != FACET_OK) return 1;
+    FacetResult result = cwd->open_file(cwd->self, &name, &handle);
+    if (result != FACET_OK) return result;
     IFile *file = libfacet_proxy_from_handle(&IFile_MetaData, handle);
     uint64_t size = 0;
-    if (file == NULL || file->get_size(file->self, &size) != FACET_OK) {
+    result = file == NULL ? FACET_INVALID_HANDLE :
+        file->get_size(file->self, &size);
+    if (result != FACET_OK) {
         libfacet_free_proxy_client(file);
-        return 1;
+        return result;
     }
     uint64_t offset = 0;
     bool line_start = true;
     while (offset < size) {
         FacetArray_u8 bytes = {0};
-        if (file->read_at(file->self, offset, 256, &bytes) != FACET_OK ||
-            bytes.count == 0) { free(bytes.data); break; }
+        result = file->read_at(file->self, offset, 256, &bytes);
+        if (result != FACET_OK || bytes.count == 0) {
+            free(bytes.data);
+            libfacet_free_proxy_client(file);
+            return result == FACET_OK ? FACET_ERROR : result;
+        }
         for (size_t i = 0; i < bytes.count; i++) {
             if (numbered && line_start) {
                 char number[32];
@@ -89,7 +98,7 @@ static int cat_file(IDirectory *cwd, IByteWriter *output, const char *path,
         free(bytes.data);
     }
     libfacet_free_proxy_client(file);
-    return 0;
+    return FACET_OK;
 }
 
 int main(int argc, char **argv)
@@ -135,9 +144,15 @@ int main(int argc, char **argv)
     else for (int i = first; i < argc; i++) {
         if (strcmp(argv[i], "-") == 0)
             status |= cat_stream(input, output, numbered, &line_number);
-        else if (cat_file(cwd, output, argv[i], numbered, &line_number) != 0) {
-            (void)write_data(output, "cat: cannot open ", 17);
+        else {
+            FacetResult result = cat_file(cwd, output, argv[i], numbered,
+                                          &line_number);
+            if (result == FACET_OK) continue;
+            (void)write_data(output, "cat: ", 5);
             (void)write_data(output, argv[i], strlen(argv[i]));
+            (void)write_data(output, ": ", 2);
+            const char *message = facet_filesystem_error(result);
+            (void)write_data(output, message, strlen(message));
             (void)write_data(output, "\r\n", 2);
             status = 1;
         }

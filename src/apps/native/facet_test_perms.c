@@ -48,6 +48,30 @@ static bool can_read(IDirectory *cwd, const char *path)
     return result == FACET_OK;
 }
 
+static FacetResult open_directory_result(IDirectory *cwd, const char *path)
+{
+    FacetString name = {.data = path, .length = strlen(path)};
+    FacetHandle handle = {0};
+    FacetResult result = cwd->open_directory(cwd->self, &name, &handle);
+    if (result == FACET_OK) (void)libfacet_handle_release(handle);
+    return result;
+}
+
+static FacetResult read_file_result(IDirectory *cwd, const char *path)
+{
+    FacetString name = {.data = path, .length = strlen(path)};
+    FacetHandle handle = {0};
+    FacetResult result = cwd->open_file(cwd->self, &name, &handle);
+    if (result != FACET_OK) return result;
+    IFile *file = libfacet_proxy_from_handle(&IFile_MetaData, handle);
+    FacetArray_u8 data = {0};
+    result = file == NULL ? FACET_INVALID_HANDLE :
+        file->read_at(file->self, 0, 64, &data);
+    free(data.data);
+    libfacet_free_proxy_client(file);
+    return result;
+}
+
 int main(int argc, char **argv)
 {
     (void)argc;
@@ -83,9 +107,23 @@ int main(int argc, char **argv)
     bool user_ok = can_read(cwd, "/Data/TestData/user-only.txt");
     bool root_ok = can_read(cwd, "/Data/TestData/root-only.txt");
     bool hidden_ok = can_read(cwd, "/Data/TestData/root-private/inside.txt");
+    bool denied_directory_distinct = uid == 0 ||
+        open_directory_result(cwd, "/Data/TestData/root-private") ==
+            FACET_ACCESS_DENIED;
+    bool missing_directory_distinct =
+        open_directory_result(cwd, "/Data/TestData/missing-directory") ==
+            FACET_NOT_FOUND;
+    bool denied_file_distinct = uid == 0 ||
+        read_file_result(cwd, "/Data/TestData/root-only.txt") ==
+            FACET_ACCESS_DENIED;
+    bool missing_file_distinct =
+        read_file_result(cwd, "/Data/TestData/missing-file") ==
+            FACET_NOT_FOUND;
     bool expected = identity && public_ok &&
         (uid == 0 ? user_ok && root_ok && hidden_ok :
-         uid == 1000 && user_ok && !root_ok && !hidden_ok);
+         uid == 1000 && user_ok && !root_ok && !hidden_ok) &&
+        denied_directory_distinct && missing_directory_distinct &&
+        denied_file_distinct && missing_file_distinct;
     (void)write_text(output, expected ?
         "native TestPerms: PASS\r\n" : "native TestPerms: FAIL\r\n");
     libfacet_free_proxy_client(cwd);

@@ -3,6 +3,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "diagnostic.h"
+
 static void text(int fd, const char *value)
 {
     (void)write(fd, value, strlen(value));
@@ -72,13 +74,17 @@ int main(int argc, char **argv)
         }
         int fd = open(argv[i], O_RDONLY);
         if (fd < 0) {
-            text(2, "cat: cannot open ");
-            text(2, argv[i]);
-            text(2, "\n");
+            int error = errno;
+            posix_path_error("cat", argv[i], error);
             status = 1;
             continue;
         }
-        status |= copy_fd(fd, numbered, &line_number);
+        int copied = copy_fd(fd, numbered, &line_number);
+        if (copied != 0) {
+            int error = errno;
+            posix_path_error("cat", argv[i], error);
+            status = 1;
+        }
         if (close(fd) != 0) status = 1;
     }
     return status;

@@ -207,6 +207,12 @@ static Archive valid_archive(void)
                        "x", 1);
     append_owned_entry(&archive, "private/secret", 0100600, 1000, 1000,
                        "secret", 6);
+    append_owned_entry(&archive, "search-only", 0040711, 1000, 1000,
+                       NULL, 0);
+    append_owned_entry(&archive, "search-only/entry", 0100644, 1000, 1000,
+                       "visible to owner", 16);
+    append_owned_entry(&archive, "unreadable", 0100600, 1000, 1000,
+                       "private contents", 16);
     append_entry(&archive, "TRAILER!!!", 0, NULL, 0);
     return archive;
 }
@@ -449,7 +455,7 @@ static void test_lookup_and_read_only_rpc(void)
     assert(directory->list(directory->self, 0, 16, &entries, &next, &end) ==
            FACET_OK);
     assert(end);
-    assert(entries.count == 5);
+    assert(entries.count == 7);
     assert(entries.data[0].name.length == strlen("README"));
     assert(memcmp(entries.data[0].name.data, "README",
                   entries.data[0].name.length) == 0);
@@ -566,6 +572,44 @@ static void test_posix_descriptor_lifetimes(void)
                                             &private_path,
                                             &denied_private) ==
                FACET_ACCESS_DENIED);
+    FacetString missing_directory = facet_string("/missing-directory");
+    assert(restricted_files->open_directory(restricted_files->self,
+                                            &missing_directory,
+                                            &denied_private) ==
+           FACET_NOT_FOUND);
+    FacetString search_only_path = facet_string("/search-only");
+    FacetHandle search_only_handle = {0};
+    assert(restricted_files->open_directory(restricted_files->self,
+                                            &search_only_path,
+                                            &search_only_handle) == FACET_OK);
+    IDirectory *search_only = libfacet_new_proxy_client(
+        &IDirectory_MetaData, search_only_handle);
+    FacetArray_Entry denied_entries = {0};
+    uint64_t denied_next = 0;
+    bool denied_end = false;
+    assert(search_only != NULL &&
+           search_only->list(search_only->self, 0, 8, &denied_entries,
+                             &denied_next, &denied_end) ==
+               FACET_ACCESS_DENIED);
+    assert(denied_entries.data == NULL && denied_entries.count == 0);
+    libfacet_free_proxy_client(search_only);
+
+    FacetString unreadable_path = facet_string("/unreadable");
+    FacetHandle unreadable_handle = {0};
+    assert(restricted_files->open_file(restricted_files->self,
+                                       &unreadable_path,
+                                       &unreadable_handle) == FACET_OK);
+    IFile *unreadable = libfacet_new_proxy_client(&IFile_MetaData,
+                                                   unreadable_handle);
+    FacetArray_u8 denied_bytes = {0};
+    assert(unreadable != NULL &&
+           unreadable->read_at(unreadable->self, 0, 32, &denied_bytes) ==
+               FACET_ACCESS_DENIED);
+    assert(denied_bytes.data == NULL && denied_bytes.count == 0);
+    libfacet_free_proxy_client(unreadable);
+    FacetString missing_file = facet_string("/missing-file");
+    assert(restricted_files->open_file(restricted_files->self, &missing_file,
+                                       &unreadable_handle) == FACET_NOT_FOUND);
     assert(restricted_files != NULL &&
            restricted_files->open_directory(restricted_files->self,
                                             &root_path,
@@ -598,6 +642,50 @@ static void test_posix_descriptor_lifetimes(void)
                                      O_RDONLY, 0, &restricted_fd,
                                      &restricted_error) == FACET_OK);
     assert(restricted_fd == -1 && restricted_error == EACCES);
+
+    FacetArray_string restricted_entries = {0};
+    assert(restricted_posix->list_directory(
+               restricted_posix->self, &search_only_path,
+               &restricted_entries, &restricted_error) == FACET_OK);
+    assert(restricted_entries.data == NULL && restricted_entries.count == 0 &&
+           restricted_error == EACCES);
+    assert(restricted_posix->list_directory(
+               restricted_posix->self, &missing_directory,
+               &restricted_entries, &restricted_error) == FACET_OK);
+    assert(restricted_entries.data == NULL && restricted_entries.count == 0 &&
+           restricted_error == ENOENT);
+    assert(restricted_posix->change_directory(
+               restricted_posix->self, &private_path,
+               &restricted_error) == FACET_OK &&
+           restricted_error == EACCES);
+    assert(restricted_posix->change_directory(
+               restricted_posix->self, &missing_directory,
+               &restricted_error) == FACET_OK &&
+           restricted_error == ENOENT);
+
+    restricted_fd = -1;
+    assert(restricted_posix->open_fd(restricted_posix->self,
+                                     &unreadable_path, O_RDONLY, 0,
+                                     &restricted_fd,
+                                     &restricted_error) == FACET_OK);
+    assert(restricted_fd >= 3 && restricted_error == 0);
+    int64_t restricted_read_result = -1;
+    assert(restricted_posix->read_fd(restricted_posix->self, restricted_fd,
+                                     32, &denied_bytes,
+                                     &restricted_read_result,
+                                     &restricted_error) == FACET_OK);
+    assert(restricted_read_result == -1 && restricted_error == EACCES &&
+           denied_bytes.data == NULL && denied_bytes.count == 0);
+    int32_t restricted_close_result = -1;
+    assert(restricted_posix->close_fd(restricted_posix->self, restricted_fd,
+                                      &restricted_close_result,
+                                      &restricted_error) == FACET_OK);
+    assert(restricted_close_result == 0 && restricted_error == 0);
+    restricted_fd = -1;
+    assert(restricted_posix->open_fd(restricted_posix->self, &missing_file,
+                                     O_RDONLY, 0, &restricted_fd,
+                                     &restricted_error) == FACET_OK);
+    assert(restricted_fd == -1 && restricted_error == ENOENT);
     libfacet_free_proxy_client(restricted_posix);
     dominit0_posix_view_destroy(restricted_view);
     dominit0_credential_file_store_destroy(restricted_store);

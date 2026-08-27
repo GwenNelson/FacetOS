@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "platform/allocator.h"
+#include "filesystem_error.h"
 
 static void *resolve(IProcessEnvironment *environment, const char *name,
                      const FacetInterfaceMeta *metadata)
@@ -39,14 +40,30 @@ static int write_text(IByteWriter *output, const char *text)
     return write_bytes(output, text, strlen(text));
 }
 
-static IDirectory *open_directory(IDirectory *cwd, const char *path)
+static FacetResult open_directory(IDirectory *cwd, const char *path,
+                                  IDirectory **out)
 {
-    if (path == NULL) return cwd;
+    *out = NULL;
+    if (path == NULL) {
+        *out = cwd;
+        return FACET_OK;
+    }
     FacetString value = {.data = path, .length = strlen(path)};
     FacetHandle handle = {0};
-    if (cwd->open_directory(cwd->self, &value, &handle) != FACET_OK)
-        return NULL;
-    return libfacet_proxy_from_handle(&IDirectory_MetaData, handle);
+    FacetResult result = cwd->open_directory(cwd->self, &value, &handle);
+    if (result != FACET_OK) return result;
+    *out = libfacet_proxy_from_handle(&IDirectory_MetaData, handle);
+    return *out == NULL ? FACET_INVALID_HANDLE : FACET_OK;
+}
+
+static void write_path_error(IByteWriter *output, const char *path,
+                             FacetResult result)
+{
+    (void)write_text(output, "ls: ");
+    (void)write_text(output, path == NULL ? "." : path);
+    (void)write_text(output, ": ");
+    (void)write_text(output, facet_filesystem_error(result));
+    (void)write_text(output, "\r\n");
 }
 
 static void write_metadata(IDirectory *directory, const Entry *entry,
@@ -81,11 +98,10 @@ static void write_metadata(IDirectory *directory, const Entry *entry,
 static int list_one(IDirectory *cwd, IByteWriter *output, const char *path,
                     bool long_format, bool show_all, bool heading)
 {
-    IDirectory *directory = open_directory(cwd, path);
-    if (directory == NULL) {
-        (void)write_text(output, "ls: cannot open ");
-        (void)write_text(output, path == NULL ? "." : path);
-        (void)write_text(output, "\r\n");
+    IDirectory *directory = NULL;
+    FacetResult opened = open_directory(cwd, path, &directory);
+    if (opened != FACET_OK) {
+        write_path_error(output, path, opened);
         return 1;
     }
     if (heading) {
@@ -97,9 +113,16 @@ static int list_one(IDirectory *cwd, IByteWriter *output, const char *path,
     while (!end) {
         FacetArray_Entry entries = {0};
         uint64_t next = cursor;
-        if (directory->list(directory->self, cursor, 8, &entries,
-                            &next, &end) != FACET_OK)
-            break;
+        FacetResult result = directory->list(directory->self, cursor, 8,
+                                             &entries, &next, &end);
+        if (result != FACET_OK) {
+            if (entries.data != NULL)
+                facet_rpc_release_value(FACET_TYPE_ARRAY,
+                                        &FacetArray_Entry_TypeMeta, &entries);
+            write_path_error(output, path, result);
+            if (path != NULL) libfacet_free_proxy_client(directory);
+            return 1;
+        }
         for (size_t i = 0; i < entries.count; i++) {
             if (!show_all && entries.data[i].name.length != 0 &&
                 entries.data[i].name.data[0] == '.')

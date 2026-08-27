@@ -18,6 +18,7 @@
 #include <string.h>
 
 #include "platform/allocator.h"
+#include "filesystem_error.h"
 #include "shell_parser.h"
 
 static FacetResult write_text(IByteWriter *output, const char *text)
@@ -103,14 +104,17 @@ static FacetResult directory_path(IDirectory *directory, FacetString *path)
         directory->getpath(directory->self, path);
 }
 
-static IDirectory *open_directory(IDirectory *cwd, const char *path)
+static FacetResult open_directory(IDirectory *cwd, const char *path,
+                                  IDirectory **out)
 {
+    *out = NULL;
     FacetString name = {.data = path, .length = strlen(path)};
     FacetHandle handle = {0};
-    if (cwd == NULL ||
-        cwd->open_directory(cwd->self, &name, &handle) != FACET_OK)
-        return NULL;
-    return libfacet_proxy_from_handle(&IDirectory_MetaData, handle);
+    if (cwd == NULL) return FACET_INVALID_HANDLE;
+    FacetResult result = cwd->open_directory(cwd->self, &name, &handle);
+    if (result != FACET_OK) return result;
+    *out = libfacet_proxy_from_handle(&IDirectory_MetaData, handle);
+    return *out == NULL ? FACET_INVALID_HANDLE : FACET_OK;
 }
 
 static void command_pwd(IDirectory *cwd, IByteWriter *output)
@@ -136,9 +140,12 @@ static void write_prompt(IDirectory *cwd, IByteWriter *output)
 
 static void command_cd(IDirectory **cwd, IByteWriter *output, const char *path)
 {
-    IDirectory *replacement = open_directory(*cwd, path);
-    if (replacement == NULL) {
-        (void)write_text(output, "cd: directory not found\r\n");
+    IDirectory *replacement = NULL;
+    FacetResult result = open_directory(*cwd, path, &replacement);
+    if (result != FACET_OK) {
+        (void)write_text(output, "cd: ");
+        (void)write_text(output, facet_filesystem_error(result));
+        (void)write_text(output, "\r\n");
         return;
     }
     libfacet_free_proxy_client(*cwd);
@@ -266,8 +273,8 @@ static void shell_loop(IByteReader *input, IByteWriter *output,
     IDirectory *root = libfacet_proxy_from_handle(&IDirectory_MetaData,
                                                   root_handle);
     if (root == NULL) return;
-    IDirectory *cwd = open_directory(root, ".");
-    if (cwd == NULL) {
+    IDirectory *cwd = NULL;
+    if (open_directory(root, ".", &cwd) != FACET_OK) {
         libfacet_free_proxy_client(root);
         return;
     }
