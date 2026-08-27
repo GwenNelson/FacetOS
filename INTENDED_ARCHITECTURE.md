@@ -175,14 +175,18 @@ domain-specific `IProcessManager` provided to them.
 
 Domains are intended to be strongly isolated.
 
-Processes in different domains are not currently provided with a general
-mechanism for directly exporting interfaces to one another. A future version
-of FacetOS may deliberately support controlled cross-domain interface
-delegation, but this is not presently part of the intended interface.
+Processes in different domains do not receive ambient authority to interact
+with one another. Controlled cross-domain service publication and discovery is
+provided through the global object registry described below.
 
-Domains may nevertheless use resources deliberately shared by system
-configuration, such as access to the same underlying filesystem service.
-Such sharing is explicit and does not imply general authority to interact with
+The registry is policy-controlled by `dominit0`. A domain may publish only the
+configured keys for which it has write authority and may subscribe to or import
+only the configured keys for which it has read authority. Knowledge of a key
+name alone grants no authority.
+
+Domains may also receive resources deliberately shared directly by system
+configuration, such as access to the same underlying filesystem service. Such
+sharing is explicit and does not imply general authority to interact with
 processes in the other domain.
 
 ---
@@ -214,7 +218,8 @@ seL4-specific platform abstraction code.
 - creation of domains;
 - construction of each domain's initial authority;
 - globally managed hardware resources;
-- construction of the initial seat and terminal environment.
+- construction of the initial seat and terminal environment;
+- ownership and policy configuration of the global object registry.
 
 Where less privileged components require access to these facilities,
 `dominit0` exports Facet interfaces representing restricted authority rather
@@ -225,8 +230,9 @@ than exposing its underlying platform authority.
 For every configured userland domain, `dominit0` constructs an
 `IDomainEnvironment`.
 
-The `IDomainEnvironment` contains the initial Facet interfaces exported into
-that domain.
+The `IDomainEnvironment` contains the initial Facet interfaces made available
+to that domain. Entries may refer to directly delegated objects or to configured
+imports backed by subscriptions to the global object registry.
 
 `dominit0` then creates the domain's `dominit` process and provides that
 environment to it.
@@ -303,8 +309,16 @@ It may additionally contain interfaces for:
 - authentication;
 - other system or application services available within the domain.
 
-The process's parent determines which of its available interfaces are
-delegated into the child's `IProcessEnvironment`.
+The process's parent generally controls the child's `IProcessEnvironment`. In
+the common case it clones or otherwise derives an environment from its own,
+adds, removes, replaces or attenuates bindings as appropriate, exports the
+resulting environment, and passes it to its domain-specific `IProcessManager`
+when creating the child.
+
+`IProcessManager` creates the process; it does not normally decide which
+ordinary Facet services the child inherits. The environment supplied by the
+creator expresses that decision, subject to the authority limits of the domain
+and the process manager.
 
 This is analogous to the way `dominit0` constructs an
 `IDomainEnvironment` for `dominit`.
@@ -363,16 +377,19 @@ each receives its own `IProcessEnvironment`.
 
 Domains are intended to be substantially isolated from one another.
 
-At present, general process-to-process interface delegation across domain
-boundaries is intentionally unsupported.
+There is no ambient process-to-process interface delegation across domain
+boundaries. Cross-domain publication and discovery occurs only through
+explicitly configured global-registry keys or other resources deliberately
+shared by system configuration.
 
-A future system may provide controlled mechanisms for a process in one domain
-to export an interface into another domain, but such a mechanism must be
-explicit and must preserve the authority model.
+For each registry key, `dominit0` policy determines which domains may publish
+the key and which domains may read or subscribe to it. A process in one domain
+therefore cannot make an arbitrary object visible to another domain merely by
+knowing its domain ID or a string name.
 
-Multiple domains may be configured to receive authority to the same underlying
-resource, such as a filesystem. This represents explicitly shared authority
-and does not weaken the isolation of unrelated resources.
+Multiple domains may also be configured to receive authority to the same
+underlying resource, such as a filesystem. This represents explicitly shared
+authority and does not weaken the isolation of unrelated resources.
 
 ### 5.2 Nested domain-like environments
 
@@ -413,11 +430,11 @@ domain and subsequently to their children.
 At the architectural level, creating a process consists of:
 
 1. selecting an executable;
-2. constructing an `IProcessEnvironment`;
-3. selecting which interfaces available to the parent should be exported into
-   that environment;
-4. exporting the `IProcessEnvironment`;
-5. invoking the domain's `IProcessManager`;
+2. cloning, deriving or constructing an `IProcessEnvironment`;
+3. modifying that environment to contain the bindings and authority intended
+   for the child;
+4. exporting the resulting `IProcessEnvironment`;
+5. invoking the domain's `IProcessManager` with that environment;
 6. having the platform process implementation construct the process;
 7. supplying the root process-environment handle through the startup ABI;
 8. starting execution.
@@ -429,10 +446,16 @@ cannot receive authority which is not available within that domain.
 
 ### 6.2 Process inheritance
 
-FacetOS does not define ambient inheritance of every object available to a
-parent.
+FacetOS does not define mandatory ambient inheritance of every object available
+to a parent.
 
-Interfaces are explicitly placed into the child's `IProcessEnvironment`.
+Processes which create children generally control the `IProcessEnvironment`
+they pass to those children. A common operation is to clone the parent's current
+environment and then add, remove, replace or attenuate selected bindings before
+spawning the child.
+
+Interfaces are therefore inherited only insofar as the process creating the
+child chooses to propagate them.
 
 In normal operation a parent will commonly propagate interfaces such as:
 
@@ -588,124 +611,7 @@ representation is task/platform specific.
 A raw handle received by one task must therefore not be assumed to be directly
 usable by another task.
 
-Any process may receive/import handles and may export its own objects to
-produce new handles.
-
-### 8.5 Proxies
-
-A process receiving a `FacetHandle` constructs a local proxy using
-`libfacet_proxy_from()`.
-
-```text
-FacetHandle
-     |
-     v
-libfacet_proxy_from()
-     |
-     v
-local proxy
-     |
-     v
-Facet method calls
-     |
-     v
-platform RPC
-```
-
-The proxy implements the same Facet interface as the remote object.
-
-To the consuming code, operations on the proxy therefore follow the same
-interface contract as operations on a local object.
-
----
-
-## 9. Handle transfer and re-export
-
-Facet RPC permits exported object references to be transferred between tasks.
-
-A crucial distinction exists between **transferring a handle into a task** and
-**re-exporting the resulting interface from that task**.
-
-`FacetHandle`s are task-specific.
-
-Suppose process A exports object X to process B:
-
-```text
-A:X
- |
- | export/transfer
- v
-B:FacetHandle
- |
- v
-B:proxy(X)
-```
-
-B now possesses a local proxy implementing X's interface.
-
-If B subsequently wants to make that interface available to C, the ordinary
-operation is for B to export **its local proxy object**:
-
-```text
-A:X
- |
- v
-B:proxy(X)
- |
- | B exports proxy
- v
-B-owned exported object
- |
- | transfer
- v
-C:proxy
-```
-
-Calls from C therefore travel:
-
-```text
-C -> B proxy/export -> A
-```
-
-B remains part of the authority and lifetime chain.
-
-B must not normally take the raw task-specific `FacetHandle` received from A
-and attempt to hand that unchanged representation to C.
-
-Doing so bypasses the task-specific export/import semantics and can produce
-invalid or ambiguous platform behaviour.
-
-Consequently, if B terminates, an object which B re-exported in this manner
-ordinarily ceases to be available to C even if the original implementation in
-A remains alive.
-
-If direct A-to-C delegation is desired, it must be performed through an
-explicit mechanism capable of exporting/transferring A's object appropriately
-into C rather than by copying B's raw handle representation.
-
----
-
-## 10. Filesystem and POSIX views
-
-FacetOS native filesystem authority is expressed through Facet filesystem
-interfaces such as `IFileStore`.
-
-There is no requirement for every domain or process to observe one global
-filesystem namespace.
-
-### 10.1 `IPOSIXView` is process-specific
-
-`IPOSIXView` is a per-process interface.
-
-It represents the POSIX view made available to that process and is normally
-included in its `IProcessEnvironment`.
-
-A domain therefore does not itself intrinsically "have an `IPOSIXView`".
-Rather, `dominit` constructs an initial `IPOSIXView` and places it into the
-environment of the domain's initial process.
-
-That process will normally propagate the same view, or an appropriately
-derived view, into its children.
+Any process may receive/import handles and may derived view, into its children.
 
 An `IPOSIXView` operates using the underlying Facet interfaces exported into
 the relevant environment.
