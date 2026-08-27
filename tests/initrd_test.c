@@ -776,8 +776,10 @@ static void test_chrooted_posix_synthetic_etc(void)
                                                   store_copy);
     assert(store != NULL);
     FacetString backing = facet_string("/posix");
-    FacetHandle cwd = {0};
+    FacetHandle cwd = {0}, inherited_etc = {0};
     assert(store->open_directory(store->self, &backing, &cwd) == FACET_OK);
+    assert(store->open_directory(store->self, &native_etc,
+                                 &inherited_etc) == FACET_OK);
     libfacet_free_proxy_client(store);
 
     TestStreams streams = {0};
@@ -797,7 +799,6 @@ static void test_chrooted_posix_synthetic_etc(void)
         streams.reader_handle, streams.writer_handle,
         dominit0_credential_file_store_handle(view_store), cwd);
     assert(view != NULL);
-    (void)libfacet_handle_release(cwd);
     FacetHandle posix_copy = {0};
     assert(libfacet_handle_clone(dominit0_posix_view_handle(view),
                                  &posix_copy) == FACET_OK);
@@ -880,6 +881,45 @@ static void test_chrooted_posix_synthetic_etc(void)
            error == 0 && cwd_path.length == 1 && cwd_path.data[0] == '/');
     free((void *)(uintptr_t)cwd_path.data);
 
+    libfacet_free_proxy_client(posix);
+    dominit0_posix_view_destroy(view);
+
+    /* An external POSIX command launched by a native shell can inherit the
+     * mounted /posix/etc directory without the shell's synthetic-CWD flag.
+     * Listing "." there must not mistake the inherited CWD for namespace /
+     * and append a second, nested etc entry. */
+    view = dominit0_posix_view_create(
+        streams.reader_handle, streams.writer_handle,
+        dominit0_credential_file_store_handle(view_store), inherited_etc);
+    assert(view != NULL);
+    (void)libfacet_handle_release(inherited_etc);
+    assert(dominit0_posix_view_set_root(view, cwd) == 0);
+    (void)libfacet_handle_release(cwd);
+    assert(libfacet_handle_clone(dominit0_posix_view_handle(view),
+                                 &posix_copy) == FACET_OK);
+    posix = libfacet_new_proxy_client(&IPOSIXView_MetaData, posix_copy);
+    assert(posix != NULL);
+    FacetString dot = facet_string(".");
+    entries = (FacetArray_string){0};
+    error = -1;
+    assert(posix->list_directory(posix->self, &dot, &entries, &error) ==
+               FACET_OK && error == 0 && entries.count == 3);
+    bool inherited_has_fstab = false, inherited_has_passwd = false,
+         inherited_has_shadow = false, inherited_has_etc = false;
+    for (size_t i = 0; i < entries.count; i++) {
+        inherited_has_fstab |= entries.data[i].length == 5 &&
+            memcmp(entries.data[i].data, "fstab", 5) == 0;
+        inherited_has_passwd |= entries.data[i].length == 6 &&
+            memcmp(entries.data[i].data, "passwd", 6) == 0;
+        inherited_has_shadow |= entries.data[i].length == 6 &&
+            memcmp(entries.data[i].data, "shadow", 6) == 0;
+        inherited_has_etc |= entries.data[i].length == 3 &&
+            memcmp(entries.data[i].data, "etc", 3) == 0;
+    }
+    assert(inherited_has_fstab && inherited_has_passwd &&
+           inherited_has_shadow && !inherited_has_etc);
+    facet_rpc_release_value(FACET_TYPE_ARRAY, &FacetArray_string_TypeMeta,
+                            &entries);
     libfacet_free_proxy_client(posix);
     dominit0_posix_view_destroy(view);
 

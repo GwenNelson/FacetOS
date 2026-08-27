@@ -141,6 +141,26 @@ static IDirectory *directory_for_path(Dominit0PosixView *view,
     return proxy_from_borrowed(&IDirectory_MetaData, handle);
 }
 
+static bool directory_is_namespace_root(Dominit0PosixView *view,
+                                        IDirectory *directory)
+{
+    if (view == NULL || directory == NULL) return false;
+    IDirectory *root = proxy_from_borrowed(&IDirectory_MetaData,
+                                           view->root_handle);
+    FacetString directory_path = {0}, root_path = {0};
+    FacetResult directory_result = directory->getpath(
+        directory->self, &directory_path);
+    FacetResult root_result = root == NULL ? FACET_INVALID_HANDLE :
+        root->getpath(root->self, &root_path);
+    bool matches = directory_result == FACET_OK && root_result == FACET_OK &&
+        directory_path.length == root_path.length &&
+        memcmp(directory_path.data, root_path.data, root_path.length) == 0;
+    free((void *)(uintptr_t)directory_path.data);
+    free((void *)(uintptr_t)root_path.data);
+    libfacet_free_proxy_client(root);
+    return matches;
+}
+
 static FacetResult posix_get_domain_id(void *self, uint64_t *domain_id)
 {
     if (domain_id == NULL) return FACET_INVALID_ARGUMENT;
@@ -443,13 +463,15 @@ static FacetResult posix_list_directory(void *self, const FacetString *path,
     if (result != FACET_OK) return result;
     IDirectory *directory = libfacet_proxy_from_handle(&IDirectory_MetaData, handle);
     FacetArray_Entry raw = {0}; uint64_t next = 0; bool end = false;
+    bool namespace_root = directory_is_namespace_root(view, directory);
     result = directory == NULL ? FACET_INVALID_HANDLE :
         directory->list(directory->self, 0, 128, &raw, &next, &end);
     libfacet_free_proxy_client(directory);
     if (result != FACET_OK) return result;
-    bool include_etc = view->chrooted &&
-        (string_equals(path, "/") ||
-         (!view->cwd_synthetic_etc && string_equals(path, ".")));
+    /* The virtual etc mount belongs only at the POSIX namespace root.  A
+     * relative "." can name any inherited CWD, including /posix/etc itself,
+     * so the spelling of the request cannot determine mount placement. */
+    bool include_etc = view->chrooted && namespace_root;
     if (include_etc) {
         for (size_t i = 0; i < raw.count; i++)
             if (raw.data[i].name.length == sizeof("etc") - 1 &&
