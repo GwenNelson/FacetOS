@@ -1,5 +1,13 @@
 # FacetOS
 
+Everything here is lies, even the truth.
+
+Don't let the AI run free on coding for you in something this complicated, just don't do it.
+
+Heed my warning, lest we all scream while buried under layers of layers of insane code.
+
+# FacetOS
+
 FacetOS is a capability-oriented operating system built on the seL4
 microkernel.
 
